@@ -1,0 +1,205 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/schibsted-grotesk";
+
+/*
+ * Stationery palette: cool paper on a grey desk, ballpoint ("carbon") blue for
+ * actions, highlighter yellow as the single accent for the privacy promise.
+ */
+:root {
+  --desk: #eef0f4;
+  --paper: #ffffff;
+  --paper-2: #f6f7fa;
+  --ink: #14161c;
+  --ink-2: #4a5061;
+  --ink-3: #747b8c;
+  --line: #d8dce4;
+  --line-2: #e7eaf0;
+  --carbon: #2d3bd6;
+  --carbon-hover: #2431b8;
+  --carbon-ink: #ffffff;
+  --carbon-soft: #e9ebfd;
+  --marker: #f7e35a;
+  --marker-ink: #2f2900;
+  --ok: #1d7a4b;
+  --ok-soft: #e3f4ea;
+  --danger: #c0341b;
+  --danger-soft: #fbe8e4;
+  --warn: #8a5a00;
+  --warn-soft: #fbf1d8;
+  --shadow: 0 1px 2px rgb(20 22 28 / 0.06), 0 4px 16px -8px rgb(20 22 28 / 0.12);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --desk: #0e1015;
+    --paper: #171a22;
+    --paper-2: #1d212b;
+    --ink: #eef0f6;
+    --ink-2: #a9afbd;
+    --ink-3: #7e8596;
+    --line: #2b303c;
+    --line-2: #232733;
+    --carbon: #8691ff;
+    --carbon-hover: #a0a9ff;
+    --carbon-ink: #0b0d16;
+    --carbon-soft: #1f2442;
+    --marker: #e8d34b;
+    --marker-ink: #221d00;
+    --ok: #4fc68a;
+    --ok-soft: #12291d;
+    --danger: #ff7b62;
+    --danger-soft: #34160f;
+    --warn: #f0b84a;
+    --warn-soft: #2e2410;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px -10px rgb(0 0 0 / 0.6);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --desk: #0e1015;
+  --paper: #171a22;
+  --paper-2: #1d212b;
+  --ink: #eef0f6;
+  --ink-2: #a9afbd;
+  --ink-3: #7e8596;
+  --line: #2b303c;
+  --line-2: #232733;
+  --carbon: #8691ff;
+  --carbon-hover: #a0a9ff;
+  --carbon-ink: #0b0d16;
+  --carbon-soft: #1f2442;
+  --marker: #e8d34b;
+  --marker-ink: #221d00;
+  --ok: #4fc68a;
+  --ok-soft: #12291d;
+  --danger: #ff7b62;
+  --danger-soft: #34160f;
+  --warn: #f0b84a;
+  --warn-soft: #2e2410;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px -10px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-desk: var(--desk);
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-carbon: var(--carbon);
+  --color-carbon-hover: var(--carbon-hover);
+  --color-carbon-ink: var(--carbon-ink);
+  --color-carbon-soft: var(--carbon-soft);
+  --color-marker: var(--marker);
+  --color-marker-ink: var(--marker-ink);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-panel: var(--shadow);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    background: var(--desk);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-size-adjust: 100%;
+  }
+  body {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    background: var(--desk);
+    color: var(--ink);
+    min-height: 100dvh;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+    letter-spacing: -0.015em;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--carbon);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--marker);
+    color: var(--marker-ink);
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility checker {
+  background-color: var(--paper-2);
+  background-image: linear-gradient(45deg, var(--line-2) 25%, transparent 25%), linear-gradient(-45deg, var(--line-2) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--line-2) 75%), linear-gradient(-45deg, transparent 75%, var(--line-2) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
+/* The PDF engine's own fonts, so text placed in the editor looks exactly like the saved result. */
+@font-face { font-family: "Doc Sans"; src: url("/fonts/NotoSans-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Sans"; src: url("/fonts/NotoSans-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Sans"; src: url("/fonts/NotoSans-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Sans"; src: url("/fonts/NotoSans-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Serif"; src: url("/fonts/NotoSerif-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Serif"; src: url("/fonts/NotoSerif-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Serif"; src: url("/fonts/NotoSerif-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Serif"; src: url("/fonts/NotoSerif-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Mono"; src: url("/fonts/NotoSansMono-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Doc Mono"; src: url("/fonts/NotoSansMono-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Doc Deva"; src: url("/fonts/NotoSansDevanagari-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Doc Deva"; src: url("/fonts/NotoSansDevanagari-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Hand Caveat"; src: url("/fonts/Caveat.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "Hand Kalam"; src: url("/fonts/Kalam-Regular.ttf") format("truetype"); font-display: swap; }
