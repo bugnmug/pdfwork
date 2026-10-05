@@ -83,7 +83,7 @@ export default function FingerprintTool({ tool }: { tool: Tool }) {
   if (!items.length) return <DropZone accept="*/*" multiple onFiles={add} label={tool.input?.label ?? "Choose files"} hint="Any file type: PDF, images, documents, archives" />;
 
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className="grid gap-3">
         {picker.input}
         {items.map((it, i) => (

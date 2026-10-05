@@ -100,7 +100,7 @@ export default function Chat({ tool }: { tool: Tool }) {
     );
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
       <Panel className="flex min-h-[60vh] flex-col">
         <div className="flex flex-wrap items-center gap-3 border-b border-line-2 px-4 py-3">
           <FileText className="size-4 text-ink-3" />

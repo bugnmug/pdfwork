@@ -33,7 +33,7 @@ function GstinField({ value, onChange, onState }: { value: string; onChange: (v:
         placeholder="e.g. 29ABCDE1234F1Z5"
         maxLength={15}
         spellCheck={false}
-        className="pr-9 font-mono text-[13px] uppercase"
+        className="pr-9 font-mono text-[13px] uppercase placeholder:normal-case"
       />
       {v.length === 15 ? (
         <span className="absolute top-1/2 right-2.5 -translate-y-1/2" title={ok ? "Valid GSTIN" : "Check digit doesn't match: please re-check"}>
@@ -107,7 +107,7 @@ export default function InvoiceTool({ tool }: { tool: Tool }) {
 
   const pos = inv.placeOfSupply;
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className="grid gap-4">
         <Section
           title={seller.name && !showSeller ? `From: ${seller.name}` : "Your business"}
@@ -271,7 +271,7 @@ export default function InvoiceTool({ tool }: { tool: Tool }) {
               <Input value={seller.bank.account ?? ""} onChange={(e) => setS({ bank: { ...seller.bank, account: e.target.value } })} inputMode="numeric" className="tabular" />
             </L>
             <L label="IFSC">
-              <Input value={seller.bank.ifsc ?? ""} onChange={(e) => setS({ bank: { ...seller.bank, ifsc: e.target.value.toUpperCase() } })} className="uppercase" />
+              <Input value={seller.bank.ifsc ?? ""} onChange={(e) => setS({ bank: { ...seller.bank, ifsc: e.target.value.toUpperCase() } })} className="uppercase placeholder:normal-case" />
             </L>
             <L label="Branch">
               <Input value={seller.bank.branch ?? ""} onChange={(e) => setS({ bank: { ...seller.bank, branch: e.target.value } })} />

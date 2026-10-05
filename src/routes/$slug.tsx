@@ -75,7 +75,7 @@ function ToolPage() {
         <ToolBody tool={tool} />
       </div>
 
-      <section className="mt-16 grid gap-10 border-t border-line pt-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <section className="mt-16 grid grid-cols-[minmax(0,1fr)] gap-10 border-t border-line pt-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div>
           <h2 className="text-xl font-semibold">How to use {tool.name}</h2>
           <ol className="mt-4 grid gap-3">

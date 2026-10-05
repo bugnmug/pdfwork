@@ -68,7 +68,7 @@ export default function Metadata({ tool }: { tool: Tool }) {
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
       <Panel className="grid gap-3 p-4">
         <div className="mx-auto w-40">
           <Thumb file={file} password={src?.password} />

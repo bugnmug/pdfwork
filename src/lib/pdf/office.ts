@@ -83,7 +83,7 @@ export async function textToPdf(text: string, name = "document", o: { title?: st
 
 /** Parse CSV/TSV properly (quotes, escaped quotes, embedded newlines and delimiters). */
 export function parseCsv(text: string, delimiter?: string): string[][] {
-  const src = text.replace(/^﻿/, "");
+  const src = text.replace(/^\uFEFF/, "");
   const first = src.split(/\r?\n/, 1)[0] ?? "";
   const d = delimiter ?? ([",", ";", "\t", "|"].map((c) => [c, first.split(c).length] as const).sort((a, b) => b[1] - a[1])[0][0]);
   const rows: string[][] = [];

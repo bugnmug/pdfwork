@@ -79,7 +79,7 @@ function Home() {
   return (
     <>
       <section className="relative overflow-hidden">
-        <Page className="grid items-center gap-10 pt-8 pb-14 sm:pt-16 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-14 lg:pb-20">
+        <Page className="grid grid-cols-[minmax(0,1fr)] items-center gap-10 pt-8 pb-14 sm:pt-16 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-14 lg:pb-20">
           <div className="min-w-0">
             <p className="inline-flex items-center gap-2 rounded-full border border-line bg-paper px-3 py-1 text-[13px] text-ink-2">
               <span className="size-1.5 rounded-full bg-ok" aria-hidden />
@@ -87,7 +87,7 @@ function Home() {
             </p>
             <h1 className="mt-5 text-[2.5rem] leading-[1.04] font-bold tracking-[-0.035em] sm:text-6xl lg:text-[3.5rem] xl:text-[4rem]">
               Every PDF tool.{" "}
-              <span className="bg-[linear-gradient(transparent_62%,var(--marker)_62%,var(--marker)_90%,transparent_90%)] box-decoration-clone">None of the uploading.</span>
+              <span className="bg-[linear-gradient(transparent_62%,var(--hl)_62%,var(--hl)_90%,transparent_90%)] box-decoration-clone">None of the uploading.</span>
             </h1>
             <p className="mt-6 max-w-xl text-[17px] leading-relaxed text-ink-2">
               Merge, compress, convert, edit, sign, OCR and redact, right in your browser. Your documents are processed on this device and never sent anywhere. Don&apos;t take our word for it: the meter keeps count.
@@ -150,7 +150,7 @@ function Home() {
           );
         })}
 
-        <section className="mt-24 grid gap-8 rounded-xl border border-line bg-paper p-6 sm:p-10 lg:grid-cols-[1fr_2fr]">
+        <section className="mt-24 grid grid-cols-[minmax(0,1fr)] gap-8 rounded-xl border border-line bg-paper p-6 sm:p-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
           <div>
             <h2 className="text-2xl font-bold tracking-tight">Counted, not promised</h2>
             <p className="mt-3 text-ink-2">Most “secure” PDF sites still upload your file and delete it later. {BRAND.name} never receives it.</p>
@@ -173,7 +173,7 @@ function Home() {
           </ul>
         </section>
 
-        <section className="mt-20 grid gap-8 lg:grid-cols-[1fr_2fr]">
+        <section className="mt-20 grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
           <h2 className="text-2xl font-bold tracking-tight">Questions</h2>
           <div className="grid gap-2">
             {FAQ.map((f) => (

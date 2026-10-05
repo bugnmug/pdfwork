@@ -97,13 +97,13 @@ const RULES: Rule[] = [
   { kind: "gstin", re: /\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b/g },
   { kind: "pan", re: /\b[A-Z]{5}\d{4}[A-Z]\b/g, check: (m) => (/^[A-Z]{3}[ABCFGHLJPTK]/.test(m) ? "high" : "medium") },
   { kind: "ifsc", re: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g },
-  { kind: "passport", re: /\b(?:passport(?:\s*(?:no\.?|number|#))?\s*[:\-]?\s*)([A-PR-WY][1-9]\d\s?\d{4}[1-9])\b/gi, group: 1 },
+  { kind: "passport", re: /\b(?:passport(?:\s*(?:no\.?|number|#))?\s*[:-]?\s*)([A-PR-WY][1-9]\d\s?\d{4}[1-9])\b/gi, group: 1 },
   { kind: "voterid", re: /\b[A-Z]{3}\d{7}\b/g },
   { kind: "ssn", re: /\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b/g },
   { kind: "iban", re: /\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b/g, check: (m) => (ibanValid(m) ? "high" : null) },
   {
     kind: "bank",
-    re: /\b(?:a\/?c|acct|account)(?:\s*(?:no\.?|number|#))?\s*[:\-]?\s*(\d[\d -]{7,20}\d)\b/gi,
+    re: /\b(?:a\/?c|acct|account)(?:\s*(?:no\.?|number|#))?\s*[:-]?\s*(\d[\d -]{7,20}\d)\b/gi,
     group: 1,
   },
   {
@@ -114,7 +114,7 @@ const RULES: Rule[] = [
   { kind: "ip", re: /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g },
   {
     kind: "dob",
-    re: /\b(?:d\.?o\.?b\.?|date of birth|born on|birth date)\s*[:\-]?\s*(\d{1,2}[\/.\- ](?:\d{1,2}|[A-Za-z]{3,9})[\/.\- ]\d{2,4})/gi,
+    re: /\b(?:d\.?o\.?b\.?|date of birth|born on|birth date)\s*[:-]?\s*(\d{1,2}[/.\- ](?:\d{1,2}|[A-Za-z]{3,9})[/.\- ]\d{2,4})/gi,
     group: 1,
   },
 ];

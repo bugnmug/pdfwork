@@ -156,7 +156,7 @@ export default function FillForm({ tool }: { tool: Tool }) {
 
   const fillable = (fields ?? []).filter((f) => ["text", "multiline", "checkbox", "radio", "dropdown", "list"].includes(f.kind));
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
       <div className="grid gap-4">
         {loading ? (
           <Panel className="flex items-center gap-2 p-6 text-sm text-ink-2">

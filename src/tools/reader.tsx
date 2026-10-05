@@ -167,7 +167,7 @@ export default function Reader({ tool }: { tool: Tool }) {
 
   const progress = units.length ? index / units.length : 0;
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Panel className="overflow-hidden">
         <div ref={listRef} className="max-h-[70vh] overflow-auto px-5 py-6 font-[Doc_Serif,serif] text-[17px] leading-[1.8] text-ink sm:px-8">
           {!units.length ? <Notice tone="warn">This PDF has no readable text (it looks scanned). Run OCR first.</Notice> : null}

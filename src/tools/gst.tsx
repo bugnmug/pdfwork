@@ -97,7 +97,7 @@ export default function Gst({ tool }: { tool: Tool }) {
             <Input value={biz.business} onChange={(e) => setBiz((b) => ({ ...b, business: e.target.value }))} />
           </L>
           <L label="GSTIN" hint={home ? `Home state: ${STATES[home]}. Sales to other states are treated as inter-state (IGST).` : "Used to tell intra-state from inter-state sales."}>
-            <Input value={biz.gstin} onChange={(e) => setBiz((b) => ({ ...b, gstin: e.target.value.toUpperCase().trim() }))} maxLength={15} className="font-mono text-[13px] uppercase" />
+            <Input value={biz.gstin} onChange={(e) => setBiz((b) => ({ ...b, gstin: e.target.value.toUpperCase().trim() }))} maxLength={15} className="font-mono text-[13px] uppercase placeholder:normal-case" />
           </L>
           <L label="Return period">
             <Input value={biz.period} onChange={(e) => setBiz((b) => ({ ...b, period: e.target.value }))} placeholder="e.g. September 2026" />
@@ -165,7 +165,7 @@ export default function Gst({ tool }: { tool: Tool }) {
                           setRow(i, { gstin: g, ...(g.length === 15 ? { type: "B2B" as const, pos: r.pos || stateFromGstin(g) || "" } : {}) });
                         }}
                         maxLength={15}
-                        className="h-9 w-40 font-mono text-[12px] uppercase"
+                        className="h-9 w-40 font-mono text-[12px] uppercase placeholder:normal-case"
                         aria-label="GSTIN"
                       />
                     </td>

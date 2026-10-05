@@ -21,6 +21,7 @@
   --carbon-soft: #e9ebfd;
   --marker: #f7e35a;
   --marker-ink: #2f2900;
+  --hl: #f7e35a;
   --ok: #1d7a4b;
   --ok-soft: #e3f4ea;
   --danger: #c0341b;
@@ -47,6 +48,7 @@
     --carbon-soft: #1f2442;
     --marker: #e8d34b;
     --marker-ink: #221d00;
+    --hl: rgb(232 211 75 / 0.42);
     --ok: #4fc68a;
     --ok-soft: #12291d;
     --danger: #ff7b62;
@@ -73,6 +75,7 @@
   --carbon-soft: #1f2442;
   --marker: #e8d34b;
   --marker-ink: #221d00;
+  --hl: rgb(232 211 75 / 0.42);
   --ok: #4fc68a;
   --ok-soft: #12291d;
   --danger: #ff7b62;
@@ -158,6 +161,11 @@
   textarea,
   select {
     font: inherit;
+  }
+  /* Grid items default to their content's minimum width, so one long file name can widen a
+     whole page on a phone. Let them shrink instead (text truncates, the page doesn't scroll sideways). */
+  .grid > * {
+    min-width: 0;
   }
 }
 

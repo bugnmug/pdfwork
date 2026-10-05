@@ -99,7 +99,6 @@ function DrawPad({ ink, onChange }: { ink: string; onChange: (c: HTMLCanvasEleme
     c.width = Math.round(rect.width * dpr);
     c.height = Math.round(rect.height * dpr);
     redraw();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pos = (e: React.PointerEvent) => {

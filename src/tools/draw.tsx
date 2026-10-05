@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 type Doc = { pages: DrawPage[]; paper: Paper; orientation: "portrait" | "landscape" };
 const EMPTY: Doc = { pages: [{ strokes: [] }], paper: "ruled", orientation: "portrait" };
+const BLANK_PAGE: DrawPage = { strokes: [] };
 const COLORS = ["#111827", "#1d4ed8", "#b91c1c", "#15803d"];
 const MARKERS = ["#facc15", "#4ade80", "#f472b6", "#60a5fa"];
 const WIDTHS = [1.4, 2.4, 4];
@@ -75,7 +76,7 @@ export default function Draw({ tool }: { tool: Tool }) {
   const history = useRef<{ undo: DrawPage[][]; redo: DrawPage[][] }>({ undo: [], redo: [] });
   const [, force] = useState(0);
 
-  const page = doc.pages[Math.min(index, doc.pages.length - 1)] ?? { strokes: [] };
+  const page = doc.pages[Math.min(index, doc.pages.length - 1)] ?? BLANK_PAGE;
   const [W, H] = PAGE_SIZES[doc.orientation];
   const k = cssW / W;
 

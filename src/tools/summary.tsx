@@ -103,7 +103,7 @@ export default function Summary({ tool }: { tool: Tool }) {
   if (!summary) return null;
   const noText = doc.textPages === 0;
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Panel className="grid gap-6 p-5 sm:p-7">
         <header className="grid gap-1">
           <p className="text-xs font-medium tracking-wide text-ink-3 uppercase">Summary</p>

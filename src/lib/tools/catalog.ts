@@ -398,7 +398,7 @@ export const TOOLS: Tool[] = [
     slug: "ocr-pdf",
     name: "OCR: Searchable PDF",
     blurb: "Make scanned PDFs and photos searchable and copyable.",
-    long: "Reads the text in scanned pages with on-device OCR (English and Hindi) and adds it as an invisible layer over the original pages, which stay exactly as they were. The OCR engine downloads once (~3 MB per language) and is then cached.",
+    long: "Reads the text in scanned pages with on-device OCR (English and Hindi) and adds it as an invisible layer over the original pages, which stay exactly as they were. The OCR engine (about 4 MB) and its language data (1.5 to 3 MB) load once from this site and are then cached by your browser.",
     category: "optimize",
     icon: "ScanText",
     ui: "workspace",

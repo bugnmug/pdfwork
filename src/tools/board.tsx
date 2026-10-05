@@ -98,7 +98,6 @@ export default function BoardTool({ tool: _tool }: { tool: Tool }) {
       joinStarted.current = true;
       void join(h);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     if (room && !room.host) return; // guests don't overwrite their own saved board

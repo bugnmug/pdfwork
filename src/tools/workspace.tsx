@@ -219,7 +219,7 @@ export default function Workspace({ tool }: { tool: Tool }) {
 
   if (formFirst) {
     return (
-      <div className="mx-auto grid max-w-3xl gap-4">
+      <div className="mx-auto grid max-w-3xl grid-cols-[minmax(0,1fr)] gap-4">
         {input ? (
           items.length ? (
             <div className="flex items-center gap-3 rounded-lg border border-line bg-paper p-3">
@@ -252,7 +252,7 @@ export default function Workspace({ tool }: { tool: Tool }) {
 
   const numbered = multiple && items.length > 1;
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
       <section
         aria-label="Files"
         className="grid gap-3"

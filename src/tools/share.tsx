@@ -133,7 +133,7 @@ function Sender({ initial }: { initial: File[] }) {
 
   const link = code ? `${typeof location !== "undefined" ? location.origin + location.pathname : ""}#${code}` : "";
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
       <Panel className="grid gap-3 p-4">
         {picker.input}
         <div className="flex items-center justify-between">

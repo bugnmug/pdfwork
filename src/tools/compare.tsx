@@ -234,7 +234,7 @@ export default function Compare({ tool }: { tool: Tool }) {
 
   return (
     <div className="grid gap-5">
-      <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-center gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
         <Slot label="Choose the original" side={a} onPick={(f) => (setA({ file: f }), clearResults())} onClear={() => (setA(null), clearResults())} />
         <Button variant="ghost" size="icon" className="justify-self-center" onClick={() => (setA(b), setB(a), clearResults())} disabled={!a && !b} aria-label="Swap files" title="Swap">
           <ArrowLeftRight />

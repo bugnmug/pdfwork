@@ -347,7 +347,7 @@ function pushText(p: ParaBlock, raw: string, style: Style, pre: boolean) {
     });
     return;
   }
-  const text = raw.replace(/[\s​]+/g, " ");
+  const text = raw.replace(/[\s\u200b]+/g, " ");
   if (!text) return;
   for (const tok of text.split(/( )/)) {
     if (!tok) continue;
@@ -463,7 +463,6 @@ function table(el: HTMLTableElement, ctx: Ctx): TableBlock {
 
 type Frag = { text: string; style: Style; x: number; w: number };
 type LineBox = { kind: "line"; frags: Frag[]; height: number; ascent: number; x: number; width: number; fullWidth?: number; bar?: boolean; bg?: RGB; first?: boolean; last?: boolean; heading?: number; headingText?: string; spaceFill?: number };
-type FlowItem = LineBox | { kind: "space"; height: number } | { kind: "image"; block: ImageBlock } | { kind: "hr" } | { kind: "pagebreak" } | { kind: "table"; block: TableBlock };
 
 const styleKey = (s: Style): TextStyle => ({ family: s.family, bold: s.bold, italic: s.italic });
 

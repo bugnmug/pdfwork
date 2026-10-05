@@ -47,7 +47,7 @@ export default function Pos({ tool }: { tool: Tool }) {
   };
 
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="grid gap-4">
         <Section title="Shop">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -63,7 +63,7 @@ export default function Pos({ tool }: { tool: Tool }) {
           </L>
           <div className="grid gap-4 sm:grid-cols-2">
             <L label="GSTIN (optional)">
-              <Input value={shop.gstin ?? ""} onChange={(e) => setShop((s) => ({ ...s, gstin: e.target.value.toUpperCase() }))} className="font-mono text-[13px] uppercase" maxLength={15} />
+              <Input value={shop.gstin ?? ""} onChange={(e) => setShop((s) => ({ ...s, gstin: e.target.value.toUpperCase() }))} className="font-mono text-[13px] uppercase placeholder:normal-case" maxLength={15} />
             </L>
             <L label="UPI ID for the payment QR (optional)">
               <Input value={shop.upi ?? ""} onChange={(e) => setShop((s) => ({ ...s, upi: e.target.value.trim() }))} placeholder="shop@bank" spellCheck={false} />

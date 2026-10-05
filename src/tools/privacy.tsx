@@ -158,7 +158,7 @@ export default function Privacy({ tool }: { tool: Tool }) {
   const high = (findings ?? []).filter((f) => f.confidence === "high").length;
   const risky = (hidden ?? []).filter((h) => h.risk !== "low").length;
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className="grid gap-4">
         <Panel className="flex items-center gap-3 p-3">
           <div className="w-10 shrink-0">

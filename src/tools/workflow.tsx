@@ -131,7 +131,7 @@ export default function Workflow({ tool }: { tool: Tool }) {
   };
 
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="grid gap-4">
         <Panel className="grid gap-3 p-4">
           <div className="flex flex-wrap items-center gap-2">
