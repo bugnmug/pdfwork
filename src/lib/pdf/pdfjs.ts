@@ -91,13 +91,59 @@ export async function renderPage(
   if (!ctx) throw new Error("Canvas is not available in this browser.");
   ctx.fillStyle = opts.background ?? "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({
+  const task = page.render({
     canvasContext: ctx,
     canvas,
     viewport,
     annotationMode: opts.annotations === false ? 0 : 2, // 2 = ENABLE_FORMS: draw annotation appearances
-  } as Parameters<PDFPageProxy["render"]>[0]).promise;
+  } as Parameters<PDFPageProxy["render"]>[0]);
+  keepRenderingWhenHidden(task);
+  await task.promise;
   return canvas;
+}
+
+/**
+ * pdf.js paces screen rendering with animation frames, and browsers stop delivering frames to
+ * background tabs (embedded browsers also do when their pane isn't painted). A long job would
+ * freeze the moment someone switched tabs and resume only when they came back. This keeps
+ * frame pacing while the page is visible and switches to plain tasks once it is hidden.
+ * It replaces one method on this render task only; if pdf.js internals change, the guard
+ * leaves the default behaviour in place.
+ */
+type RenderInternals = { _scheduleNext: () => void; _nextBound: () => Promise<void>; _cancelBound: (e: unknown) => void };
+
+function keepRenderingWhenHidden(task: unknown) {
+  const internal = (task as { _internalRenderTask?: Partial<RenderInternals> } | null)?._internalRenderTask;
+  if (!internal || typeof internal._scheduleNext !== "function" || typeof internal._nextBound !== "function" || typeof internal._cancelBound !== "function") return;
+  const it = internal as RenderInternals;
+  it._scheduleNext = () => {
+    const run = () => {
+      it._nextBound().catch(it._cancelBound);
+    };
+    if (document.visibilityState !== "visible") return soon(run);
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("visibilitychange", go);
+      run();
+    };
+    // Whichever comes first: the next frame, or the page being hidden (frames then stop).
+    document.addEventListener("visibilitychange", go);
+    requestAnimationFrame(go);
+  };
+}
+
+/** Run fn as a separate task. Unlike timers, message tasks aren't throttled in background tabs. */
+const soonQueue: (() => void)[] = [];
+let soonChannel: MessageChannel | null = null;
+function soon(fn: () => void) {
+  if (!soonChannel) {
+    soonChannel = new MessageChannel();
+    soonChannel.port1.onmessage = () => soonQueue.shift()?.();
+  }
+  soonQueue.push(fn);
+  soonChannel.port2.postMessage(0);
 }
 
 export async function renderPageCanvas(pdf: PDFDocumentProxy, pageNumber: number, scale = 1.4): Promise<HTMLCanvasElement> {

@@ -77,7 +77,7 @@ for (const c of CASES) {
   let res;
   try {
     res = await page.evaluate(
-      async ({ slug, files, options, passwords, extra, runPath, catPath }) => {
+      async ({ slug, files, options, passwords, extra, runPath, catPath, hidden }) => {
         const run = await import(runPath);
         const cat = await import(catPath);
         const toFile = (f) => {
@@ -92,18 +92,32 @@ for (const c of CASES) {
           for (let i = 0; i < u8.length; i += chunk) s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
           return btoa(s);
         };
+        // `hidden`: behave like a background tab, where browsers deliver no animation frames.
+        let restore = () => {};
+        if (hidden) {
+          const raf = window.requestAnimationFrame;
+          window.requestAnimationFrame = () => 0;
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+          restore = () => {
+            window.requestAnimationFrame = raf;
+            delete document.visibilityState;
+          };
+        }
         try {
           const tool = cat.TOOL_BY_SLUG[slug];
           if (!tool) return { ok: false, error: "no such tool: " + slug };
           const opts = { ...(cat.defaultsOf ? cat.defaultsOf(tool.options) : {}), ...options };
           for (const [k, v] of Object.entries(opts)) if (v && typeof v === "object" && v.__file) opts[k] = toFile(extra[v.__file]);
-          const out = await run.runTool(tool, { files: files.map(toFile), options: opts, passwords });
+          const work = run.runTool(tool, { files: files.map(toFile), options: opts, passwords });
+          const out = hidden ? await Promise.race([work, new Promise((_, no) => setTimeout(() => no(new Error("stalled with the tab hidden")), 60000))]) : await work;
           return { ok: true, out: out.map((o) => ({ filename: o.filename, mime: o.mime, b64: b64(o.bytes) })) };
         } catch (e) {
           return { ok: false, error: String((e && e.message) || e) };
+        } finally {
+          restore();
         }
       },
-      { slug: c.slug, files, options: c.options || {}, passwords: c.passwords || {}, extra: extraFiles(c), runPath: "/src/lib/pdf/run.ts", catPath: "/src/lib/tools/catalog.ts" },
+      { slug: c.slug, files, options: c.options || {}, passwords: c.passwords || {}, extra: extraFiles(c), runPath: "/src/lib/pdf/run.ts", catPath: "/src/lib/tools/catalog.ts", hidden: !!c.hidden },
     );
   } catch (e) {
     res = { ok: false, error: "evaluate crashed: " + String(e).slice(0, 300) };

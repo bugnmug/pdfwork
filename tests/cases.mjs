@@ -204,6 +204,10 @@ print('cells' if found else 'flat')`);
       return ok([v.startsWith("4 ") ? `python-pptx opens: ${v}` : `✗ python-pptx: ${v.slice(0, 120)}`, o.ok ? "LibreOffice opens" : "✗ " + o.note]);
   } },
   { id: "pdf-to-jpg", slug: "pdf-to-jpg", files: ["text.pdf"], options: { dpi: "72" }, check: (s) => ok([all(s, ".jpg").length === 4 ? "4 jpgs" : `✗ ${all(s, ".jpg").length}`, first(s, ".zip") ? "zip" : "✗ zip"]) },
+  // Background tab: no animation frames are delivered, so rendering must not wait for them.
+  { id: "hidden-tab-pdf-to-jpg", slug: "pdf-to-jpg", files: ["text.pdf"], options: { dpi: "72" }, hidden: true, check: (s) => ok([all(s, ".jpg").length === 4 ? "4 jpgs with the tab hidden" : `✗ ${all(s, ".jpg").length}`]) },
+  { id: "hidden-tab-grayscale", slug: "grayscale-pdf", files: ["cmp-a.pdf"], hidden: true, check: (s, h) => ok(needPdf(s, h, { pages: 1 }).notes) },
+  { id: "hidden-tab-ocr-pdf", slug: "ocr-pdf", files: ["scan.pdf"], options: { lang: "eng" }, hidden: true, check: (s, h) => ok(needPdf(s, h, { pages: 1, text: ["Quarterly Operations"] }).notes) },
   { id: "pdf-to-png-some", slug: "pdf-to-jpg", files: ["text.pdf"], options: { format: "png", dpi: "96", pages: "2-3" }, check: (s) => ok([all(s, ".png").length === 2 ? "2 pngs" : `✗ ${all(s, ".png").length}`]) },
   { id: "extract-images", slug: "extract-images", files: ["text.pdf"], check: (s) => {
       const imgs = s.filter((x) => /\.(png|jpe?g)$/i.test(x.filename));
