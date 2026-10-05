@@ -9,6 +9,7 @@ export const Route = createFileRoute("/privacy")({
       { title: `How privacy works | ${BRAND.name}` },
       { name: "description", content: `${BRAND.name} processes PDFs inside your browser. Here is exactly what uses the network, what is stored, and how to check it yourself.` },
     ],
+    links: BRAND.url ? [{ rel: "canonical", href: `${BRAND.url}/privacy` }] : [],
   }),
   component: PrivacyPage,
 });

@@ -49,13 +49,23 @@ npm run lint
 
 ## Deploying
 
-The app is a TanStack Start project packaged by Nitro, which detects the host automatically.
+The app is a TanStack Start project packaged by Nitro, which detects the host during the build. Each of these has been built and run locally with that host's output format.
 
-- **Vercel**: import the repository; the defaults work (build command `npm run build`).
-- **Netlify** and **Cloudflare**: supported by Nitro presets; set `NITRO_PRESET` if detection doesn't pick the right one.
+- **Vercel** (recommended): import the repository and press Deploy. No settings to change.
+- **Netlify**: import the repository; `netlify.toml` sets the build command, publish folder and Node version.
+- **Cloudflare Workers**: build with `NITRO_PRESET=cloudflare_module npm run build` and deploy `.output` with Wrangler.
 - **Any Node server**: `npm run build`, then `node .output/server/index.mjs` (listens on `PORT`, default 3000).
 
-Set `url` in `src/lib/brand.ts` to the public address once deployed; it is used for canonical links, share cards and the sitemap.
+The public address used for share cards, canonical links and the sitemap is filled in at build time from the host (Vercel's production domain, Netlify's main URL). Elsewhere, set `SITE_URL=https://your.domain` when building. After adding a custom domain, redeploy once so the address updates.
+
+Free plans compared for this app (each visitor downloads about 0.25 MB for the page, 1 to 2 MB the first time they use a tool, about 6 MB for OCR):
+
+| | Vercel Hobby | Netlify Free |
+| --- | --- | --- |
+| Monthly downloads included | 100 GB | 300 credits; 20 per GB, so at most 15 GB |
+| Deploys | free | 15 credits each |
+| Commercial use (ads, selling) | not allowed; Pro is $20/month | allowed |
+| When the limit is hit | site paused until the month resets | site paused until the month resets |
 
 ## Optional configuration
 
@@ -74,6 +84,10 @@ All of these are optional. Without them every tool still works, using the on-dev
 
 The product name, tagline and description live in `src/lib/brand.ts`. Page titles, the header, footer, share cards and the producer field of generated PDFs all read from it. Replace `public/favicon.svg` and `public/og.jpg` to match.
 
+## Testing
+
+`tests/` holds browser tests that run every tool in Chromium and verify the outputs with qpdf, Poppler, PyMuPDF and LibreOffice: 90 engine cases, a smoke test that also checks the privacy meter, a page sweep at phone and desktop widths, and an encrypted P2P transfer. See `tests/README.md` for setup.
+
 ## Project layout
 
 ```
@@ -86,6 +100,7 @@ src/
   lib/tools/catalog.ts  the tool catalogue: names, descriptions, options, steps
   lib/ai/            on-device summarizer and search; optional server AI functions
 scripts/copy-assets.mjs  copies browser engines into public/vendor
+tests/               browser tests and fixture generator (separate package.json)
 ```
 
 To add a tool that takes files and options, add an entry to `TOOLS` in `catalog.ts` and a case in `run.ts`; the generic workspace renders the upload area, options form, progress and results.

@@ -1,0 +1,8 @@
+# Netlify settings. Nitro detects Netlify during the build, writes static files to dist/
+# and the page server to .netlify/functions-internal/, which Netlify picks up on its own.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"

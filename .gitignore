@@ -8,3 +8,8 @@ public/vendor/
 .env
 .env.*
 *.log
+
+# Test suite output and generated fixtures
+tests/node_modules/
+tests/fixtures/
+tests/out/

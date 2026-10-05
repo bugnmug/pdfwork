@@ -9,6 +9,9 @@ export const BRAND = {
   tagline: "Every PDF tool. None of the uploading.",
   description:
     "Free PDF tools that run in your browser. Merge, split, compress, convert, edit, sign, OCR and redact. No upload, no watermark, no account.",
-  /** Public URL once deployed, used for share cards. Leave empty to use relative URLs. */
-  url: "",
+  /**
+   * Public address, e.g. "https://example.com", used for share cards, canonical links and the sitemap.
+   * Filled in automatically on Vercel and Netlify; elsewhere set SITE_URL when building.
+   */
+  url: __SITE_URL__,
 } as const;

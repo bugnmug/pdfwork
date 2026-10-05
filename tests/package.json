@@ -1,0 +1,19 @@
+{
+  "name": "pdfwork-tests",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests for the PDF tools. Kept separate from the app so deploys don't install them.",
+  "scripts": {
+    "fixtures": "python3 make-fixtures.py",
+    "engine": "node engine.mjs",
+    "smoke": "node smoke.mjs",
+    "pages": "node pages.mjs",
+    "peer": "node peer-server.mjs",
+    "p2p": "node p2p.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "peer": "^1.0.2",
+    "playwright-core": "1.56.1"
+  }
+}

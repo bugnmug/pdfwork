@@ -19,6 +19,7 @@ export const Route = createFileRoute("/")({
       { title: `${BRAND.name}: ${TOOLS.length} free PDF tools that never upload your files` },
       { name: "description", content: BRAND.description },
     ],
+    links: BRAND.url ? [{ rel: "canonical", href: `${BRAND.url}/` }] : [],
   }),
   component: Home,
 });
