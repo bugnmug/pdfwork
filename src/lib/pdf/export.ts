@@ -6,7 +6,7 @@ import { imagesByPage } from "./contentstream";
 import { open, withZip, type Src } from "./pages";
 import { decodePixels, jpegBytes, listImages, pixelsToCanvas } from "./pdfimages";
 import { extractPages, linesToText, renderPage, toLines, withPdfjs, type PageText } from "./pdfjs";
-import { analyze, pageGrid, runsText, type Run, type SBlock } from "./structure";
+import { analyzeDoc, listLabel, luminance, pageGrid, runsText, type BodyStyle, type Cell, type Family, type FurnitureLine, type Geo, type ListFormat, type PageLayout, type Run, type SBlock } from "./structure";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -14,8 +14,12 @@ async function readStructured(src: Src, onProgress?: ProgressFn) {
   const pages = await extractPages(src.bytes, { password: src.password, styles: true, onProgress: (f, l) => onProgress?.(f * 0.5, l) });
   const chars = pages.reduce((s, p) => s + p.items.reduce((a, i) => a + i.str.trim().length, 0), 0);
   if (chars < 20) throw new Error("This looks like a scan, so there's no text to convert. Open it in OCR: Searchable PDF first.");
-  return { pages, blocks: analyze(pages) };
+  const { blocks, body, layout, furniture } = analyzeDoc(pages);
+  return { pages, blocks, body, layout, furniture };
 }
+
+type ListBlock = Extract<SBlock, { kind: "list" }>;
+type TableBlock = Extract<SBlock, { kind: "table" }>;
 
 /* ------------------------------------------------------------- images */
 
@@ -105,11 +109,13 @@ function layoutText(p: PageText): string {
 /* ------------------------------------------------------------- markdown */
 
 const mdEsc = (s: string) => s.replace(/([*_`[\]#|\\])/g, "\\$1");
-const mdRuns = (runs: Run[]) =>
+const mdRuns = (runs: Run[]): string =>
   runs
-    .map((r) => {
+    .map((r): string => {
       const t = mdEsc(r.text);
       if (!t.trim()) return t;
+      if (r.sup) return `<sup>${t.trim()}</sup>`;
+      if (r.br) return " " + mdRuns([{ ...r, br: false }]);
       const lead = t.match(/^\s*/)?.[0] ?? "";
       const trail = t.match(/\s*$/)?.[0] ?? "";
       const core = t.trim();
@@ -117,12 +123,26 @@ const mdRuns = (runs: Run[]) =>
     })
     .join("");
 
+function mdList(b: ListBlock): string {
+  return b.items
+    .map((it, i) => {
+      const lvl = b.levels[i] ?? 0;
+      const f = b.formats[lvl] ?? b.formats[0];
+      // Markdown numbers lists itself; nested items indent under their parent's text.
+      const label = f.kind === "check" ? "- [ ]" : f.kind === "bullet" ? "-" : /^\d/.test(listLabel(b, i)) ? `${listLabel(b, i).replace(/\D+$/, "")}.` : `- ${listLabel(b, i)}`;
+      return `${"   ".repeat(lvl)}${label} ${mdRuns(it)}`;
+    })
+    .join("\n");
+}
+
 export function blocksToMarkdown(blocks: SBlock[]): string {
   const out: string[] = [];
   for (const b of blocks) {
     if (b.kind === "heading") out.push(`${"#".repeat(b.level)} ${b.text}`);
     else if (b.kind === "para") out.push(mdRuns(b.runs));
-    else if (b.kind === "list") out.push(b.items.map((it, i) => `${b.ordered ? `${i + 1}.` : "-"} ${mdRuns(it)}`).join("\n"));
+    else if (b.kind === "list") out.push(mdList(b));
+    else if (b.kind === "box") out.push(blocksToMarkdown(b.blocks).trimEnd().split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n"));
+    else if (b.kind === "columns") out.push(blocksToMarkdown(b.blocks).trimEnd());
     else if (b.kind === "table") {
       const w = Math.max(...b.rows.map((r) => r.length));
       const row = (r: string[]) => `| ${Array.from({ length: w }, (_, i) => (r[i] ?? "").replace(/\|/g, "\\|").replace(/\n/g, "<br>")).join(" | ")} |`;
@@ -139,8 +159,47 @@ export async function pdfToMarkdown(src: Src, onProgress?: ProgressFn): Promise<
 
 /* ----------------------------------------------------------------- html */
 
+const htmlRuns = (rs: Run[]) =>
+  rs
+    .map((r) => {
+      let t = esc(r.text);
+      if (r.br) t = "<br>" + t;
+      if (r.sup) t = `<sup>${t}</sup>`;
+      if (r.italic) t = `<em>${t}</em>`;
+      if (r.bold) t = `<strong>${t}</strong>`;
+      return t;
+    })
+    .join("");
+
+const OL_TYPE: Partial<Record<ListFormat["kind"], string>> = { lowerLetter: "a", upperLetter: "A", lowerRoman: "i", upperRoman: "I" };
+
+/** A list as nested <ol>/<ul> elements, one level per indent. */
+function htmlList(b: ListBlock): string {
+  let html = "";
+  const open: string[] = [];
+  const openList = (lvl: number) => {
+    const f = b.formats[lvl] ?? b.formats[0];
+    const tag = f.kind === "bullet" || f.kind === "check" ? "ul" : "ol";
+    const attrs =
+      (tag === "ol" ? `${OL_TYPE[f.kind] ? ` type="${OL_TYPE[f.kind]}"` : ""}${f.start !== 1 ? ` start="${f.start}"` : ""}` : f.kind === "check" ? ` class="check"` : "") +
+      (lvl === 0 && b.columns && b.columns > 1 ? ` style="columns:${b.columns}"` : "");
+    html += `<${tag}${attrs}>`;
+    open.push(tag);
+  };
+  b.items.forEach((it, i) => {
+    const lvl = b.levels[i] ?? 0;
+    if (!open.length) openList(0);
+    while (open.length > lvl + 1) html += `</li></${open.pop()}>`;
+    if (open.length === lvl + 1 && i > 0) html += "</li>";
+    while (open.length < lvl + 1) openList(open.length);
+    const check = (b.formats[lvl] ?? b.formats[0]).kind === "check" ? "☐ " : "";
+    html += `<li>${check}${htmlRuns(it)}`;
+  });
+  while (open.length) html += `</li></${open.pop()}>`;
+  return html;
+}
+
 function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>): string {
-  const runs = (rs: Run[]) => rs.map((r) => (r.bold && r.italic ? `<strong><em>${esc(r.text)}</em></strong>` : r.bold ? `<strong>${esc(r.text)}</strong>` : r.italic ? `<em>${esc(r.text)}</em>` : esc(r.text))).join("");
   const out: string[] = [];
   let page = 0;
   const flushImgs = (p: number) => {
@@ -152,12 +211,31 @@ function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>): st
       page = b.page;
       out.push(`<hr class="page" aria-label="Page ${b.page + 1}">`);
     } else if (b.kind === "heading") out.push(`<h${b.level}>${esc(b.text)}</h${b.level}>`);
-    else if (b.kind === "para") out.push(`<p>${runs(b.runs)}</p>`);
-    else if (b.kind === "list") out.push(`<${b.ordered ? "ol" : "ul"}>${b.items.map((i) => `<li>${runs(i)}</li>`).join("")}</${b.ordered ? "ol" : "ul"}>`);
-    else if (b.kind === "table") {
-      const cell = (c: string, tag: string) => `<${tag}>${esc(c).replace(/\n/g, "<br>")}</${tag}>`;
-      const head = b.header ? `<thead><tr>${b.rows[0].map((c) => cell(c, "th")).join("")}</tr></thead>` : "";
-      out.push(`<table>${head}<tbody>${b.rows.slice(b.header ? 1 : 0).map((r) => `<tr>${r.map((c) => cell(c, "td")).join("")}</tr>`).join("")}</tbody></table>`);
+    else if (b.kind === "para") {
+      const style = [
+        b.align && b.align !== "left" ? `text-align:${b.align}` : "",
+        b.bar ? `border-left:3px solid ${b.bar};padding-left:.75em` : "",
+        b.indent && !b.bar ? `margin-left:${b.indent.left.toFixed(0)}pt;text-indent:${b.indent.first.toFixed(0)}pt` : "",
+      ]
+        .filter(Boolean)
+        .join(";");
+      out.push(`<p${style ? ` style="${style}"` : ""}>${htmlRuns(b.runs)}</p>`);
+    } else if (b.kind === "list") out.push(htmlList(b));
+    else if (b.kind === "columns") out.push(`<div style="columns:${b.count};column-gap:2em">${blocksToHtml(b.blocks, new Map())}</div>`);
+    else if (b.kind === "box") {
+      // Light boxes keep their colour; dark ones become a light panel with a bar in their colour, since text colours aren't kept here.
+      const light = !b.fill || luminance(b.fill) > 0.75;
+      const style = light ? `background:${b.fill ?? "transparent"};border:1px solid ${b.stroke ?? b.fill ?? "#ccc"}` : `background:#f4f6f8;border-left:4px solid ${b.fill}`;
+      out.push(`<aside style="${style};padding:.75em 1em;margin:1em 0;border-radius:4px">${blocksToHtml(b.blocks, new Map())}</aside>`);
+    } else if (b.kind === "table") {
+      const cell = (bl: TableBlock, ri: number, ci: number, tag: string) => {
+        const c = bl.cells[ri]?.[ci];
+        const inner = c?.blocks?.length ? blocksToHtml(c.blocks, new Map()) : (c?.paras ?? []).map(htmlRuns).join("<br>");
+        return `<${tag}${c?.align ? ` style="text-align:${c.align}"` : ""}>${inner}</${tag}>`;
+      };
+      const row = (ri: number, tag: string) => `<tr>${b.rows[ri].map((_, ci) => cell(b, ri, ci, tag)).join("")}</tr>`;
+      const head = b.header ? `<thead>${row(0, "th")}</thead>` : "";
+      out.push(`<table>${head}<tbody>${b.rows.map((_, ri) => (b.header && ri === 0 ? "" : row(ri, "td"))).join("")}</tbody></table>`);
     }
   }
   flushImgs(page);
@@ -218,11 +296,506 @@ async function pdfToHtmlExact(src: Src, onProgress?: ProgressFn): Promise<OutFil
 
 /* ----------------------------------------------------------------- docx */
 
+/** Faces PDFs commonly use, by name without spaces, and the font Word should show for them. */
+const WORD_FONTS: Record<string, string> = {
+  arial: "Arial",
+  helvetica: "Arial",
+  helveticaneue: "Arial",
+  liberationsans: "Arial",
+  nimbussans: "Arial",
+  arialnarrow: "Arial Narrow",
+  arialblack: "Arial Black",
+  aptos: "Aptos",
+  calibri: "Calibri",
+  calibrilight: "Calibri Light",
+  cambria: "Cambria",
+  candara: "Candara",
+  consolas: "Consolas",
+  constantia: "Constantia",
+  corbel: "Corbel",
+  couriernew: "Courier New",
+  courier: "Courier New",
+  liberationmono: "Courier New",
+  nimbusmono: "Courier New",
+  georgia: "Georgia",
+  garamond: "Garamond",
+  palatinolinotype: "Palatino Linotype",
+  palatino: "Palatino Linotype",
+  bookantiqua: "Book Antiqua",
+  timesnewroman: "Times New Roman",
+  times: "Times New Roman",
+  liberationserif: "Times New Roman",
+  nimbusroman: "Times New Roman",
+  segoeui: "Segoe UI",
+  tahoma: "Tahoma",
+  trebuchetms: "Trebuchet MS",
+  verdana: "Verdana",
+  centurygothic: "Century Gothic",
+  gillsans: "Gill Sans MT",
+  franklingothic: "Franklin Gothic Medium",
+  lucidaconsole: "Lucida Console",
+  comicsansms: "Comic Sans MS",
+  symbol: "Symbol",
+  wingdings: "Wingdings",
+};
+
+/**
+ * The font to name in Word for a PDF face. Common system fonts keep their name; anything
+ * else (usually a web font the reader won't have installed) gets a widely installed face
+ * of the same kind, so the document looks the same on every computer.
+ */
+function wordFont(face?: string, family?: Family): string {
+  const key = (face ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (key) {
+    if (WORD_FONTS[key]) return WORD_FONTS[key];
+    const hit = Object.keys(WORD_FONTS)
+      .filter((k) => k.length >= 5 && key.startsWith(k))
+      .sort((a, b) => b.length - a.length)[0];
+    if (hit) return WORD_FONTS[hit];
+  }
+  return family === "serif" ? "Georgia" : family === "mono" ? "Courier New" : "Arial";
+}
+
+const hex = (c?: string) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c.slice(1).toUpperCase() : undefined);
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+type DocxMod = typeof import("docx");
+type DocxOut = InstanceType<DocxMod["Paragraph"]> | InstanceType<DocxMod["Table"]>;
+/** Formatting a paragraph's runs inherit (size in half-points, colour without "#"). */
+type RunBase = { font: string; size: number; color: string; bold: boolean; italic: boolean };
+type Where = { width: number; bg?: string; pageBreak?: boolean; cell?: boolean };
+/** Marks where the page switches to `count` text columns (1: back to one), splitting the document into sections. */
+class Columns {
+  constructor(public count: number) {}
+}
+const content = (xs: (DocxOut | Columns)[]): DocxOut[] => xs.filter((x): x is DocxOut => !(x instanceof Columns));
+
+/** Writes structure blocks as Word content, keeping the PDF's fonts, sizes, colours, boxes and lists. */
+/** Word's single line height as a multiple of the font size (ascent, descent and line gap of the face). */
+const LINE_HEIGHT: Record<string, number> = {
+  Arial: 1.15,
+  "Arial Narrow": 1.15,
+  "Arial Black": 1.41,
+  Aptos: 1.2,
+  Calibri: 1.22,
+  "Calibri Light": 1.22,
+  Cambria: 1.17,
+  Candara: 1.22,
+  Consolas: 1.17,
+  Constantia: 1.22,
+  Corbel: 1.22,
+  "Courier New": 1.13,
+  Georgia: 1.14,
+  Garamond: 1.12,
+  "Palatino Linotype": 1.14,
+  "Book Antiqua": 1.17,
+  "Times New Roman": 1.15,
+  "Segoe UI": 1.33,
+  Tahoma: 1.21,
+  "Trebuchet MS": 1.16,
+  Verdana: 1.22,
+  "Century Gothic": 1.23,
+  "Gill Sans MT": 1.15,
+  "Franklin Gothic Medium": 1.13,
+};
+
+/** Text set in one paragraph: its main face and size, and Word's line spacing for it. */
+type Lines = { size: number; factor: number; multiple: number };
+
+/** Writes structure blocks as Word content, keeping the PDF's fonts, sizes, colours, spacing, boxes and lists. */
+class WordWriter {
+  private lists: { reference: string; levels: unknown[] }[] = [];
+  private body: RunBase;
+  private heads: Record<number, RunBase> = {};
+  private paraAfter: number;
+  /** The running text's line spacing, as a multiple of Word's single spacing. */
+  private multiple: number;
+
+  constructor(
+    private d: DocxMod,
+    private bs: BodyStyle,
+    blocks: SBlock[],
+  ) {
+    this.body = { font: wordFont(bs.face, bs.family), size: Math.round(bs.size * 2), color: hex(bs.color) ?? "000000", bold: false, italic: false };
+    // Each heading level looks like its first heading (its longest run).
+    const first: Record<number, Run> = {};
+    const walk = (bs2: SBlock[]) => {
+      for (const b of bs2) {
+        if (b.kind === "heading" && !first[b.level]) first[b.level] = [...b.runs].sort((x, y) => y.text.length - x.text.length)[0];
+        else if (b.kind === "box" || b.kind === "columns") walk(b.blocks);
+      }
+    };
+    walk(blocks);
+    for (const lvl of [1, 2, 3]) {
+      const r = first[lvl];
+      const color = r?.color && luminance(r.color) < 0.72 ? hex(r.color) : undefined;
+      this.heads[lvl] = r
+        ? { font: wordFont(r.face, r.family), size: Math.round((r.size ?? bs.size) * 2), color: color ?? this.body.color, bold: r.bold, italic: r.italic }
+        : { ...this.body, size: Math.round(bs.size * [0, 1.8, 1.4, 1.15][lvl] * 2), bold: true };
+    }
+    const f = LINE_HEIGHT[this.body.font] ?? 1.17;
+    this.multiple = bs.leading ? clamp(bs.leading / (bs.size * f), 1, 2) : 1.1;
+    this.paraAfter = bs.paraGap != null ? clamp(Math.round(bs.paraGap * 20), 40, 360) : 120;
+  }
+
+  styles() {
+    const head = (lvl: number) => {
+      const h = this.heads[lvl];
+      return {
+        run: { font: h.font, size: h.size, color: h.color, bold: h.bold, italics: h.italic },
+        paragraph: { spacing: { before: [0, 360, 300, 220][lvl], after: [0, 140, 120, 80][lvl], line: 240, lineRule: this.d.LineRuleType.AUTO }, keepNext: true, keepLines: true },
+      };
+    };
+    return {
+      default: {
+        document: {
+          run: { font: this.body.font, size: this.body.size, color: this.body.color },
+          paragraph: { spacing: { after: this.paraAfter, line: Math.round(this.multiple * 240), lineRule: this.d.LineRuleType.AUTO } },
+        },
+        heading1: head(1),
+        heading2: head(2),
+        heading3: head(3),
+      },
+    };
+  }
+
+  numbering() {
+    return this.lists;
+  }
+
+  /**
+   * Line spacing for a paragraph: from its own baseline-to-baseline spacing when it has
+   * several lines; single lines of large type are set solid, other text like the body.
+   */
+  private linesOf(runs: Run[], leading?: number): Lines {
+    const main = [...runs].sort((x, y) => y.text.length - x.text.length)[0];
+    const size = main?.size ?? this.bs.size;
+    const factor = LINE_HEIGHT[wordFont(main?.face, main?.family)] ?? 1.17;
+    const multiple = leading ? clamp(leading / (size * factor), 0.9, 3) : size > this.bs.size * 1.15 ? 1 : this.multiple;
+    return { size, factor, multiple };
+  }
+
+  /**
+   * Word's space after a paragraph, in twips, so the next text starts where it does in the PDF.
+   * `gap` runs from the bottom of this text to the top of the next (PDF line boxes reach 0.82
+   * of the size above the baseline and 0.22 below); Word's line boxes are taller by their
+   * line spacing, so that much less space is added. `next` is the size of the next text (0: a
+   * table or box edge).
+   */
+  private after(l: Lines, gap?: number, next = 0): number {
+    if (gap === undefined) return this.paraAfter;
+    const below = l.multiple * l.factor * l.size - 1.12 * l.size;
+    return Math.round(clamp(gap - below - 0.08 * next, 0, 72) * 20);
+  }
+
+  private spacing(l: Lines, after: number) {
+    return { before: 0, after, line: Math.round(l.multiple * 240), lineRule: this.d.LineRuleType.AUTO };
+  }
+
+  block(b: SBlock, at: Where): (DocxOut | Columns)[] {
+    const d = this.d;
+    if (b.kind === "heading") {
+      const level = [d.HeadingLevel.HEADING_1, d.HeadingLevel.HEADING_2, d.HeadingLevel.HEADING_3][b.level - 1];
+      const l = this.linesOf(b.runs, b.geo?.leading);
+      return [new d.Paragraph({ heading: level, children: this.runs(b.runs, this.heads[b.level], at.bg), pageBreakBefore: at.pageBreak, spacing: this.spacing(l, this.after(l, b.geo?.gap, b.geo?.next)) })];
+    }
+    if (b.kind === "para") {
+      const l = this.linesOf(b.runs, b.geo?.leading);
+      return [
+        new d.Paragraph({
+          children: this.runs(b.runs, this.body, at.bg),
+          pageBreakBefore: at.pageBreak,
+          keepNext: b.keep,
+          spacing: this.spacing(l, this.after(l, b.geo?.gap, b.geo?.next)),
+          alignment: b.align === "center" ? d.AlignmentType.CENTER : b.align === "right" ? d.AlignmentType.RIGHT : b.align === "justify" ? d.AlignmentType.JUSTIFIED : undefined,
+          ...(b.bar
+            ? { border: { left: { style: d.BorderStyle.SINGLE, size: 18, color: hex(b.bar) ?? "000000", space: 10 } }, indent: { left: 220 } }
+            : b.indent
+              ? {
+                  indent: {
+                    left: Math.round(b.indent.left * 20),
+                    ...(b.indent.right ? { right: Math.round(b.indent.right * 20) } : {}),
+                    ...(b.indent.first >= 0 ? { firstLine: Math.round(b.indent.first * 20) } : { hanging: Math.round(-b.indent.first * 20) }),
+                  },
+                }
+              : {}),
+        }),
+      ];
+    }
+    if (b.kind === "list") return this.list(b, at);
+    if (b.kind === "table") return this.withBreak(this.table(b, at), b.geo, at);
+    if (b.kind === "box") return this.withBreak(this.box(b, at), b.geo, at);
+    if (b.kind === "columns") {
+      // Inside a column, tables and boxes are a column wide.
+      const width = at.cell ? at.width : Math.round((at.width - 360 * (b.count - 1)) / b.count);
+      const inner = b.blocks.flatMap((x, k) => this.block(x, { ...at, width, pageBreak: at.pageBreak && k === 0, cell: true }));
+      // Columns of their own: a section set in columns (not inside a table or box).
+      return at.cell ? content(inner) : [new Columns(b.count), ...content(inner), new Columns(1)];
+    }
+    return [];
+  }
+
+  /** An empty paragraph after a table (it keeps the next table from joining it), exactly as tall as the gap below it in the PDF. */
+  private withBreak(out: DocxOut[], geo: Geo | undefined, at: Where): DocxOut[] {
+    const d = this.d;
+    const gap = geo?.gap !== undefined ? clamp(geo.gap - 0.08 * (geo.next ?? 0), 1, 72) : 8;
+    out.push(new d.Paragraph({ children: [], spacing: { before: 0, after: 0, line: Math.round(gap * 20), lineRule: d.LineRuleType.EXACT } }));
+    return at.pageBreak ? [new d.Paragraph({ children: [], pageBreakBefore: true, spacing: { before: 0, after: 0, line: 20, lineRule: d.LineRuleType.EXACT } }), ...out] : out;
+  }
+
+  private runs(rs: Run[], base: RunBase, bg?: string) {
+    return rs.map((r) => new this.d.TextRun({ ...(this.runOptions(r, base, bg) as object), ...(r.br ? { break: 1 } : {}) } as ConstructorParameters<DocxMod["TextRun"]>[0]));
+  }
+
+  private runOptions(r: Run, base: RunBase, bg?: string) {
+    const o: Record<string, unknown> = { text: r.text };
+    if (r.bold !== base.bold) o.bold = r.bold;
+    if (r.italic !== base.italic) o.italics = r.italic;
+    if (r.sup) o.superScript = true;
+    if (r.size && Math.abs(r.size * 2 - base.size) >= 1) o.size = Math.round(r.size * 2);
+    const font = wordFont(r.face, r.family);
+    if (r.family && font !== base.font) o.font = font;
+    // Light text shows only on the dark background it was drawn on.
+    const behind = r.bg ?? bg;
+    const color = r.color && luminance(r.color) > 0.72 && !(behind && luminance(behind) < 0.55) ? undefined : hex(r.color);
+    if (color && color !== base.color) o.color = color;
+    if (r.bg) o.shading = { type: this.d.ShadingType.CLEAR, color: "auto", fill: hex(r.bg) };
+    return o as ConstructorParameters<DocxMod["TextRun"]>[0];
+  }
+
+  private list(b: ListBlock, at: Where): (DocxOut | Columns)[] {
+    const d = this.d;
+    const reference = `list-${this.lists.length + 1}`;
+    const depth = Math.max(0, ...b.levels);
+    const tw = (pt: number) => Math.round(pt * 20);
+    const levels = Array.from({ length: depth + 1 }, (_, lvl) => {
+      const f = b.formats[lvl] ?? b.formats[b.formats.length - 1];
+      // Indents as in the PDF where known (the text's distance from the edge, the marker hanging before it).
+      const indent = f.indent && f.indent.left >= f.indent.hanging ? { left: tw(f.indent.left), hanging: tw(f.indent.hanging) } : { left: 360 * (lvl + 1) + 60, hanging: 360 };
+      // The number keeps its look (size, colour, weight, face); bullets keep size and colour only.
+      const color = f.run?.color && luminance(f.run.color) < 0.72 ? hex(f.run.color) : undefined;
+      const look = f.run ? { size: Math.round(f.run.size * 2), bold: f.run.bold, ...(color ? { color } : {}) } : {};
+      if (f.kind === "bullet" || f.kind === "check") {
+        // Word's own bullet glyphs: a dot, "o" in Courier New for a ring, a small square, a dash, a check box.
+        const [text, font] = f.kind === "check" ? ["\u2610", "Segoe UI Symbol"] : f.bullet === "◦" ? ["o", "Courier New"] : f.bullet === "▪" || f.bullet === "▫" ? ["\u25AA", "Segoe UI Symbol"] : f.bullet === "–" ? ["\u2013", undefined] : ["\u2022", undefined];
+        return { level: lvl, format: d.LevelFormat.BULLET, text, alignment: d.AlignmentType.START, style: { paragraph: { indent }, run: { ...look, ...(font ? { font } : {}) } } };
+      }
+      const format = { decimal: d.LevelFormat.DECIMAL, lowerLetter: d.LevelFormat.LOWER_LETTER, upperLetter: d.LevelFormat.UPPER_LETTER, lowerRoman: d.LevelFormat.LOWER_ROMAN, upperRoman: d.LevelFormat.UPPER_ROMAN }[f.kind];
+      const run = f.run ? { ...look, font: wordFont(f.run.face, f.run.family) } : undefined;
+      return { level: lvl, format, text: `${f.before}%${lvl + 1}${f.after}`, start: f.start, alignment: d.AlignmentType.START, style: { paragraph: { indent }, ...(run ? { run } : {}) } };
+    });
+    this.lists.push({ reference, levels });
+    // Rules between items become a line under each item: under every top-level item (after
+    // its sub-items), so they read as separators; anything less regular is left out.
+    const ends = b.items.map((_, i) => i === b.items.length - 1 || (b.levels[i + 1] ?? 0) === 0);
+    const ruled = b.rules && b.rules.every((r, i) => (ends[i] ? !!r || i === b.items.length - 1 : !r)) ? b.rules : undefined;
+    // A number set much larger than its text would make Word's first line taller: set lines exactly.
+    const f0 = b.formats[0];
+    const paras = b.items.map((it, i) => {
+      const l = this.linesOf(it, b.geo?.leading);
+      const big = !!f0.run && (b.levels[i] ?? 0) === 0 && f0.run.size > l.size * 1.3;
+      const last = i === b.items.length - 1;
+      const gap = last ? b.geo?.gap : (b.gaps?.[i] ?? 0);
+      const next = last ? b.geo?.next : (b.items[i + 1] && this.linesOf(b.items[i + 1]).size) || l.size;
+      const rule = ruled?.[i];
+      let after = this.after(l, gap, next);
+      let border: object | undefined;
+      if (rule && gap !== undefined) {
+        // Word draws the line `space` points below the text. Paragraphs with identical borders
+        // merge into one bordered block (one line under the last), so neighbouring items get
+        // colours one step apart.
+        const below = l.multiple * l.factor * l.size - 1.12 * l.size;
+        const space = Math.round(clamp(rule.at - below, 0, 30));
+        after = Math.round(clamp(gap - rule.at - rule.h - 0.08 * (next ?? 0), 0, 72) * 20);
+        const c = parseInt(hex(rule.color) ?? "000000", 16);
+        const color = ((c & 0xffff00) | Math.max(0, Math.min(255, (c & 0xff) + (i % 2 ? (c & 0xff) > 127 ? -1 : 1 : 0)))).toString(16).padStart(6, "0").toUpperCase();
+        border = { bottom: { style: d.BorderStyle.SINGLE, size: Math.max(2, Math.round(rule.h * 8)), color, space } };
+      }
+      const spacing = big ? { ...this.spacing(l, after), line: Math.round(l.multiple * l.factor * l.size * 20), lineRule: d.LineRuleType.EXACT } : this.spacing(l, after);
+      return new d.Paragraph({
+        children: this.runs(it, this.body, at.bg),
+        numbering: { reference, level: b.levels[i] ?? 0 },
+        pageBreakBefore: at.pageBreak && i === 0,
+        spacing,
+        ...(border ? { border } : {}),
+      });
+    });
+    // A list set in columns keeps its columns (a section of its own).
+    return b.columns && b.columns > 1 && !at.cell ? [new Columns(b.columns), ...paras, new Columns(1)] : paras;
+  }
+
+  /** Paragraphs of a plain table cell, spaced as in the PDF; the last one adds no space (the cell margin does). */
+  private cellParas(c: Cell | undefined, bg: string | undefined, leading?: number, keep?: boolean): DocxOut[] {
+    const d = this.d;
+    const ps = c?.paras.length ? c.paras : [[]];
+    return ps.map((p, pi) => {
+      const l = this.linesOf(p, c?.geo?.leadings[pi] ?? leading);
+      const after = pi < ps.length - 1 ? this.after(l, c?.geo?.gaps[pi] ?? 2, c?.geo?.sizes[pi + 1]) : 0;
+      const alignment = c?.align === "right" ? d.AlignmentType.RIGHT : c?.align === "center" ? d.AlignmentType.CENTER : undefined;
+      return new d.Paragraph({ children: this.runs(p, this.body, bg), spacing: this.spacing(l, after), keepNext: keep, alignment });
+    });
+  }
+
+  private table(b: TableBlock, at: Where): DocxOut[] {
+    const d = this.d;
+    const cols = b.widths.map((w) => Math.max(240, Math.round(w * at.width)));
+    const lc = hex(b.lineColor) ?? "000000";
+    const line = (color: string, size = 4) => ({ style: d.BorderStyle.SINGLE, size, color });
+    const none = { style: d.BorderStyle.NONE, size: 0, color: "auto" };
+    const all = (e: ReturnType<typeof line> | typeof none) => ({ top: e, bottom: e, left: e, right: e, insideHorizontal: e, insideVertical: e });
+    // Lines as the PDF draws them: rules above and below rows (each in its colour), a full grid, or none.
+    const rowRules = b.lines === "rows" ? b.rowRules : undefined;
+    const borders = b.lines === "grid" ? all(line(lc)) : all(none);
+    const cards = b.lines === "cards";
+    // Cell margins: the PDF's space around cell text, less what Word's taller lines already take.
+    const sizes = b.cells.flatMap((r) => r.flatMap((c) => c?.geo?.sizes ?? []));
+    const l = this.linesOf([{ text: "x", bold: false, italic: false, size: sizes.length ? sizes.sort((x, y) => x - y)[sizes.length >> 1] : this.bs.size }], b.leading);
+    const below = l.multiple * l.factor * l.size - 1.12 * l.size;
+    const padX = Math.round((b.pad?.x ?? (cards ? 8 : 5)) * 20);
+    const top = Math.round(clamp((b.pad?.y ?? 3) - 0.08 * l.size, 0, 30) * 20);
+    const bottom = cards ? 0 : Math.round(clamp((b.pad?.y ?? 3) - below, 0, 30) * 20);
+    return [
+      new d.Table({
+        width: { size: cols.reduce((a, c) => a + c, 0), type: d.WidthType.DXA },
+        columnWidths: cols,
+        layout: d.TableLayoutType.FIXED,
+        borders,
+        margins: { top, bottom, left: padX, right: padX },
+        rows: b.cells.map(
+          (r, ri) =>
+            new d.TableRow({
+              tableHeader: b.header && ri === 0,
+              cantSplit: r.every((c) => (c?.paras.length ?? 0) <= 6),
+              children: cols.map((w, ci) => {
+                const c = r[ci];
+                const fill = c?.fill;
+                const bg = fill ?? at.bg;
+                // Word keeps a table on one page when every row but the last keeps with the next.
+                const keep = b.keep && ri < b.cells.length - 1;
+                const kids: DocxOut[] = c?.blocks?.length ? content(c.blocks.flatMap((x) => this.block(x, { width: w - padX * 2, bg, cell: true }))) : this.cellParas(c, bg, b.leading, keep);
+                if (!(kids[kids.length - 1] instanceof d.Paragraph)) kids.push(new d.Paragraph({ children: [] }));
+                const edge = c?.stroke ? line(hex(c.stroke) ?? "000000", 6) : undefined;
+                const rule = (color?: string | null) => (color ? line(hex(color) ?? "000000", 6) : none);
+                const cellBorders = cards && edge ? { top: edge, bottom: edge, left: edge, right: edge } : rowRules ? { top: rule(rowRules[ri]), bottom: ri === b.cells.length - 1 ? rule(rowRules[ri + 1]) : none, left: none, right: none } : undefined;
+                return new d.TableCell({
+                  width: { size: w, type: d.WidthType.DXA },
+                  children: kids,
+                  ...(fill ? { shading: { type: d.ShadingType.CLEAR, color: "auto", fill: hex(fill) } } : {}),
+                  ...(cellBorders ? { borders: cellBorders } : {}),
+                });
+              }),
+            }),
+        ),
+      }),
+    ];
+  }
+
+  private box(b: Extract<SBlock, { kind: "box" }>, at: Where): DocxOut[] {
+    const d = this.d;
+    const s = hex(b.stroke);
+    const edge = s ? { style: d.BorderStyle.SINGLE, size: 6, color: s } : { style: d.BorderStyle.NONE, size: 0, color: "auto" };
+    const none = { style: d.BorderStyle.NONE, size: 0, color: "auto" };
+    const padX = Math.round((b.pad?.x ?? 10) * 20);
+    const first = b.blocks.map((x) => ("geo" in x ? x.geo : undefined)).find(Boolean)?.first ?? 0;
+    const kids = content(b.blocks.flatMap((x) => this.block(x, { width: at.width - padX * 2, bg: b.fill ?? at.bg, cell: true })));
+    if (!(kids[kids.length - 1] instanceof d.Paragraph)) kids.push(new d.Paragraph({ children: [] }));
+    return [
+      new d.Table({
+        width: { size: at.width, type: d.WidthType.DXA },
+        columnWidths: [at.width],
+        layout: d.TableLayoutType.FIXED,
+        borders: { top: edge, bottom: edge, left: edge, right: edge, insideHorizontal: none, insideVertical: none },
+        rows: [
+          new d.TableRow({
+            cantSplit: kids.length <= 10,
+            children: [
+              new d.TableCell({
+                width: { size: at.width, type: d.WidthType.DXA },
+                // The last paragraph's spacing reaches down to the box's edge, so no bottom margin.
+                margins: { top: Math.round(clamp((b.pad?.y ?? 8) - 0.08 * first, 0, 30) * 20), bottom: 0, left: padX, right: padX },
+                ...(b.fill ? { shading: { type: d.ShadingType.CLEAR, color: "auto", fill: hex(b.fill) } } : {}),
+                children: kids,
+              }),
+            ],
+          }),
+        ],
+      }),
+    ];
+  }
+}
+
+/** A running header or footer line: its pieces at the left, centre and right (tab stops), page numbers as fields. */
+function furnitureParagraph(d: DocxMod, line: FurnitureLine, width: number) {
+  const has = (at: string) => line.parts.some((p) => p.at === at);
+  const tabStops = [...(has("center") ? [{ type: d.TabStopType.CENTER, position: Math.round(width / 2) }] : []), { type: d.TabStopType.RIGHT, position: width }];
+  const color = line.color && luminance(line.color) < 0.72 ? hex(line.color) : undefined;
+  const look = { size: Math.round(line.size * 2), bold: line.bold, font: wordFont(line.face, line.family), ...(color ? { color } : {}) };
+  const children: InstanceType<DocxMod["TextRun"]>[] = [];
+  let stop = 0;
+  for (const p of line.parts) {
+    const want = p.at === "left" ? 0 : p.at === "center" ? 1 : has("center") ? 2 : 1;
+    const tabs: (InstanceType<DocxMod["Tab"]> | string)[] = [];
+    for (; stop < want; stop++) tabs.push(new d.Tab());
+    if (children.length && !tabs.length) tabs.push(" ");
+    const pieces = p.text.split(/(\{PAGE\}|\{PAGES\})/).filter(Boolean).map((t) => (t === "{PAGE}" ? d.PageNumber.CURRENT : t === "{PAGES}" ? d.PageNumber.TOTAL_PAGES : t));
+    children.push(new d.TextRun({ ...look, children: [...tabs, ...pieces] as never }));
+  }
+  return new d.Paragraph({ children, tabStops, spacing: { before: 0, after: 0 } });
+}
+
+/** The document split into sections where the number of text columns changes. */
+function sectionsOf(d: DocxMod, children: (DocxOut | Columns)[], layout: PageLayout, furniture?: { header: FurnitureLine[]; footer: FurnitureLine[] }) {
+  const parts: { count: number; children: DocxOut[] }[] = [{ count: 1, children: [] }];
+  for (const c of children) {
+    if (c instanceof Columns) {
+      if (!parts[parts.length - 1].children.length) parts.pop();
+      parts.push({ count: c.count, children: [] });
+    } else parts[parts.length - 1].children.push(c);
+  }
+  // A section set in columns needs one after it, or Word won't balance its columns.
+  if (parts[parts.length - 1].count > 1) parts.push({ count: 1, children: [] });
+  for (const p of parts) if (p.count === 1 && !p.children.length) p.children.push(new d.Paragraph({ children: [], spacing: { before: 0, after: 0, line: 20, lineRule: d.LineRuleType.EXACT } }));
+  const used = parts.filter((p) => p.children.length);
+  // Running header and footer on the first section; later sections carry them on.
+  const width = Math.round((layout.width - layout.left - layout.right) * 20);
+  const header = furniture?.header.length ? { headers: { default: new d.Header({ children: furniture.header.map((l) => furnitureParagraph(d, l, width)) }) } } : {};
+  const footer = furniture?.footer.length ? { footers: { default: new d.Footer({ children: furniture.footer.map((l) => furnitureParagraph(d, l, width)) }) } } : {};
+  // Header and footer where the PDF has them, inside the page margins.
+  const page = pageSetup(d, layout);
+  const fit = (lines: FurnitureLine[] | undefined, margin: number) => (lines?.length ? Math.round(clamp(Math.min(...lines.map((l) => l.edge)), 12, Math.max(12, margin - lines.length * 12 - 4)) * 20) : undefined);
+  const hd = fit(furniture?.header, layout.top);
+  const fd = fit(furniture?.footer, layout.bottom);
+  const margin = { ...page.margin, ...(hd !== undefined ? { header: hd } : {}), ...(fd !== undefined ? { footer: fd } : {}) };
+  return (used.length ? used : [{ count: 1, children: [new d.Paragraph({ children: [] })] }]).map((p, i) => ({
+    ...(i === 0 ? { ...header, ...footer } : {}),
+    properties: {
+      page: { ...page, margin },
+      ...(i > 0 ? { type: d.SectionType.CONTINUOUS } : {}),
+      ...(p.count > 1 ? { column: { count: p.count, space: 360, equalWidth: true } } : {}),
+    },
+    children: p.children as never[],
+  }));
+}
+
+/** Word page size and margins (twips) for a PDF page layout. Landscape pages are given short side first, as docx expects. */
+function pageSetup(d: DocxMod, l: PageLayout) {
+  const tw = (pt: number) => Math.round(pt * 20);
+  const landscape = l.width > l.height;
+  return {
+    size: { width: tw(Math.min(l.width, l.height)), height: tw(Math.max(l.width, l.height)), orientation: landscape ? d.PageOrientation.LANDSCAPE : d.PageOrientation.PORTRAIT },
+    margin: { top: tw(l.top), right: tw(l.right), bottom: tw(l.bottom), left: tw(l.left), header: tw(Math.min(36, l.top / 2)), footer: tw(Math.min(36, l.bottom / 2)) },
+  };
+}
+
 export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; pageBreaks?: boolean; images?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
   const d = await import("docx");
-  const children: InstanceType<typeof d.Paragraph | typeof d.Table>[] = [];
+  const children: (DocxOut | Columns)[] = [];
   const name = stem(src.name);
-  let landscape = false;
+  // Pages the size of the PDF's, with its margins, so lines and pages break in the same places.
+  let layout: PageLayout = { width: 595.3, height: 841.9, top: 72, right: 72, bottom: 72, left: 72 };
+  let docStyles: ConstructorParameters<typeof d.Document>[0]["styles"];
+  let numbering: unknown[] = [];
+  let furniture: { header: FurnitureLine[]; footer: FurnitureLine[] } = { header: [], footer: [] };
   if (o.mode === "exact") {
     await withPdfjs(
       src.bytes,
@@ -231,30 +804,33 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
           onProgress?.(i / pageCount, `Page ${i} of ${pageCount}`);
           const page = await pdf.getPage(i);
           const vp = page.getViewport({ scale: 1 });
+          if (i === 1) layout = { width: vp.width, height: vp.height, top: 18, right: 18, bottom: 18, left: 18 };
           const canvas = await renderPage(page, 2);
           page.cleanup();
           const data = await canvasToBytes(canvas, "image/jpeg", 0.85);
-          const maxW = 600;
-          const w = Math.min(maxW, vp.width * 1.0);
-          children.push(new d.Paragraph({ children: [new d.ImageRun({ type: "jpg", data, transformation: { width: w, height: (w * vp.height) / vp.width } })], pageBreakBefore: i > 1 }));
+          // Fit the page picture inside the margins (sizes in pixels at 96 per inch).
+          const scale = Math.min((layout.width - 36) / vp.width, ((layout.height - 36) * 0.97) / vp.height);
+          const w = vp.width * scale * (96 / 72);
+          children.push(new d.Paragraph({ children: [new d.ImageRun({ type: "jpg", data, transformation: { width: w, height: (w * vp.height) / vp.width } })], pageBreakBefore: i > 1, spacing: { after: 0 } }));
           await tick();
         }
       },
       src.password,
     );
   } else {
-    const { blocks, pages } = await readStructured(src, onProgress);
-    landscape = pages.filter((p) => p.width > p.height).length > pages.length / 2;
-    // A4 with 2.54 cm margins: the text block is this many twips wide.
-    const contentWidth = landscape ? 16838 - 2880 : 11906 - 2880;
+    const r = await readStructured(src, onProgress);
+    const { blocks, body } = r;
+    layout = r.layout;
+    furniture = r.furniture;
+    const contentWidth = Math.round((layout.width - layout.left - layout.right) * 20);
     const imgs = new Map<number, ExtractedImage[]>();
     if (o.images !== false) for (const im of await extractImages(src, { minSize: 40 }).catch(() => [])) imgs.set(im.page, [...(imgs.get(im.page) ?? []), im]);
-    const runs = (rs: Run[], size?: number) => rs.map((r) => new d.TextRun({ text: r.text, bold: r.bold, italics: r.italic, size }));
+    const w = new WordWriter(d, body, blocks);
     let page = 0;
     const pushImgs = (p: number) => {
       for (const im of imgs.get(p) ?? []) {
-        const w = Math.min(560, im.width * 0.75);
-        children.push(new d.Paragraph({ children: [new d.ImageRun({ type: im.mime === "image/png" ? "png" : "jpg", data: im.bytes, transformation: { width: w, height: (w * im.height) / im.width } })] }));
+        const iw = Math.min(560, im.width * 0.75);
+        children.push(new d.Paragraph({ children: [new d.ImageRun({ type: im.mime === "image/png" ? "png" : "jpg", data: im.bytes, transformation: { width: iw, height: (iw * im.height) / im.width } })] }));
       }
     };
     let breakNext = false;
@@ -262,66 +838,36 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
       if (b.kind === "pagebreak") {
         pushImgs(page);
         page = b.page;
-        breakNext = o.pageBreaks !== false;
+        // Only breaks the author made; where a page simply filled up, the text flows on.
+        breakNext = o.pageBreaks !== false && b.deliberate !== false;
         continue;
       }
-      const pb = breakNext;
-      breakNext = false;
-      if (b.kind === "heading") {
-        const level = [d.HeadingLevel.HEADING_1, d.HeadingLevel.HEADING_2, d.HeadingLevel.HEADING_3][b.level - 1];
-        children.push(new d.Paragraph({ heading: level, children: [new d.TextRun(b.text)], pageBreakBefore: pb }));
-      } else if (b.kind === "para") children.push(new d.Paragraph({ children: runs(b.runs), spacing: { after: 120 }, pageBreakBefore: pb }));
-      else if (b.kind === "list") {
-        b.items.forEach((it, i) =>
-          children.push(
-            new d.Paragraph({
-              children: runs(it),
-              ...(b.ordered ? { numbering: { reference: "num", level: 0 } } : { bullet: { level: 0 } }),
-              pageBreakBefore: pb && i === 0,
-            }),
-          ),
-        );
-      } else if (b.kind === "table") {
-        if (pb) children.push(new d.Paragraph({ children: [], pageBreakBefore: true }));
-        const cols = b.widths.map((w) => Math.round(w * contentWidth));
-        children.push(
-          new d.Table({
-            width: { size: contentWidth, type: d.WidthType.DXA },
-            columnWidths: cols,
-            layout: d.TableLayoutType.FIXED,
-            margins: { top: 60, bottom: 60, left: 100, right: 100 },
-            rows: b.cells.map(
-              (r, ri) =>
-                new d.TableRow({
-                  tableHeader: b.header && ri === 0,
-                  cantSplit: r.every((c) => c.paras.length <= 6),
-                  children: cols.map(
-                    (w, ci) =>
-                      new d.TableCell({
-                        width: { size: w, type: d.WidthType.DXA },
-                        shading: b.header && ri === 0 ? { type: d.ShadingType.CLEAR, color: "auto", fill: "E9EBF2" } : undefined,
-                        children: (r[ci]?.paras.length ? r[ci].paras : [[]]).map((p, pi, all) => new d.Paragraph({ children: runs(p), spacing: { after: pi < all.length - 1 ? 60 : 0 } })),
-                      }),
-                  ),
-                }),
-            ),
-          }),
-        );
-        children.push(new d.Paragraph({ children: [] }));
-      }
+      const out = w.block(b, { width: contentWidth, pageBreak: breakNext });
+      if (out.length) breakNext = false;
+      children.push(...out);
     }
     pushImgs(page);
+    docStyles = w.styles();
+    numbering = w.numbering();
   }
   const doc = new d.Document({
     creator: BRAND.name,
     title: name,
-    numbering: { config: [{ reference: "num", levels: [{ level: 0, format: d.LevelFormat.DECIMAL, text: "%1.", alignment: d.AlignmentType.START }] }] },
-    sections: [{ properties: landscape ? { page: { size: { orientation: d.PageOrientation.LANDSCAPE } } } : {}, children: children as never[] }],
+    styles: docStyles,
+    numbering: { config: numbering as never },
+    sections: sectionsOf(d, children, layout, furniture),
   });
-  const blob = await d.Packer.toBlob(doc);
+  let bytes: Uint8Array = new Uint8Array(await (await d.Packer.toBlob(doc)).arrayBuffer());
+  // The paragraphs docx adds to end each section (columns) take no room.
+  const zip = await JSZip.loadAsync(bytes);
+  const xml = await zip.file("word/document.xml")?.async("string");
+  if (xml?.includes("<w:p><w:pPr><w:sectPr>")) {
+    zip.file("word/document.xml", xml.replaceAll("<w:p><w:pPr><w:sectPr>", '<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/><w:sectPr>'));
+    bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+  }
   return {
     filename: `${name}.docx`,
-    bytes: new Uint8Array(await blob.arrayBuffer()),
+    bytes,
     mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     note: o.mode === "exact" ? "Pages as images (looks identical, not editable)" : "Editable text with headings, lists and tables",
   };

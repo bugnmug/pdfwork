@@ -2,7 +2,9 @@
  * PDF.js wrapper. Uses the "legacy" build, which ships polyfills for the
  * newest JavaScript built-ins the modern build assumes (the modern build
  * crashed on any browser older than a few months). Character maps, standard
- * fonts and image decoders are served from this site, not a CDN.
+ * fonts and image decoders are served from this site, not a CDN. The worker is
+ * a patched copy (scripts/copy-assets.mjs) that reads a PDF's ActualText and
+ * marks the spaces it infers, so text comes back as the document says it.
  */
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 
@@ -15,8 +17,7 @@ export function getPdfjs(): Promise<PdfjsMod> {
   if (!cached) {
     cached = (async () => {
       const pdfjs = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as unknown as PdfjsMod;
-      const worker = await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url");
-      pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+      pdfjs.GlobalWorkerOptions.workerSrc = `${base()}vendor/pdfjs/pdf.worker.mjs`;
       return pdfjs;
     })();
     cached.catch(() => (cached = null));
@@ -188,12 +189,50 @@ export type TextItem = {
   bold: boolean;
   italic: boolean;
   hasEOL: boolean;
+  /** Fill colour as #rrggbb; missing when the PDF uses a colour space that can't be read directly. */
+  color?: string;
+  /** Font family name from the PDF (see fontFace), when known. */
+  face?: string;
 };
 
-export type PageText = { page: number; width: number; height: number; items: TextItem[] };
+/** A filled or stroked shape (rectangle, rule, box), as its bounding box in the visual frame; `round` when drawn with curves. */
+export type Shape = { x: number; y: number; w: number; h: number; fill?: string; stroke?: string; round?: boolean };
+
+export type PageText = { page: number; width: number; height: number; items: TextItem[]; shapes?: Shape[] };
+
+/** Names of serif faces, for PDFs that don't flag their fonts as serif. */
+const SERIF = /serif|times|roman|georgia|garamond|cambria|bookantiqua|bookman|minion|palatino|lora|merriweather|playfair|baskerville|caslon|bodoni|didot|charter|crimson|spectral|literata|newsreader|fraunces|cormorant|bitter|slab|alegreya|cardo|gelasio|tinos|domine|vollkorn|noticia|constantia|sabon|utopia|perpetua|rockwell|tiempos|chronicle|schoolbook|goudy|janson|plantin|joanna|calisto|libertin|kepler|warnock|stix|lmroman|cmr\d/i;
 
 const ASC = 0.82;
 const DESC = 0.22;
+
+/**
+ * A space the worker inferred from a gap between glyphs: a marker, then the gap's width
+ * in thousandths of the font size as one private-use character (scripts/copy-assets.mjs).
+ */
+const INFERRED = /\u0091([\uE000-\uEFFF])/g;
+
+/**
+ * Settle inferred spaces. In letter-spaced text (tracked-out labels) nearly every pair
+ * of letters has a gap of the same width; only the wider gaps between words are spaces.
+ * Elsewhere every inferred gap is a word space. Also maps stand-in characters some
+ * fonts report for curly quotes.
+ */
+export function cleanItemText(str: string): string {
+  let out = str;
+  if (out.includes("\u0091")) {
+    const gaps = [...out.matchAll(INFERRED)].map((m) => (m[1].charCodeAt(0) - 0xe000) / 1000);
+    const letters = out.replace(INFERRED, "").replace(/\s+/g, "").length;
+    let word = 0;
+    if (gaps.length >= 3 && gaps.length >= (letters - 1) * 0.5) {
+      // Tracking is the common, smallest gap; a word break adds roughly a space to it.
+      const sorted = [...gaps].sort((a, b) => a - b);
+      word = sorted[Math.floor(sorted.length * 0.25)] + 0.12;
+    }
+    out = out.replace(INFERRED, (_, g: string) => ((g.charCodeAt(0) - 0xe000) / 1000 > word ? " " : ""));
+  }
+  return out.replace(/\u02BC/g, "\u2019").replace(/\u02EE/g, "\u201D");
+}
 
 /** Text items with geometry in the visual frame (handles /Rotate, crop offsets and rotated text). */
 export async function pageText(page: PDFPageProxy): Promise<PageText> {
@@ -203,7 +242,8 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
   const items: TextItem[] = [];
   for (const raw of content.items) {
     if (!("str" in raw)) continue;
-    const item = raw as { str: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean };
+    const item = raw as { str: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean; color?: string };
+    item.str = cleanItemText(item.str);
     if (!item.str) continue;
     const m = multiply(viewport.transform, item.transform);
     const fontSize = Math.hypot(m[2], m[3]) || item.height || 1;
@@ -249,13 +289,83 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
       ay,
       bbox: { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) },
       fontName: item.fontName,
-      family: /mono|courier|consol|menlo|typewriter/i.test(fam) ? "mono" : /serif|times|roman|georgia|garamond|cambria|book|minion|palatino/i.test(fam) && !/sans/i.test(fam) ? "serif" : "sans",
+      family: /mono|courier|consol|menlo|typewriter/i.test(fam) ? "mono" : SERIF.test(fam) && !/sans/i.test(fam) ? "serif" : "sans",
       bold: /bold|black|heavy|semibold|demi/i.test(fam),
       italic: /italic|oblique/i.test(fam),
       hasEOL: item.hasEOL,
+      ...(item.color && /^#[0-9a-f]{6}$/.test(item.color) ? { color: item.color } : {}),
     });
   }
   return { page: page.pageNumber, width: viewport.width, height: viewport.height, items };
+}
+
+type OpList = { fnArray: number[]; argsArray: unknown[] };
+
+/**
+ * Filled and stroked shapes on a page (backgrounds, boxes, rules, check boxes), from its
+ * operator list. Shapes inside annotations are left out; clipping paths are ignored.
+ */
+function shapesOf(ops: OpList, OPS: Record<string, number>, vt: number[]): Shape[] {
+  const out: Shape[] = [];
+  type St = { ctm: number[]; fill?: string; stroke?: string; lw: number };
+  let st: St = { ctm: [1, 0, 0, 1, 0, 0], fill: "#000000", stroke: "#000000", lw: 1 };
+  const stack: St[] = [];
+  const FILL = new Set([OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+  const STROKE = new Set([OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+  let annot = 0;
+  for (let i = 0; i < ops.fnArray.length && out.length < 5000; i++) {
+    const fn = ops.fnArray[i];
+    const a = ops.argsArray[i] as unknown[];
+    if (fn === OPS.beginAnnotation) annot++;
+    else if (fn === OPS.endAnnotation) annot = Math.max(0, annot - 1);
+    if (annot) continue;
+    if (fn === OPS.save || fn === OPS.beginGroup) stack.push({ ...st });
+    else if (fn === OPS.restore || fn === OPS.endGroup || fn === OPS.paintFormXObjectEnd) st = stack.pop() ?? st;
+    else if (fn === OPS.paintFormXObjectBegin) {
+      stack.push({ ...st });
+      const m = a?.[0] as number[] | null;
+      if (m && m.length === 6) st.ctm = multiply(st.ctm, Array.from(m));
+    } else if (fn === OPS.transform) st.ctm = multiply(st.ctm, Array.from(a as number[]));
+    else if (fn === OPS.setFillRGBColor) st.fill = typeof a[0] === "string" ? a[0] : undefined;
+    else if (fn === OPS.setStrokeRGBColor) st.stroke = typeof a[0] === "string" ? a[0] : undefined;
+    else if (fn === OPS.setFillTransparent) st.fill = undefined;
+    else if (fn === OPS.setStrokeTransparent) st.stroke = undefined;
+    else if (fn === OPS.setLineWidth) st.lw = Number(a[0]) || 0;
+    else if (fn === OPS.constructPath) {
+      const paint = a[0] as number;
+      const path = (a[1] as ArrayLike<number>[] | undefined)?.[0];
+      const mm = a[2] as ArrayLike<number> | null;
+      const fill = FILL.has(paint) ? st.fill : undefined;
+      const stroke = STROKE.has(paint) ? st.stroke : undefined;
+      if (!mm || (!fill && !stroke) || !(mm[2] >= mm[0]) || !(mm[3] >= mm[1])) continue;
+      const m = multiply(vt, st.ctm);
+      const pts = [
+        [mm[0], mm[1]],
+        [mm[2], mm[1]],
+        [mm[0], mm[3]],
+        [mm[2], mm[3]],
+      ].map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]);
+      const xs = pts.map((p) => p[0]);
+      const ys = pts.map((p) => p[1]);
+      // A stroke reaches half the line width past the path.
+      const pad = stroke ? (Math.max(st.lw, 0.5) * Math.hypot(m[0], m[1])) / 2 : 0;
+      const x = Math.min(...xs) - pad;
+      const y = Math.min(...ys) - pad;
+      // Path data: 0 move (2 numbers), 1 line (2), 2 curve (6), 3 quadratic curve (4), 4 close.
+      // Round: curves and no straight sides (a circle, not a rounded rectangle).
+      let curves = 0;
+      let straight = 0;
+      for (let k = 0; path && k < path.length; ) {
+        const op = path[k++];
+        if (op === 2 || op === 3) curves++;
+        else if (op === 1) straight++;
+        k += op === 0 || op === 1 ? 2 : op === 2 ? 6 : op === 3 ? 4 : 0;
+      }
+      const round = curves > 0 && straight === 0;
+      out.push({ x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y, ...(fill ? { fill } : {}), ...(stroke ? { stroke } : {}), ...(round ? { round } : {}) });
+    }
+  }
+  return out;
 }
 
 /**
@@ -301,24 +411,43 @@ function multiply(a: number[], b: number[]): number[] {
   ];
 }
 
-/** Resolve bold/italic from the actual font objects (fontName alone is often "g_d0_f3"). */
-export async function enrichFontStyles(page: PDFPageProxy, items: TextItem[]) {
+/**
+ * Resolve bold/italic from the actual font objects (fontName alone is often "g_d0_f3"),
+ * and return the page's shapes (boxes, rules) from the same operator list.
+ */
+export async function enrichFontStyles(page: PDFPageProxy, items: TextItem[]): Promise<Shape[]> {
   const names = [...new Set(items.map((i) => i.fontName))];
-  if (!names.length) return;
+  let ops: OpList;
   try {
-    await page.getOperatorList();
+    ops = (await page.getOperatorList()) as unknown as OpList;
   } catch {
-    return;
+    return [];
   }
-  const info = new Map<string, { bold: boolean; italic: boolean; family?: TextItem["family"] }>();
+  let shapes: Shape[] = [];
+  try {
+    const pdfjs = await getPdfjs();
+    shapes = shapesOf(ops, pdfjs.OPS as unknown as Record<string, number>, page.getViewport({ scale: 1 }).transform);
+  } catch {
+    shapes = [];
+  }
+  if (!names.length) return shapes;
+  const info = new Map<string, { bold: boolean; italic: boolean; family?: TextItem["family"]; face?: string }>();
+  type FontObj = { name?: string; bold?: boolean; italic?: boolean; black?: boolean; isSerifFont?: boolean; isMonospace?: boolean };
   for (const n of names) {
     try {
-      const objs = (page as unknown as { commonObjs: { has(n: string): boolean; get(n: string): { name?: string; bold?: boolean; italic?: boolean; black?: boolean } } }).commonObjs;
+      const objs = (page as unknown as { commonObjs: { has(n: string): boolean; get(n: string): FontObj } }).commonObjs;
       if (!objs.has(n)) continue;
       const f = objs.get(n);
       const nm = f?.name ?? "";
-      const family = /mono|courier|consol|menlo|typewriter/i.test(nm) ? "mono" : /serif|times|roman|georgia|garamond|cambria|book|minion|palatino/i.test(nm) && !/sans/i.test(nm) ? "serif" : nm ? "sans" : undefined;
-      info.set(n, { bold: !!f?.bold || !!f?.black || /bold|black|heavy|semibold|demi/i.test(nm), italic: !!f?.italic || /italic|oblique/i.test(nm), family });
+      const family =
+        f?.isMonospace || /mono|courier|consol|menlo|typewriter/i.test(nm)
+          ? "mono"
+          : (f?.isSerifFont || SERIF.test(nm)) && !/sans/i.test(nm)
+            ? "serif"
+            : nm
+              ? "sans"
+              : undefined;
+      info.set(n, { bold: !!f?.bold || !!f?.black || /bold|black|heavy|semibold|demi/i.test(nm), italic: !!f?.italic || /italic|oblique/i.test(nm), family, face: fontFace(nm) || undefined });
     } catch {
       /* ignore */
     }
@@ -329,8 +458,19 @@ export async function enrichFontStyles(page: PDFPageProxy, items: TextItem[]) {
       it.bold = it.bold || s.bold;
       it.italic = it.italic || s.italic;
       if (s.family) it.family = s.family;
+      if (s.face) it.face = s.face;
     }
   }
+  return shapes;
+}
+
+/** The family part of a PDF font name: "ABCDEF+Lora-SemiBold" → "Lora", "TimesNewRomanPS-BoldMT" → "TimesNewRoman". */
+export function fontFace(name: string): string {
+  return name
+    .replace(/^[A-Z]{6}\+/, "")
+    .split(/[,-]/)[0]
+    .replace(/(PSMT|PS|MT)$/, "")
+    .trim();
 }
 
 export async function extractPages(
@@ -345,7 +485,7 @@ export async function extractPages(
         opts.onProgress?.(i / pageCount, `Reading page ${i} of ${pageCount}`);
         const page = await pdf.getPage(i);
         const t = await pageText(page);
-        if (opts.styles) await enrichFontStyles(page, t.items);
+        if (opts.styles) t.shapes = await enrichFontStyles(page, t.items);
         page.cleanup();
         out.push(t);
       }

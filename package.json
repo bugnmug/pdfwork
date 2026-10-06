@@ -66,6 +66,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
     "prettier": "^3.4.0",
+    "rolldown": "^1.2.12",
     "typescript-eslint": "^8.56.1"
   },
   "overrides": {
