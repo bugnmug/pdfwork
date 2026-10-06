@@ -1,0 +1,80 @@
+<!doctype html>
+<!-- A research paper's first page: title, authors and abstract across the page, then two columns
+     of justified paragraphs with first-line indents, a footnote mark at the end of a line, a
+     chart drawn in SVG with its caption, a table with a caption, numbered references ([1], [2])
+     with a link, and the footnote at the foot of the page. Conversions must read each column
+     down in turn, keep the mark with its word, show the chart as one picture, and keep the
+     references' own numbers. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: Letter; margin: 0.8in 0.78in 0.9in; }
+body { font-family: "Liberation Serif", "Times New Roman", serif; font-size: 10pt; line-height: 1.26; color: #000; margin: 0; }
+h1 { font-size: 17pt; text-align: center; margin: 0 0 8pt; }
+.authors { text-align: center; font-size: 11pt; margin: 0 0 3pt; }
+.aff { text-align: center; font-style: italic; font-size: 9pt; margin: 0 0 14pt; }
+.abstract { font-size: 9pt; margin: 0 0.4in 16pt; text-align: justify; }
+.cols { column-count: 2; column-gap: 0.3in; text-align: justify; }
+h2 { font-size: 11pt; margin: 10pt 0 5pt; break-after: avoid; }
+p { margin: 0; text-indent: 12pt; }
+h2 + p, .first { text-indent: 0; }
+sup { font-size: 6.5pt; line-height: 0; }
+figure { margin: 8pt 0 6pt; break-inside: avoid; text-align: center; }
+figcaption { font-size: 8.5pt; text-align: center; margin-top: 3pt; }
+table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin: 4pt 0 2pt; break-inside: avoid; }
+th { text-align: left; border-top: 1pt solid #000; border-bottom: 0.6pt solid #000; padding: 2pt 3pt; }
+td { padding: 2pt 3pt; }
+tr:last-child td { border-bottom: 1pt solid #000; }
+td.n, th.n { text-align: right; }
+.refs { font-size: 8.5pt; text-align: left; }
+.refs p { text-indent: -16pt; padding-left: 16pt; margin: 0 0 3pt; }
+a { color: #1a3d8f; text-decoration: none; }
+.foot { position: absolute; left: 0; top: 8.55in; font-size: 8pt; width: 3.3in; border-top: 0.5pt solid #000; padding-top: 3pt; }
+</style></head><body>
+<h1>Measuring Reading Order in Converted Documents</h1>
+<p class="authors">A. Rao and K. Menon</p>
+<p class="aff">Department of Computer Science, Example University</p>
+<p class="abstract"><b>Abstract.</b> Documents converted from PDF often lose the order in which their text should be read, especially when pages are set in two columns. We describe a simple method that finds the columns on each page and reads them in turn, and we measure how often the result matches the reading order a person would choose. On a set of three hundred papers the method agrees with human readers on ninety-four percent of pages.</p>
+<div class="cols">
+<h2>1 Introduction</h2>
+<p>Portable documents describe where each character sits on a page but say little about the order in which the characters should be read. A converter must recover that order before it can produce text that flows correctly in an editor.<sup>1</sup></p>
+<p>The problem is easy for a single column of text and hard for layouts with several columns, sidebars and figures. Earlier systems relied on the order in which characters appear in the file, which often follows the order in which the authoring tool drew them rather than the order of reading.</p>
+<p>In this paper we focus on the most common difficult case, a page set in two columns with a title and abstract across its full width.</p>
+<h2>2 Method</h2>
+<p>We group characters into lines and lines into blocks, then look for a vertical gap that runs down most of the page. Blocks to the left of the gap are read before blocks to its right. Where a block spans the gap, such as a title, it is read first.</p>
+<p>Lines whose ends line up with the column edges are treated as running text; short lines that end a sentence close a paragraph. Each paragraph is then joined back into a single block of text.</p>
+<figure>
+<svg width="220" height="128" viewBox="0 0 220 128" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, Arial, sans-serif" font-size="7">
+  <line x1="30" y1="8" x2="30" y2="104" stroke="#555" stroke-width="0.8"/>
+  <line x1="30" y1="104" x2="214" y2="104" stroke="#555" stroke-width="0.8"/>
+  <line x1="30" y1="56" x2="214" y2="56" stroke="#ccc" stroke-width="0.5"/>
+  <line x1="30" y1="8" x2="214" y2="8" stroke="#ccc" stroke-width="0.5"/>
+  <text x="26" y="106" text-anchor="end">0</text>
+  <text x="26" y="58" text-anchor="end">50</text>
+  <text x="26" y="10" text-anchor="end">100</text>
+  <rect x="44" y="9" width="34" height="95" fill="#3b6ea8"/>
+  <rect x="104" y="14.6" width="34" height="89.4" fill="#3b6ea8"/>
+  <rect x="164" y="26.2" width="34" height="77.8" fill="#c0504d"/>
+  <text x="61" y="116" text-anchor="middle">One column</text>
+  <text x="121" y="116" text-anchor="middle">Two columns</text>
+  <text x="181" y="116" text-anchor="middle">Mixed</text>
+  <text x="10" y="60" text-anchor="middle" transform="rotate(-90 10 60)">Agreement (%)</text>
+</svg>
+<figcaption>Figure 1. Agreement with human readers, in percent.</figcaption>
+</figure>
+<table>
+<tr><th>Layout</th><th class="n">Pages</th><th class="n">Agreement</th></tr>
+<tr><td>One column</td><td class="n">120</td><td class="n">99%</td></tr>
+<tr><td>Two columns</td><td class="n">150</td><td class="n">94%</td></tr>
+<tr><td>Mixed</td><td class="n">30</td><td class="n">81%</td></tr>
+</table>
+<p class="first" style="font-size:8.5pt;text-align:center">Table 1. Agreement with human readers by page layout.</p>
+<h2>3 Results</h2>
+<p>Table 1 shows the agreement for each kind of layout. Pages with a single column were almost always read correctly. Two-column pages reached ninety-four percent, with most errors caused by figures placed across both columns.</p>
+<p>Mixed layouts, which combine columns of different widths on one page, remain the hardest case and are the subject of further work.</p>
+<h2>References</h2>
+<div class="refs">
+<p>[1] B. Kumar. Text extraction from portable documents. <i>Journal of Document Engineering</i>, 12(3):45–60, 2021. <a href="https://doi.example/10.1000/jde.2021.45">doi.example/10.1000/jde.2021.45</a></p>
+<p>[2] L. Chen and M. Shah. Reading order for multi-column pages. In <i>Proceedings of the Workshop on Document Analysis</i>, pages 101–110, 2023.</p>
+</div>
+</div>
+<p class="foot"><sup>1</sup> Code and data are available from the authors on request.</p>
+</body></html>

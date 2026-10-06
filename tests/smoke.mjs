@@ -24,6 +24,12 @@ const slidesInfo = (p) => {
   return { pages: d.slides.length, text: d.slides.flatMap((s) => s.texts.map((t) => t.text)).join(" ").replace(/\s+/g, " "), dump: d };
 };
 
+/** A web page's text, and the page itself. */
+const pageInfo = (p) => {
+  const html = readFileSync(p, "utf8");
+  return { pages: 1, html, text: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ") };
+};
+
 async function run(name, slug, files, press, check, ext = "pdf") {
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1360, height: 900 } });
   const page = await ctx.newPage();
@@ -42,7 +48,7 @@ async function run(name, slug, files, press, check, ext = "pdf") {
     const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 30000 }), btn.click()]);
     const f = `${OUT}${name}-${dl.suggestedFilename()}`;
     await dl.saveAs(f);
-    notes.push(...check(ext === "pptx" ? slidesInfo(f) : info(f)));
+    notes.push(...check(ext === "pptx" ? slidesInfo(f) : ext === "html" ? pageInfo(f) : info(f)));
     const meter = await page.locator('[aria-label^="Your files sent to servers"]').first().getAttribute("aria-label");
     notes.push(/: 0 B\./.test(meter ?? "") ? "meter 0 B" : `✗ meter: ${meter}`);
   } catch (e) {
@@ -67,6 +73,8 @@ await run("markdown", "markdown-to-pdf", [FX + "sample.md"], "Convert to PDF", (
 await run("auto-redact", "auto-redact", [FX + "text.pdf"], /^Redact selected/, (t) => [`${t.pages} pages`, ...want(t, ["Quarterly", "Consulting hours"], ["priya.sharma@example.com", "ABCDE1234F", "4111 1111 1111 1111", "27ABCDE1234F1Z5"])]);
 await run("ocr", "ocr-pdf", [FX + "scan.pdf"], /^Make searchable|^Run OCR|^OCR|^Convert|^Recognize/i, (t) => [`${t.pages} page(s)`, t.text.trim().length > 40 ? `text ${t.text.trim().length} chars` : "✗ no OCR text"]);
 await run("pdf-to-ppt", "pdf-to-ppt", [FX + "deck.pdf"], "Convert to PowerPoint", (t) => [t.pages === 9 ? "9 slides" : `✗ ${t.pages} slides`, ...want(t, ["Northwind Outdoor Co.", "Gross margin improved to 46.5%"])], "pptx");
+// The deck as a web page: its chart, drawn with shapes, comes as one picture of the chart.
+await run("pdf-to-html", "pdf-to-html", [FX + "deck.pdf"], "Convert to HTML", (t) => [/<img src="data:image\/png/.test(t.html) && !/\b10\.8\b/.test(t.text) ? "chart as a picture" : "✗ chart not a picture", ...want(t, ["Northwind Outdoor Co.", "Revenue by channel"])], "html");
 
 await browser.close();
 console.log(failed ? `${failed} failed` : "all passed");

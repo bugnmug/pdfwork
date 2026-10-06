@@ -5,9 +5,9 @@ import { canvasToBytes, stem, tick, type OutFile, type ProgressFn } from "./core
 import { imagesByPage, placementOf, viewTransform, walkImages } from "./contentstream";
 import { open, withZip, type Src } from "./pages";
 import { decodePixels, jpegBytes, listImages, pixelsToCanvas } from "./pdfimages";
-import { enrichFontStyles, extractPages, linesToText, loosePictures, pageText, pictureCanvas, renderPage, toLines, withPdfjs, type LoosePicture, type PageText, type Pic } from "./pdfjs";
+import type { DrawnFigure } from "./drawn";
+import { enrichFontStyles, extractPages, linesToText, loosePictures, pageLinks, pageText, pictureCanvas, renderPage, renderRegion, toLines, withPdfjs, type LoosePicture, type PageText, type Pic } from "./pdfjs";
 import type { PMedia, PPic, PRun, PSlide, PText } from "./pptxwrite";
-import type { Link } from "./toslides";
 import type { PDFPageProxy } from "pdfjs-dist";
 import { analyzeDoc, listLabel, luminance, runsText, type BodyStyle, type Cell, type Family, type Furniture, type FurnitureLine, type Geo, type ListFormat, type PageLayout, type Run, type SBlock, type Under } from "./structure";
 
@@ -22,8 +22,32 @@ async function readStructured(src: Src, onProgress?: ProgressFn, o: { images?: b
   const chars = pages.reduce((s, p) => s + p.items.reduce((a, i) => a + i.str.trim().length, 0), 0);
   if (chars < 20) throw new Error("This looks like a scan, so there's no text to convert. Open it in OCR: Searchable PDF first.");
   const images = o.images ? await placeImages(src, pages).catch(() => new Map<string, ExtractedImage>()) : new Map<string, ExtractedImage>();
-  const { blocks, body, layout, furniture, unread } = analyzeDoc(pages);
+  const { blocks, body, layout, furniture, unread, drawn } = analyzeDoc(pages);
+  if (o.images && drawn.length) await drawFigures(src, drawn, images).catch(() => undefined);
   return { pages, blocks, body, layout, furniture, images, unread };
+}
+
+/** Pictures of the charts and drawings the pages make of shapes (see drawn.ts), each drawn once. */
+async function drawFigures(src: Src, drawn: DrawnFigure[], images: Map<string, ExtractedImage>) {
+  await withPdfjs(
+    src.bytes,
+    async ({ pdf }) => {
+      let n = 0;
+      for (const f of drawn) {
+        if (images.has(f.pic.id)) continue;
+        const page = await pdf.getPage(f.page + 1);
+        try {
+          const canvas = await renderRegion(page, f.pic, Math.min(3, Math.max(2, 1800 / Math.max(f.pic.w, f.pic.h))));
+          const bytes = await canvasToBytes(canvas, "image/png");
+          images.set(f.pic.id, { name: `${stem(src.name)}-p${f.page + 1}-figure${++n}.png`, bytes, mime: "image/png", page: f.page, width: canvas.width, height: canvas.height, ref: f.pic.id });
+          canvas.width = canvas.height = 0;
+        } finally {
+          page.cleanup();
+        }
+      }
+    },
+    src.password,
+  );
 }
 
 /** The document's pictures by object, each drawn place added to its page as a `pic`. */
@@ -50,7 +74,7 @@ async function placeImages(src: Src, pages: PageText[]): Promise<Map<string, Ext
 function unplaced(images: Map<string, ExtractedImage>, pages: PageText[], unread = new Set<number>()): Map<number, ExtractedImage[]> {
   const placed = new Set(pages.flatMap((p, pi) => (unread.has(pi) ? [] : (p.pics ?? []).map((x) => x.id))));
   const out = new Map<number, ExtractedImage[]>();
-  for (const im of images.values()) if (!placed.has(im.ref) && im.width >= 40 && im.height >= 40) out.set(im.page, [...(out.get(im.page) ?? []), im]);
+  for (const im of images.values()) if (!placed.has(im.ref) && !im.ref.startsWith("draw-") && im.width >= 40 && im.height >= 40) out.set(im.page, [...(out.get(im.page) ?? []), im]);
   return out;
 }
 
@@ -151,16 +175,57 @@ function layoutText(p: PageText): string {
 /* ------------------------------------------------------------- markdown */
 
 const mdEsc = (s: string) => s.replace(/([*_`[\]#|\\])/g, "\\$1");
+
+/** Runs grouped by the link they are under; spaces at either end of a link stay outside it. */
+function byLink(rs: Run[]): { url?: string; runs: Run[] }[] {
+  const groups: { url?: string; runs: Run[] }[] = [];
+  for (const r of rs) {
+    const last = groups[groups.length - 1];
+    if (last && last.url === r.link) last.runs.push(r);
+    else groups.push({ url: r.link, runs: [r] });
+  }
+  return groups.flatMap((g) => {
+    if (!g.url) return [g];
+    const n = g.runs.length;
+    const lead = g.runs[0].text.match(/^\s*/)![0];
+    const trail = g.runs[n - 1].text.match(/\s*$/)![0];
+    if (!lead && !trail) return [g];
+    const runs = g.runs.map((r, i) => {
+      let text = r.text;
+      if (i === 0) text = text.trimStart();
+      if (i === n - 1) text = text.trimEnd();
+      return { ...r, text, ...(i === 0 && lead ? { br: undefined, tab: undefined } : {}) };
+    });
+    return [
+      ...(lead ? [{ runs: [{ ...g.runs[0], text: lead, link: undefined }] }] : []),
+      { url: g.url, runs: runs.filter((r) => r.text || r.pic) },
+      ...(trail ? [{ runs: [{ ...g.runs[n - 1], text: trail, link: undefined, br: undefined, tab: undefined, pic: undefined }] }] : []),
+    ];
+  });
+}
+
+/** A link's address as Markdown can hold it (no spaces or brackets left bare). */
+const mdUrl = (u: string) => u.replace(/[ ()<>]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0"));
+
 const mdRuns = (runs: Run[]): string =>
+  byLink(runs)
+    .map((g) => {
+      const t = mdPlain(g.runs);
+      return g.url && t.trim() ? `[${t}](${mdUrl(g.url)})` : t;
+    })
+    .join("");
+
+const mdPlain = (runs: Run[]): string =>
   runs
     .map((r): string => {
       // Pictures in the text have no place in plain Markdown.
       if (r.pic) return "";
       const t = mdEsc(r.text);
       if (!t.trim()) return t;
-      if (r.sup) return `<sup>${t.trim()}</sup>`;
-      if (r.br) return "\\\n" + mdRuns([{ ...r, br: false }]);
-      if (r.tab !== undefined) return " " + mdRuns([{ ...r, tab: undefined }]);
+      // (Spaces stay outside the tag, so the words around it don't run together.)
+      if (r.sup) return `${t.match(/^\s*/)?.[0] ?? ""}<sup>${t.trim()}</sup>${t.match(/\s*$/)?.[0] ?? ""}`;
+      if (r.br) return "\\\n" + mdPlain([{ ...r, br: false }]);
+      if (r.tab !== undefined) return " " + mdPlain([{ ...r, tab: undefined }]);
       const lead = t.match(/^\s*/)?.[0] ?? "";
       const trail = t.match(/\s*$/)?.[0] ?? "";
       const core = t.trim();
@@ -181,51 +246,98 @@ function mdList(b: ListBlock): string {
     .join("\n");
 }
 
+/**
+ * A running header or footer line as it reads once, without its page numbers ("Page 3 of 9"):
+ * its pieces in order, or nothing when it only numbers the pages.
+ */
+function furnitureParts(l: FurnitureLine): string[] {
+  return l.parts
+    .map((p) =>
+      /\{PAGES?\}/.test(p.text)
+        ? p.text
+            .replace(/\s*(?:\b(?:page|p\.?)\s*)?\{PAGE\}(?:\s*(?:of|\/)\s*\{PAGES\})?/gi, "")
+            .replace(/\{PAGES?\}/g, "")
+            .replace(/^[\s·|–—-]+|[\s·|–—-]+$/g, "")
+        : p.text.trim(),
+    )
+    .filter((t) => /\p{L}|\d/u.test(t));
+}
+
 export function blocksToMarkdown(blocks: SBlock[]): string {
   const out: string[] = [];
   for (const b of blocks) {
-    if (b.kind === "heading") out.push(`${"#".repeat(b.level)} ${b.text}`);
+    if (b.kind === "heading") out.push(`${"#".repeat(b.level)} ${b.runs.some((r) => r.link) ? byLink(b.runs).map((g) => (g.url ? `[${mdEsc(runsText(g.runs))}](${mdUrl(g.url)})` : mdEsc(runsText(g.runs)))).join("").replace(/\s+/g, " ") : b.text}`);
     else if (b.kind === "para") out.push(mdRuns(b.runs));
     else if (b.kind === "list") out.push(mdList(b));
     else if (b.kind === "box") out.push(blocksToMarkdown(b.blocks).trimEnd().split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n"));
     else if (b.kind === "columns") out.push(blocksToMarkdown(b.blocks).trimEnd());
     else if (b.kind === "rule") out.push("---");
-    // Content set side by side only for the page's look reads one part after the other.
-    else if (b.kind === "table" && b.layout) out.push(b.cells.flat().map((c) => blocksToMarkdown(c.blocks ?? []).trimEnd()).filter(Boolean).join("\n\n"));
+    // Content set side by side only for the page's look (and cards in a row) reads one part after the other.
+    else if (b.kind === "table" && (b.layout || b.lines === "cards"))
+      out.push(
+        b.cells
+          .flat()
+          .map((c) => (c?.blocks?.length ? blocksToMarkdown(c.blocks) : (c?.paras ?? []).map(mdRuns).join("\n\n")).trimEnd())
+          .filter(Boolean)
+          .join("\n\n"),
+      );
     else if (b.kind === "table") {
-      const w = Math.max(...b.rows.map((r) => r.length));
-      const row = (r: string[]) => `| ${Array.from({ length: w }, (_, i) => (r[i] ?? "").replace(/\|/g, "\\|").replace(/\n/g, "<br>")).join(" | ")} |`;
-      out.push([row(b.rows[0]), `| ${Array.from({ length: w }, () => "---").join(" | ")} |`, ...b.rows.slice(1).map(row)].join("\n"));
+      // Cells keep their emphasis and links; their paragraphs are separated by line breaks.
+      const w = Math.max(...b.cells.map((r) => r.length));
+      const cell = (c?: Cell) => (c ? c.paras.map((p) => mdRuns(p).replace(/\\\n/g, "<br>").replace(/\n/g, " ")).join("<br>").replace(/\|/g, "\\|") : "");
+      const row = (r: Cell[]) => `| ${Array.from({ length: w }, (_, i) => cell(r[i])).join(" | ")} |`;
+      out.push([row(b.cells[0]), `| ${Array.from({ length: w }, () => "---").join(" | ")} |`, ...b.cells.slice(1).map(row)].join("\n"));
     }
   }
   return out.join("\n\n") + "\n";
 }
 
 export async function pdfToMarkdown(src: Src, onProgress?: ProgressFn): Promise<OutFile> {
-  const { blocks } = await readStructured(src, onProgress);
-  return { filename: `${stem(src.name)}.md`, bytes: new TextEncoder().encode(blocksToMarkdown(blocks)), mime: "text/markdown" };
+  const { blocks, furniture } = await readStructured(src, onProgress);
+  // The running header and footer (a letterhead, a statement's period), once: before and after the text.
+  const lines = (ls: FurnitureLine[]) => ls.map((l) => furnitureParts(l).map((t) => (l.bold ? `**${mdEsc(t)}**` : mdEsc(t))).join(" · ")).filter(Boolean);
+  const head = lines(furniture.header);
+  const foot = lines(furniture.footer);
+  const md = (head.length ? head.join("  \n") + "\n\n" : "") + blocksToMarkdown(blocks) + (foot.length ? "\n---\n\n" + foot.join("  \n") + "\n" : "");
+  return { filename: `${stem(src.name)}.md`, bytes: new TextEncoder().encode(md), mime: "text/markdown" };
 }
 
 /* ----------------------------------------------------------------- html */
 
-/** The pictures of the document being written as HTML (for pictures set in the text). */
-let htmlPics: Map<string, ExtractedImage> | undefined;
+/**
+ * What the HTML being written knows of its document: its pictures by id, the size of its running
+ * text (points), and where a picture's file is (in the page as a data URI, or a file beside it).
+ */
+type HtmlDoc = { pics?: Map<string, ExtractedImage>; body?: number; src: (im: ExtractedImage) => string };
+const dataUri = (im: ExtractedImage) => `data:${im.mime};base64,${b64(im.bytes)}`;
+let hdoc: HtmlDoc = { src: dataUri };
 
 const htmlRun = (r: Run) => {
   if (r.pic) {
-    const im = htmlPics?.get(r.pic.id);
+    const im = hdoc.pics?.get(r.pic.id);
     return im ? `<span style="display:inline-block;vertical-align:middle">${htmlPic(r.pic, im)}</span>` : "";
   }
   let t = esc(r.text);
+  // Symbols keep their colour (a legend's keys, a coloured tick); words take the page's.
+  if (r.color && r.text.trim() && !/[\p{L}\p{N}]/u.test(r.text) && luminance(r.color) < 0.85) t = `<span style="color:${r.color}">${t}</span>`;
   if (r.br) t = "<br>" + t;
   if (r.sup) t = `<sup>${t}</sup>`;
   if (r.italic) t = `<em>${t}</em>`;
   if (r.bold) t = `<strong>${t}</strong>`;
   return t;
 };
-/** Runs as HTML; a piece set flush right (after a tab) floats to the right of the line, other tabs become a wide space. */
+/**
+ * Runs as HTML; a piece set flush right (after a tab) floats to the right of the line, other
+ * tabs become a wide space. Links open their address.
+ */
 const htmlRuns = (rs: Run[]) => {
-  const plain = (xs: Run[]) => xs.map((r) => (r.tab !== undefined ? "&emsp;&emsp;" : "") + htmlRun(r)).join("");
+  const plain = (xs: Run[]) =>
+    byLink(xs)
+      .map((g) => {
+        const h = g.runs.map((r) => (r.tab !== undefined ? "&#8195;&#8195;" : "") + htmlRun(r)).join("");
+        return g.url ? `<a href="${esc(g.url)}">${h}</a>` : h;
+      })
+      .join("");
   const k = rs.findIndex((r) => r.tab === "right");
   if (k < 0) return plain(rs);
   return `${plain(rs.slice(0, k))} <span style="float:right">${plain([{ ...rs[k], tab: undefined }, ...rs.slice(k + 1)])}</span>`;
@@ -233,15 +345,23 @@ const htmlRuns = (rs: Run[]) => {
 
 const OL_TYPE: Partial<Record<ListFormat["kind"], string>> = { lowerLetter: "a", upperLetter: "A", lowerRoman: "i", upperRoman: "I" };
 
-/** A list as nested <ol>/<ul> elements, one level per indent. */
+/** Numbers HTML writes itself: plain ones followed by a full stop (1. a. i.). Others ([1], (a), 2)) are written as the PDF has them. */
+const plainNumber = (f: ListFormat) => !f.before && (f.after === "." || f.after === "");
+
+/**
+ * A list as nested <ol>/<ul> elements, one level per indent. Numbers set some other way ([1],
+ * (a), a clause's 2.1) hang before the text as they read in the PDF.
+ */
 function htmlList(b: ListBlock): string {
   let html = "";
   const open: string[] = [];
+  const formatOf = (lvl: number) => b.formats[lvl] ?? b.formats[0];
+  const labelled = (f: ListFormat) => f.kind === "none" || (f.kind !== "bullet" && f.kind !== "check" && !plainNumber(f));
   const openList = (lvl: number) => {
-    const f = b.formats[lvl] ?? b.formats[0];
+    const f = formatOf(lvl);
     const tag = f.kind === "bullet" || f.kind === "check" || f.kind === "none" ? "ul" : "ol";
     const attrs =
-      (tag === "ol" ? `${OL_TYPE[f.kind] ? ` type="${OL_TYPE[f.kind]}"` : ""}${f.start !== 1 ? ` start="${f.start}"` : ""}` : f.kind === "check" ? ` class="check"` : f.kind === "none" ? ` style="list-style:none"` : "") +
+      (labelled(f) ? ` class="lbl"` : tag === "ol" ? `${OL_TYPE[f.kind] ? ` type="${OL_TYPE[f.kind]}"` : ""}${f.start !== 1 ? ` start="${f.start}"` : ""}` : f.kind === "check" ? ` class="check"` : "") +
       (lvl === 0 && b.columns && b.columns > 1 ? ` style="columns:${b.columns}"` : "");
     html += `<${tag}${attrs}>`;
     open.push(tag);
@@ -252,8 +372,13 @@ function htmlList(b: ListBlock): string {
     while (open.length > lvl + 1) html += `</li></${open.pop()}>`;
     if (open.length === lvl + 1 && i > 0) html += "</li>";
     while (open.length < lvl + 1) openList(open.length);
-    const check = (b.formats[lvl] ?? b.formats[0]).kind === "check" ? "☐ " : "";
-    html += `<li>${check}${htmlRuns(it)}`;
+    const f = formatOf(lvl);
+    const check = f.kind === "check" ? "☐ " : "";
+    // A clause's own number, before the tab to its text, hangs like a list's number.
+    const k = f.kind === "none" ? it.findIndex((r) => r.tab === "next") : -1;
+    if (k > 0) html += `<li><span class="n">${htmlRuns(it.slice(0, k))}</span>${htmlRuns([{ ...it[k], tab: undefined }, ...it.slice(k + 1)])}`;
+    else if (labelled(f) && f.kind !== "none") html += `<li><span class="n">${esc(listLabel(b, i))}</span>${htmlRuns(it)}`;
+    else html += `<li>${check}${htmlRuns(it)}`;
   });
   while (open.length) html += `</li></${open.pop()}>`;
   return html;
@@ -266,7 +391,7 @@ function htmlList(b: ListBlock): string {
 function htmlPic(p: Pic, im: ExtractedImage): string {
   const w = Math.round(p.ow * (96 / 72));
   const h = Math.round(p.oh * (96 / 72));
-  const src = `data:${im.mime};base64,${b64(im.bytes)}`;
+  const src = hdoc.src(im);
   const turn = [p.rot ? `rotate(${p.rot}deg)` : "", p.flip ? "scaleX(-1)" : ""].filter(Boolean).join(" ");
   let pic: string;
   if (!p.crop) pic = `<img src="${src}" alt="" width="${w}" height="${h}">`;
@@ -284,51 +409,77 @@ function htmlPic(p: Pic, im: ExtractedImage): string {
   return `<span class="turn" style="width:${vw}px;height:${vh}px"><span style="width:${w}px;height:${h}px;transform:translate(-50%,-50%) ${turn}">${pic}</span></span>`;
 }
 
-function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>, images?: Map<string, ExtractedImage>): string {
-  if (images && htmlPics !== images) {
-    const prev = htmlPics;
-    htmlPics = images;
+/** Blocks as HTML; `doc`, given at the top, says what the document holds (see HtmlDoc). */
+function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>, doc?: Partial<HtmlDoc>): string {
+  if (doc) {
+    const prev = hdoc;
+    hdoc = { ...hdoc, ...doc };
     try {
-      return blocksToHtml(blocks, imgs, images);
+      return blocksToHtml(blocks, imgs);
     } finally {
-      htmlPics = prev;
+      hdoc = prev;
     }
   }
   const out: string[] = [];
   let page = 0;
   const flushImgs = (p: number) => {
-    for (const im of imgs.get(p) ?? []) out.push(`<figure><img src="data:${im.mime};base64,${b64(im.bytes)}" alt="" width="${Math.min(im.width, 720)}"></figure>`);
+    for (const im of imgs.get(p) ?? []) out.push(`<figure><img src="${hdoc.src(im)}" alt="" width="${Math.min(im.width, 720)}"></figure>`);
   };
-  const inner = (bs: SBlock[]) => blocksToHtml(bs, new Map(), images);
+  const inner = (bs: SBlock[]) => blocksToHtml(bs, new Map());
+  const images = hdoc.pics;
+  // A caption set just under a picture ("Figure 1. ..."): the picture's own, kept with it.
+  const captions = new Set<SBlock>();
+  blocks.forEach((b, i) => {
+    const c = blocks[i + 1];
+    if (b.kind !== "image" || c?.kind !== "para" || !b.geo || !c.geo) return;
+    const text = runsText(c.runs).trim();
+    const near = c.geo.top - b.geo.bottom <= Math.max(18, c.geo.first * 2);
+    if (near && text.length <= 300 && (c.align === "center" || /^(fig(ure)?|chart|graph|diagram|photo|plate|exhibit|map|illustration)\.?\s*[\dIVX]/i.test(text))) captions.add(c);
+  });
   for (const b of blocks) {
+    if (captions.has(b)) continue;
     if (b.kind === "pagebreak") {
       flushImgs(page);
       page = b.page;
-      out.push(`<hr class="page" aria-label="Page ${b.page + 1}">`);
+      // A page the author began (a slide, a chapter) is marked; where the text simply ran on, it reads on.
+      if (b.deliberate !== false) out.push(`<hr class="page" aria-label="Page ${b.page + 1}">`);
     } else if (b.kind === "heading") {
-      const style = [b.align ? `text-align:${b.align}` : "", b.under ? `border-bottom:1px solid ${b.under.color};padding-bottom:.2em` : ""].filter(Boolean).join(";");
-      out.push(`<h${b.level}${style ? ` style="${style}"` : ""}>${esc(b.text)}</h${b.level}>`);
+      // As large as in the PDF beside its text, within what reads well on a screen.
+      const em = hdoc.body ? Math.min(2.2, Math.max(1, 1 + (b.size / hdoc.body - 1) * 0.6)) : 0;
+      const style = [em ? `font-size:${em.toFixed(2)}em` : "", b.align ? `text-align:${b.align}` : "", b.under ? `border-bottom:1px solid ${b.under.color};padding-bottom:.2em` : ""].filter(Boolean).join(";");
+      const text = b.runs.some((r) => r.link) ? byLink(b.runs).map((g) => (g.url ? `<a href="${esc(g.url)}">${esc(runsText(g.runs))}</a>` : esc(runsText(g.runs)))).join("") : esc(b.text);
+      out.push(`<h${b.level}${style ? ` style="${style}"` : ""}>${text}</h${b.level}>`);
     }
     else if (b.kind === "para") {
       const style = [
         b.align && b.align !== "left" ? `text-align:${b.align}` : "",
-        b.bar ? `border-left:3px solid ${b.bar};padding-left:.75em` : "",
-        b.indent && !b.bar ? `margin-left:${b.indent.left.toFixed(0)}pt;text-indent:${b.indent.first.toFixed(0)}pt` : "",
+        // (A deep indent gives way on a narrow screen.)
+        b.indent && !b.bar ? `margin-left:${b.indent.left > 36 ? `min(${b.indent.left.toFixed(0)}pt,35%)` : `${b.indent.left.toFixed(0)}pt`};text-indent:${b.indent.first.toFixed(0)}pt` : "",
         b.under ? `border-bottom:1px solid ${b.under.color};padding-bottom:.2em` : "",
       ]
         .filter(Boolean)
         .join(";");
-      out.push(`<p${style ? ` style="${style}"` : ""}>${htmlRuns(b.runs)}</p>`);
+      const p = `<p${style ? ` style="${style}"` : ""}>${htmlRuns(b.runs)}</p>`;
+      // Paragraphs set beside one bar (a pull quote with its label) stay together beside it.
+      const prev = blocks[blocks.indexOf(b) - 1];
+      if (b.bar && prev?.kind === "para" && prev.bar === b.bar && out.length && out[out.length - 1].endsWith("</p></div>")) out[out.length - 1] = out[out.length - 1].slice(0, -"</div>".length) + p + "</div>";
+      else out.push(b.bar ? `<div class="bar" style="border-left:3px solid ${b.bar};padding-left:.75em;margin:1rem 0">${p}</div>` : p);
     } else if (b.kind === "list") out.push(htmlList(b));
     else if (b.kind === "rule") out.push(`<hr style="border:0;border-top:${Math.max(1, Math.round(b.h))}px solid ${b.color}">`);
-    else if (b.kind === "columns") out.push(`<div style="columns:${b.count};column-gap:2em">${inner(b.blocks)}</div>`);
+    // Columns of text, one under the other where the screen is too narrow for them.
+    else if (b.kind === "columns") out.push(`<div style="columns:${b.count} 15rem;column-gap:2em">${inner(b.blocks)}</div>`);
     else if (b.kind === "box") {
       // Light boxes keep their colour; dark ones become a light panel with a bar in their colour, since text colours aren't kept here.
       const light = !b.fill || luminance(b.fill) > 0.75;
       const style = light ? `background:${b.fill ?? "transparent"};border:1px solid ${b.stroke ?? b.fill ?? "#ccc"}` : `background:#f4f6f8;border-left:4px solid ${b.fill}`;
       out.push(`<aside style="${style};padding:.75em 1em;margin:1em 0;border-radius:4px">${inner(b.blocks)}</aside>`);
     } else if (b.kind === "table" && b.layout) {
-      out.push(...b.cells.flat().map((c) => `<div>${inner(c.blocks ?? [])}</div>`));
+      // Content set side by side stays so, as wide as on the page, and goes one under the other on a
+      // narrow screen. A shaded side (a CV's sidebar) keeps its shade, or a bar in it where it's dark.
+      const row = b.cells[0] ?? [];
+      const shade = (c?: Cell) => (!c?.fill ? "" : luminance(c.fill) > 0.75 ? `;background:${c.fill};padding:.75em 1em` : `;background:#f4f6f8;border-left:4px solid ${c.fill};padding:.75em 1em`);
+      out.push(`<div class="side">${row.map((c, i) => `<div style="flex:${(b.widths[i] ?? 1 / row.length).toFixed(3)} 1 0${shade(c)}">${inner(c?.blocks ?? [])}</div>`).join("")}</div>`);
+      for (const r of b.cells.slice(1)) out.push(...r.map((c) => `<div>${inner(c?.blocks ?? [])}</div>`));
     } else if (b.kind === "table" && b.lines === "cards") {
       // Cards side by side (boxes, or pictures with their captions): a row that wraps on small screens.
       const card = (c: Cell) => {
@@ -339,8 +490,22 @@ function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>, ima
     } else if (b.kind === "table") {
       const cell = (bl: TableBlock, ri: number, ci: number, tag: string) => {
         const c = bl.cells[ri]?.[ci];
-        const html = c?.blocks?.length ? inner(c.blocks) : (c?.paras ?? []).map(htmlRuns).join("<br>");
-        const style = [c?.align ? `text-align:${c.align}` : "", c?.valign ? `vertical-align:${c.valign === "center" ? "middle" : "bottom"}` : "", c?.indent ? `padding-left:calc(.5rem + ${Math.round(c.indent)}pt)` : ""].filter(Boolean).join(";");
+        // A label hanging before the text (an option's letter): the text's lines line up after it.
+        const hang = c?.hang && !c.blocks?.length && c.paras.length === 1 && c.paras[0].findIndex((r) => r.tab === "next") > 0 ? c.hang : 0;
+        const label = (rs: Run[]) => {
+          const k = rs.findIndex((r) => r.tab === "next");
+          return `<span style="display:inline-block;min-width:${Math.round(hang)}pt;text-indent:0">${htmlRuns(rs.slice(0, k))}</span>${htmlRuns([{ ...rs[k], tab: undefined }, ...rs.slice(k + 1)])}`;
+        };
+        const html = c?.blocks?.length ? inner(c.blocks) : hang ? label(c!.paras[0]) : (c?.paras ?? []).map(htmlRuns).join("<br>");
+        const style = [
+          c?.align ? `text-align:${c.align}` : "",
+          c?.valign ? `vertical-align:${c.valign === "center" ? "middle" : "bottom"}` : "",
+          // Long unbroken strings (references in a statement's narration) may break, so the table can fit.
+          c && /\S{18,}/.test(c.text) && c.text.length > 24 ? "overflow-wrap:anywhere" : "",
+          hang ? `padding-left:calc(.5rem + ${Math.round(hang)}pt);text-indent:-${Math.round(hang)}pt` : c?.indent ? `padding-left:calc(.5rem + ${Math.round(c.indent)}pt)` : "",
+        ]
+          .filter(Boolean)
+          .join(";");
         return `<${tag}${style ? ` style="${style}"` : ""}>${html}</${tag}>`;
       };
       const row = (ri: number, tag: string) => {
@@ -358,10 +523,13 @@ function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>, ima
       };
       const heads = b.head ?? (b.header ? 1 : 0);
       const head = heads ? `<thead>${b.rows.slice(0, heads).map((_, ri) => row(ri, "th")).join("")}</thead>` : "";
-      out.push(`<table>${head}<tbody>${b.rows.map((_, ri) => (ri < heads ? "" : row(ri, "td"))).join("")}</tbody></table>`);
+      // Wide tables scroll sideways on small screens instead of widening the page.
+      out.push(`<div class="wide"><table>${head}<tbody>${b.rows.map((_, ri) => (ri < heads ? "" : row(ri, "td"))).join("")}</tbody></table></div>`);
     } else if (b.kind === "image" && images) {
       const pics = b.pics.flatMap((p) => (images.has(p.id) ? [htmlPic(p, images.get(p.id)!)] : []));
-      if (pics.length) out.push(`<figure${pics.length > 1 ? ' class="row"' : ""}>${pics.join("")}</figure>`);
+      const next = blocks[blocks.indexOf(b) + 1];
+      const caption = next?.kind === "para" && captions.has(next) ? `<figcaption>${htmlRuns(next.runs)}</figcaption>` : "";
+      if (pics.length) out.push(caption ? `<figure>${pics.length > 1 ? `<div class="row">${pics.join("")}</div>` : pics.join("")}${caption}</figure>` : `<figure${pics.length > 1 ? ' class="row"' : ""}>${pics.join("")}</figure>`);
     }
   }
   flushImgs(page);
@@ -374,16 +542,32 @@ function b64(u: Uint8Array) {
   return btoa(s);
 }
 
+/** Styles the HTML's blocks need, in a web page and in an ebook alike. */
+const BLOCK_CSS = `table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #ccc;padding:.35rem .5rem;text-align:left;vertical-align:top}th{background:#f3f3f3}
+figure{margin:1rem 0;break-inside:avoid}figcaption{font-size:.9em;text-align:center;margin-top:.4rem}img{max-width:100%;height:auto}figure.row,figure>.row{display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start}.crop{display:inline-block;max-width:100%;overflow:hidden;position:relative}.crop img{position:absolute;max-width:none}.turn{display:inline-block;position:relative}.turn>span{position:absolute;left:50%;top:50%}.turn img{max-width:none}.cards{display:flex;flex-wrap:wrap;gap:1rem;margin:1rem 0}.cards>div{flex:1 1 12rem;min-width:0}.cards figure{margin:0 0 .4rem}
+.side{display:flex;flex-wrap:wrap;gap:0 2rem}.side>div{min-width:min(100%,13rem)}.lbl{list-style:none;padding-left:2.6em}.lbl>li>.n{display:inline-block;min-width:2.6em;margin-left:-2.6em}.wide{overflow-x:auto;margin:1rem 0}.wide>table{margin:0}ul.check{list-style:none;padding-left:1.4rem}ul.check>li{text-indent:-1.4rem}.bar>p{margin:.4rem 0}`;
+
 const HTML_CSS = `body{font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:46rem;margin:2.5rem auto;padding:0 1.25rem;color:#1a1a1a}
-h1,h2,h3{line-height:1.25}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #ccc;padding:.35rem .5rem;text-align:left;vertical-align:top}th{background:#f3f3f3}
-figure{margin:1rem 0}img{max-width:100%;height:auto}figure.row{display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start}.crop{display:inline-block;max-width:100%;overflow:hidden;position:relative}.crop img{position:absolute;max-width:none}.turn{display:inline-block;position:relative}.turn>span{position:absolute;left:50%;top:50%}.turn img{max-width:none}.cards{display:flex;flex-wrap:wrap;gap:1rem;margin:1rem 0}.cards>div{flex:1 1 12rem;min-width:0}.cards figure{margin:0 0 .4rem}hr.page{border:0;border-top:1px dashed #ddd;margin:2rem 0}`;
+h1,h2,h3{line-height:1.25}${BLOCK_CSS}
+hr.page{border:0;border-top:1px dashed #ddd;margin:2rem 0}.running{color:#555;font-size:.85em;margin:0 0 1.5rem}footer.running{margin:2rem 0 0;border-top:1px solid #ddd;padding-top:.75rem}.running p{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.25rem 1rem;margin:.15rem 0}`;
 
 export async function pdfToHtml(src: Src, o: { mode?: "reflow" | "exact"; images?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
   const title = stem(src.name);
   if (o.mode === "exact") return pdfToHtmlExact(src, onProgress);
   // Pictures go where the page has them; any whose place couldn't be read, at the end of their page.
-  const { blocks, images, pages, unread } = await readStructured(src, onProgress, { images: o.images !== false });
-  const html = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><meta name="generator" content="${esc(BRAND.name)}"><style>${HTML_CSS}</style></head><body>\n${blocksToHtml(blocks, unplaced(images, pages, unread), images)}\n</body></html>\n`;
+  const { blocks, images, pages, unread, furniture, body } = await readStructured(src, onProgress, { images: o.images !== false });
+  // The running header and footer (a letterhead, a statement's period), once: before and after the text.
+  const run = (ls: FurnitureLine[], tag: string) => {
+    const rows = ls
+      .map((l) => ({ l, parts: furnitureParts(l) }))
+      .filter((x) => x.parts.length)
+      .map(({ l, parts }) => `<p${l.bold ? ' style="font-weight:600"' : ""}>${parts.map((t) => `<span>${esc(t)}</span>`).join("")}</p>`);
+    return rows.length ? `<${tag} class="running">${rows.join("")}</${tag}>\n` : "";
+  };
+  // Tables of many columns (a statement) get a wider page, so they need not scroll on a computer.
+  const cols = (bs: SBlock[]): number => Math.max(0, ...bs.map((b) => (b.kind === "table" && !b.layout ? Math.max(...b.rows.map((r) => r.length)) : b.kind === "box" || b.kind === "columns" ? cols(b.blocks) : 0)));
+  const css = HTML_CSS + (cols(blocks) >= 6 ? "body{max-width:64rem}" : "");
+  const html = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><meta name="generator" content="${esc(BRAND.name)}"><style>${css}</style></head><body>\n${run(furniture.header, "header")}${blocksToHtml(blocks, unplaced(images, pages, unread), { pics: images, body: body.size })}\n${run(furniture.footer, "footer")}</body></html>\n`;
   return { filename: `${title}.html`, bytes: new TextEncoder().encode(html), mime: "text/html", note: "Reflowed, readable on phones" };
 }
 
@@ -619,6 +803,7 @@ class WordWriter {
       for (const b of bs2) {
         if (b.kind === "heading" && !first[b.level]) first[b.level] = [...b.runs].sort((x, y) => y.text.length - x.text.length)[0];
         else if (b.kind === "box" || b.kind === "columns") walk(b.blocks);
+        else if (b.kind === "table") for (const row of b.cells) for (const c of row) if (c?.blocks) walk(c.blocks);
       }
     };
     walk(blocks);
@@ -936,6 +1121,21 @@ class WordWriter {
   }
 
   private runs(rs: Run[], base: RunBase, bg?: string) {
+    // Text under a link opens its address.
+    const out: (ReturnType<WordWriter["plainRuns"]>[number] | InstanceType<DocxMod["ExternalHyperlink"]>)[] = [];
+    for (let i = 0; i < rs.length; ) {
+      const url = rs[i].link;
+      let j = i + 1;
+      while (j < rs.length && rs[j].link === url) j++;
+      const kids = this.plainRuns(rs.slice(i, j), base, bg);
+      if (url && kids.length) out.push(new this.d.ExternalHyperlink({ link: url, children: kids }));
+      else out.push(...kids);
+      i = j;
+    }
+    return out;
+  }
+
+  private plainRuns(rs: Run[], base: RunBase, bg?: string) {
     return rs.flatMap((r) => {
       // A piece set flush right follows a tab (unshaded, so a badge's colour stays on the badge) to the stop at the right edge (see tabStops).
       // The tab is set in the size of the text after it, or a larger default size would make the line taller.
@@ -1299,11 +1499,17 @@ function sectionsOf(d: DocxMod, children: (DocxOut | Columns)[], layout: PageLay
   const feet = [...(furniture?.footer ?? []).map((l) => furnitureParagraph(d, l, width)), ...floats("footer")];
   const header = heads.length ? { headers: { default: new d.Header({ children: heads }) } } : {};
   const footer = feet.length ? { footers: { default: new d.Footer({ children: feet }) } } : {};
-  // Header and footer where the PDF has them, inside the page margins.
+  // Header and footer where the PDF has them, inside the page margins; where the margin is too
+  // narrow for that (a slide's number beside the text at its foot), nearer the page's edge, as a
+  // footer reaching into the text would push the text up and on to another page.
   const page = pageSetup(d, layout);
-  const fit = (lines: FurnitureLine[] | undefined, margin: number) => (lines?.length ? Math.round(clamp(Math.min(...lines.map((l) => l.edge)), 12, Math.max(12, margin - lines.length * 12 - 4)) * 20) : undefined);
+  const fit = (lines: FurnitureLine[] | undefined, margin: number) => {
+    if (!lines?.length) return undefined;
+    const room = Math.max(2, margin - lines.reduce((n, l) => n + l.size * 1.25, 0));
+    return Math.round(clamp(Math.min(...lines.map((l) => l.edge)), Math.min(12, room), room) * 20);
+  };
   const hd = fit(furniture?.header, layout.top);
-  const fd = fit(furniture?.footer, layout.bottom);
+  const fd = fit(furniture?.footer, Math.max(0, layout.bottom - 4));
   const margin = { ...page.margin, ...(hd !== undefined ? { header: hd } : {}), ...(fd !== undefined ? { footer: fd } : {}) };
   return (used.length ? used : [{ count: 1, children: [new d.Paragraph({ children: [] })] }]).map((p, i) => ({
     ...(i === 0 ? { ...header, ...footer } : {}),
@@ -1320,9 +1526,12 @@ function sectionsOf(d: DocxMod, children: (DocxOut | Columns)[], layout: PageLay
 function pageSetup(d: DocxMod, l: PageLayout) {
   const tw = (pt: number) => Math.round(pt * 20);
   const landscape = l.width > l.height;
+  // (A few points more room at the foot than the PDF's lowest text needs: lines Word sets a
+  // little lower than the PDF did still fit on their page.)
+  const bottom = Math.max(0, l.bottom - 4);
   return {
     size: { width: tw(Math.min(l.width, l.height)), height: tw(Math.max(l.width, l.height)), orientation: landscape ? d.PageOrientation.LANDSCAPE : d.PageOrientation.PORTRAIT },
-    margin: { top: tw(l.top), right: tw(l.right), bottom: tw(l.bottom), left: tw(l.left), header: tw(Math.min(36, l.top / 2)), footer: tw(Math.min(36, l.bottom / 2)) },
+    margin: { top: tw(l.top), right: tw(l.right), bottom: tw(bottom), left: tw(l.left), header: tw(Math.min(36, l.top / 2)), footer: tw(Math.min(36, bottom / 2)) },
   };
 }
 
@@ -1510,7 +1719,7 @@ export async function pdfToPptx(src: Src, o: { mode?: "editable" | "exact"; note
         } else {
           const shapes = await enrichFontStyles(page, pt.items);
           await sampleColours(page, pt);
-          const { texts, erase } = slideTexts(pt, shapes, { fontOf: wordFont, links: await linksOf(page), measure });
+          const { texts, erase } = slideTexts(pt, shapes, { fontOf: wordFont, links: await pageLinks(page), measure });
           if (!texts.length) {
             pictures++;
             // A scan with recognised text (OCR) can't have its text on the slide: it goes in the notes.
@@ -1723,29 +1932,11 @@ async function pictureOf(canvas: HTMLCanvasElement): Promise<PMedia> {
   return png.length <= jpeg.length * 2 ? { bytes: png, ext: "png" } : { bytes: jpeg, ext: "jpeg" };
 }
 
-/** Web links on a page and where they sit (visual frame, points). */
-async function linksOf(page: PDFPageProxy): Promise<Link[]> {
-  try {
-    const vp = page.getViewport({ scale: 1 });
-    const annots = (await page.getAnnotations()) as { subtype?: string; url?: string; unsafeUrl?: string; rect?: number[] }[];
-    const out: Link[] = [];
-    for (const a of annots) {
-      const url = a.url ?? a.unsafeUrl;
-      if (a.subtype !== "Link" || !url || !a.rect || !/^(https?:|mailto:)/i.test(url)) continue;
-      const [x1, y1] = vp.convertToViewportPoint(a.rect[0], a.rect[1]);
-      const [x2, y2] = vp.convertToViewportPoint(a.rect[2], a.rect[3]);
-      out.push({ x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1), url });
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
 /* ---------------------------------------------------------------- epub */
 
 export async function pdfToEpub(src: Src, o: { title?: string; author?: string } = {}, onProgress?: ProgressFn): Promise<OutFile> {
-  const { blocks } = await readStructured(src, onProgress);
+  // Pictures (and charts drawn with shapes) where the pages have them, as files beside the chapters.
+  const { blocks, images, body } = await readStructured(src, onProgress, { images: true });
   const doc = await open(src);
   const title = o.title || doc.getTitle() || stem(src.name);
   const author = o.author || doc.getAuthor() || "";
@@ -1774,9 +1965,21 @@ export async function pdfToEpub(src: Src, o: { title?: string; author?: string }
   zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
   const id = `urn:uuid:${crypto.randomUUID()}`;
   const xhtml = (t: string, body: string) => `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en"><head><meta charset="UTF-8"/><title>${esc(t)}</title><link rel="stylesheet" href="style.css"/></head><body>${body}</body></html>`;
-  const toX = (bs: SBlock[]) => blocksToHtml(bs, new Map()).replace(/<br>/g, "<br/>").replace(/<hr([^>]*)>/g, "<hr$1/>");
-  zip.file("OEBPS/style.css", "body{font-family:serif;line-height:1.5;margin:0 5%}h1,h2,h3{font-family:sans-serif;line-height:1.2}table{border-collapse:collapse}td,th{border:1px solid #999;padding:.2em .4em}img{max-width:100%}");
+  const files = new Map<string, { path: string; im: ExtractedImage }>();
+  const fileOf = (im: ExtractedImage) => {
+    let f = files.get(im.ref);
+    if (!f) files.set(im.ref, (f = { path: `images/picture${files.size + 1}.${im.mime === "image/png" ? "png" : "jpg"}`, im }));
+    return f.path;
+  };
+  // XHTML: empty elements close themselves.
+  const toX = (bs: SBlock[]) =>
+    blocksToHtml(bs, new Map(), { pics: images, body: body.size, src: fileOf })
+      .replace(/<br>/g, "<br/>")
+      .replace(/<hr([^>]*)>/g, "<hr$1/>")
+      .replace(/<img([^>]*?)\s*\/?>/g, "<img$1/>");
+  zip.file("OEBPS/style.css", `body{font-family:serif;line-height:1.5;margin:0 5%}h1,h2,h3{font-family:sans-serif;line-height:1.2}${BLOCK_CSS}`);
   chapters.forEach((ch, i) => zip.file(`OEBPS/ch${i + 1}.xhtml`, xhtml(ch.title, `${i === 0 || !ch.blocks.some((b) => b.kind === "heading") ? `<h1>${esc(ch.title)}</h1>` : ""}${toX(ch.blocks)}`)));
+  for (const f of files.values()) zip.file(`OEBPS/${f.path}`, f.im.bytes);
   if (cover) {
     zip.file("OEBPS/cover.jpg", cover);
     zip.file("OEBPS/cover.xhtml", xhtml("Cover", `<div style="text-align:center"><img src="cover.jpg" alt="Cover"/></div>`));
@@ -1793,6 +1996,7 @@ export async function pdfToEpub(src: Src, o: { title?: string; author?: string }
     `<item id="css" href="style.css" media-type="text/css"/>`,
     ...(cover ? [`<item id="cover-image" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>`, `<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>`] : []),
     ...chapters.map((_, i) => `<item id="ch${i + 1}" href="ch${i + 1}.xhtml" media-type="application/xhtml+xml"/>`),
+    ...[...files.values()].map((f, i) => `<item id="pic${i + 1}" href="${f.path}" media-type="${f.im.mime}"/>`),
   ].join("");
   const spine = [...(cover ? [`<itemref idref="cover"/>`] : []), ...chapters.map((_, i) => `<itemref idref="ch${i + 1}"/>`)].join("");
   zip.file(

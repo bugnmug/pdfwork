@@ -297,6 +297,26 @@ function soon(fn: () => void) {
   soonChannel.port2.postMessage(0);
 }
 
+/**
+ * Part of a page (points, top-left origin) drawn on its own canvas at `scale` (at most the
+ * canvas limit), on white: a figure the page draws with shapes, as a picture.
+ */
+export async function renderRegion(page: PDFPageProxy, r: { x: number; y: number; w: number; h: number }, scale: number): Promise<HTMLCanvasElement> {
+  const s = Math.min(scale, Math.sqrt(CANVAS_AREA_LIMIT / Math.max(1, r.w * r.h)));
+  const viewport = page.getViewport({ scale: s, offsetX: -r.x * s, offsetY: -r.y * s });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(r.w * s));
+  canvas.height = Math.max(1, Math.round(r.h * s));
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error("Canvas is not available in this browser.");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const task = page.render({ canvasContext: ctx, canvas, viewport, annotationMode: 0 } as Parameters<PDFPageProxy["render"]>[0]);
+  keepRenderingWhenHidden(task);
+  await task.promise;
+  return canvas;
+}
+
 export async function renderPageCanvas(pdf: PDFDocumentProxy, pageNumber: number, scale = 1.4): Promise<HTMLCanvasElement> {
   const page = await pdf.getPage(pageNumber);
   try {
@@ -353,13 +373,20 @@ export type TextItem = {
   mode?: number;
 };
 
-/** A filled or stroked shape (rectangle, rule, box), as its bounding box in the visual frame; `round` when drawn with curves. */
-export type Shape = { x: number; y: number; w: number; h: number; fill?: string; stroke?: string; round?: boolean };
+/**
+ * A filled or stroked shape (rectangle, rule, box), as its bounding box in the visual frame;
+ * `round` when drawn with curves only (a circle), `slant` when it has a straight side that is
+ * neither level nor upright (a line in a chart, a slice of a pie, an arrow's head).
+ */
+export type Shape = { x: number; y: number; w: number; h: number; fill?: string; stroke?: string; round?: boolean; slant?: boolean };
 
 /** A picture drawn on the page: which image (`id`, see export's image list) and where it shows (contentstream's Placement). */
 export type Pic = Placement & { id: string };
 
-export type PageText = { page: number; width: number; height: number; items: TextItem[]; shapes?: Shape[]; pics?: Pic[] };
+/** A web or mail link on the page: where it is (visual frame, points) and where it goes. */
+export type PageLink = { x: number; y: number; w: number; h: number; url: string };
+
+export type PageText = { page: number; width: number; height: number; items: TextItem[]; shapes?: Shape[]; pics?: Pic[]; links?: PageLink[] };
 
 /** Names of serif faces, for PDFs that don't flag their fonts as serif. */
 const SERIF = /serif|times|roman|georgia|garamond|cambria|bookantiqua|bookman|minion|palatino|lora|merriweather|playfair|baskerville|caslon|bodoni|didot|charter|crimson|spectral|literata|newsreader|fraunces|cormorant|bitter|slab|alegreya|cardo|gelasio|tinos|domine|vollkorn|noticia|constantia|sabon|utopia|perpetua|rockwell|tiempos|chronicle|schoolbook|goudy|janson|plantin|joanna|calisto|libertin|kepler|warnock|stix|lmroman|cmr\d/i;
@@ -725,17 +752,35 @@ function shapesOf(ops: OpList, OPS: Record<string, number>, vt: number[]): Shape
       const x = Math.min(...xs) - pad;
       const y = Math.min(...ys) - pad;
       // Path data: 0 move (2 numbers), 1 line (2), 2 curve (6), 3 quadratic curve (4), 4 close.
-      // Round: curves and no straight sides (a circle, not a rounded rectangle).
+      // Round: curves and no straight sides (a circle, not a rounded rectangle). Slanted: a
+      // straight side running neither across nor down the page.
       let curves = 0;
       let straight = 0;
+      let slant = false;
+      let [cx, cy, sx, sy] = [0, 0, 0, 0];
+      const tilted = (x0: number, y0: number, x1: number, y1: number) => {
+        const dx = m[0] * (x1 - x0) + m[2] * (y1 - y0);
+        const dy = m[1] * (x1 - x0) + m[3] * (y1 - y0);
+        return Math.abs(dx) > 0.75 && Math.abs(dy) > 0.75;
+      };
       for (let k = 0; path && k < path.length; ) {
         const op = path[k++];
-        if (op === 2 || op === 3) curves++;
-        else if (op === 1) straight++;
+        if (op === 0) [cx, cy, sx, sy] = [path[k], path[k + 1], path[k], path[k + 1]];
+        else if (op === 1) {
+          straight++;
+          if (!slant && tilted(cx, cy, path[k], path[k + 1])) slant = true;
+          [cx, cy] = [path[k], path[k + 1]];
+        } else if (op === 2 || op === 3) {
+          curves++;
+          [cx, cy] = op === 2 ? [path[k + 4], path[k + 5]] : [path[k + 2], path[k + 3]];
+        } else if (op === 4) {
+          if (!slant && tilted(cx, cy, sx, sy)) slant = true;
+          [cx, cy] = [sx, sy];
+        }
         k += op === 0 || op === 1 ? 2 : op === 2 ? 6 : op === 3 ? 4 : 0;
       }
       const round = curves > 0 && straight === 0;
-      out.push({ x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y, ...(fill ? { fill } : {}), ...(stroke ? { stroke } : {}), ...(round ? { round } : {}) });
+      out.push({ x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y, ...(fill ? { fill } : {}), ...(stroke ? { stroke } : {}), ...(round ? { round } : {}), ...(slant ? { slant } : {}) });
     }
   }
   return out;
@@ -858,7 +903,10 @@ export async function extractPages(
         opts.onProgress?.(i / pageCount, `Reading page ${i} of ${pageCount}`);
         const page = await pdf.getPage(i);
         const t = await pageText(page);
-        if (opts.styles) t.shapes = await enrichFontStyles(page, t.items);
+        if (opts.styles) {
+          t.shapes = await enrichFontStyles(page, t.items);
+          t.links = await pageLinks(page);
+        }
         page.cleanup();
         out.push(t);
       }
@@ -866,6 +914,34 @@ export async function extractPages(
     },
     opts.password,
   );
+}
+
+/**
+ * The page's web and mail links (link annotations that open an address), each where it sits:
+ * one box per line of the link where the PDF marks them (QuadPoints), else its whole box.
+ */
+export async function pageLinks(page: PDFPageProxy): Promise<PageLink[]> {
+  try {
+    const vp = page.getViewport({ scale: 1 });
+    const annots = (await page.getAnnotations()) as { subtype?: string; url?: string; unsafeUrl?: string; rect?: number[]; quadPoints?: ArrayLike<number> }[];
+    const out: PageLink[] = [];
+    const box = (xs: number[], ys: number[], url: string) => {
+      const pts = xs.map((x, k) => vp.convertToViewportPoint(x, ys[k]) as number[]);
+      const x0 = Math.min(...pts.map((p) => p[0]));
+      const y0 = Math.min(...pts.map((p) => p[1]));
+      out.push({ x: x0, y: y0, w: Math.max(...pts.map((p) => p[0])) - x0, h: Math.max(...pts.map((p) => p[1])) - y0, url });
+    };
+    for (const a of annots) {
+      const url = a.url ?? a.unsafeUrl;
+      if (a.subtype !== "Link" || !url || !a.rect || !/^(https?:|mailto:)/i.test(url)) continue;
+      const q = a.quadPoints ? Array.from(a.quadPoints) : [];
+      if (q.length >= 8 && q.length % 8 === 0) for (let k = 0; k < q.length; k += 8) box([q[k], q[k + 2], q[k + 4], q[k + 6]], [q[k + 1], q[k + 3], q[k + 5], q[k + 7]], url);
+      else box([a.rect[0], a.rect[2]], [a.rect[1], a.rect[3]], url);
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 export type Line = {
@@ -901,10 +977,14 @@ export function toLines(pt: PageText): Line[] {
     items.sort((a, b) => a.base - b.base || a.x - b.x);
     const lines: Line[] = [];
     for (const it of items) {
-      const tol = Math.max(2, it.fontSize * 0.45);
       let line: Line | undefined;
       for (let k = lines.length - 1; k >= 0 && k >= lines.length - 6; k--) {
         const l = lines[k];
+        // Baselines close for the size of the text joining the line; but type under 60% of the
+        // other's size is held to its own (a slide's title set level with a chart's small legend
+        // is a line of its own, while a footnote mark or a small label in a table's row is not).
+        const small = Math.min(it.fontSize, l.size);
+        const tol = Math.max(2, (small < Math.max(it.fontSize, l.size) * 0.6 ? small : it.fontSize) * 0.45);
         if (Math.abs(l.base - it.base) <= tol && it.y < l.base + 2 && it.base > l.y - 2) {
           line = l;
           break;

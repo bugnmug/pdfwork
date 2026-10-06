@@ -5,7 +5,8 @@
  * running headers, footers and page numbers removed. Text keeps its font, size and colour.
  * Used by PDF → Word / HTML / EPUB / Markdown / Excel.
  */
-import { spaced, toLines, type Line, type PageText, type Pic, type Shape, type TextItem } from "./pdfjs";
+import { drawnFigures, type DrawnFigure } from "./drawn";
+import { spaced, toLines, type Line, type PageLink, type PageText, type Pic, type Shape, type TextItem } from "./pdfjs";
 
 export type Family = "sans" | "serif" | "mono";
 export type Run = {
@@ -37,6 +38,8 @@ export type Run = {
   pic?: Pic;
   /** Set over a picture: its colour (white on a photo) is kept as it is. */
   onPic?: boolean;
+  /** A link: the web or mail address it opens. */
+  link?: string;
 };
 /** One table cell: its paragraphs (each a list of styled runs) and the plain text. Cards also carry their blocks. */
 export type Cell = {
@@ -259,7 +262,7 @@ type Box = Rect & { fill?: string; stroke?: string };
 /** A drawn list marker: an empty square (check box), or a bullet (a dot, ring or small square). */
 type Mark = Rect & { check: boolean; bullet: string; color?: string };
 /** A text item as used here: may be raised (superscript) or sit on a drawn badge. */
-export type Item = TextItem & { sup?: boolean; bg?: string; /** Right edge of the badge it sits on. */ bgRight?: number; /** A picture set in the line, standing in as one character. */ pic?: Pic; /** Drawn over a picture. */ onPic?: boolean };
+export type Item = TextItem & { sup?: boolean; bg?: string; /** Right edge of the badge it sits on. */ bgRight?: number; /** A picture set in the line, standing in as one character. */ pic?: Pic; /** Drawn over a picture. */ onPic?: boolean; /** Under a link: where it goes. */ link?: string; /** A legend's key (a square or dot in a chart's colour), not a bullet. */ key?: boolean };
 export type SLine = Omit<Line, "items"> & { items: Item[]; dom: number; domBase: number; /** Column it was read from, for text set in columns. */ col?: number };
 
 const centerIn = (r: Rect, x: number, y: number, pad = 1) => x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad;
@@ -322,24 +325,32 @@ export function linesOf(items: Item[], pt: { page: number; width: number; height
     h.items.some((o) => !o.sup && o.str.trim() && Math.abs(half(o.fontSize) - h.dom) < 0.6 && ((x0 - (o.x + o.w) > -1 && x0 - (o.x + o.w) < h.dom * 0.6) || (o.x - x1 > -1 && o.x - x1 < h.dom * 0.6)));
   const out: SLine[] = [];
   const touched = new Set<SLine>();
+  const mark = (t: string) => t.length <= 6 && /^[\d,*†‡§¶a-z]+$/i.test(t);
+  const hostOf = (l: SLine, size: number, base: number, x0: number, x1: number) => lines.find((h) => h !== l && size <= h.dom * 0.82 && base < h.domBase - h.dom * 0.12 && base > h.domBase - h.dom * 0.75 && besideText(h, x0, x1));
   for (const l of lines) {
     const t = l.text.replace(/\s/g, "");
-    if (t.length <= 6 && /^[\d,*†‡§¶a-z]+$/i.test(t)) {
-      const host = lines.find(
-        (h) =>
-          h !== l &&
-          l.dom <= h.dom * 0.82 &&
-          l.base < h.domBase - h.dom * 0.12 &&
-          l.base > h.domBase - h.dom * 0.75 &&
-          besideText(h, l.x, l.x + l.w),
-      );
+    if (mark(t)) {
+      const host = hostOf(l, l.dom, l.base, l.x, l.x + l.w);
       if (host) {
         for (const it of l.items) host.items.push({ ...it, sup: true });
         touched.add(host);
         continue;
       }
     }
-    out.push(l);
+    // A raised mark set level with other text well away from it (a table's row in the next
+    // column) goes to the line it was raised from.
+    for (const it of [...l.items]) {
+      const m = it.str.replace(/\s/g, "");
+      if (!m || !mark(m) || l.items.length < 2) continue;
+      const apart = l.items.every((o) => o === it || !o.str.trim() || Math.max(o.x - (it.x + it.w), it.x - (o.x + o.w)) > Math.max(it.fontSize, o.fontSize) * 2);
+      const host = apart ? hostOf(l, half(it.fontSize), it.base, it.x, it.x + it.w) : undefined;
+      if (!host) continue;
+      l.items.splice(l.items.indexOf(it), 1);
+      host.items.push({ ...it, sup: true });
+      touched.add(host);
+      touched.add(l);
+    }
+    if (l.items.some((it) => it.str.trim())) out.push(l);
   }
   for (const l of out) {
     let raised = false;
@@ -371,6 +382,7 @@ function itemRun(it: Item, text: string, dom?: number): Run {
   if (it.track) r.track = Math.round(it.track * it.fontSize * 10) / 10;
   if (it.pic) r.pic = it.pic;
   if (it.onPic) r.onPic = true;
+  if (it.link) r.link = it.link;
   return r;
 }
 
@@ -378,7 +390,7 @@ const sameStyle = (a: Run, b: Run) =>
   !a.pic &&
   !b.pic &&
   !!a.onPic === !!b.onPic &&
-  a.bold === b.bold && a.italic === b.italic && a.size === b.size && a.color === b.color && a.face === b.face && a.family === b.family && !!a.sup === !!b.sup && a.bg === b.bg && a.track === b.track && !b.br && b.tab === undefined;
+  a.bold === b.bold && a.italic === b.italic && a.size === b.size && a.color === b.color && a.face === b.face && a.family === b.family && !!a.sup === !!b.sup && a.bg === b.bg && a.track === b.track && a.link === b.link && !b.br && b.tab === undefined;
 
 /** Styled runs of a sequence of items (one line or part of one), with spaces where the gaps are. */
 function itemsRuns(items: Item[], dom?: number): Run[] {
@@ -432,6 +444,8 @@ function joinRuns(target: Run[], add: Run[]) {
   if (last && /[a-z]-$/.test(last.text) && /^[a-z]/.test(add[0].text)) last.text = last.text.slice(0, -1);
   // A word broken at its own hyphen (a code, a name) closes up again: LTD-SALARY.
   else if (last && /[A-Za-z0-9]-$/.test(last.text) && /^[A-Za-z0-9]/.test(add[0].text)) return void target.push(...add.map((r) => ({ ...r })));
+  // So does a range or a dash set closed (pages 101–110, word—word).
+  else if (last && /[^\s–—][–—]$/.test(last.text) && /^[^\s–—]/.test(add[0].text)) return void target.push(...add.map((r) => ({ ...r })));
   else if (last && !/\s$/.test(last.text)) last.text += " ";
   target.push(...add.map((r) => ({ ...r })));
 }
@@ -483,7 +497,7 @@ function mergeRuns(runs: Run[]): Run[] {
 }
 
 /** Plain text of runs (a line break the author set becomes a newline). */
-export const runsText = (runs: Run[]) => runs.map((r) => (r.br ? "\n" : "") + (r.pic ? "" : r.text)).join("");
+export const runsText = (runs: Run[]) => runs.map((r, i) => (r.br ? "\n" : r.tab !== undefined && i > 0 && !/\s$/.test(runs[i - 1].text) ? " " : "") + (r.pic ? "" : r.text)).join("");
 
 /** Items of a line from x0 (inclusive) to x1 (exclusive), cutting items that straddle the bounds. */
 function sliceItems(items: Item[], x0: number, x1 = Infinity): Item[] {
@@ -504,9 +518,55 @@ function sliceItems(items: Item[], x0: number, x1 = Infinity): Item[] {
   return out;
 }
 
+/**
+ * Text under the page's links carries their address. An item a link covers only in part (a
+ * sentence ending in a link) is cut where the link starts and ends, between characters placed
+ * by typical glyph widths.
+ */
+function linkItems(items: Item[], links: PageLink[]): Item[] {
+  if (!links.length) return items;
+  return items.flatMap((it): Item[] => {
+    if (it.dir !== 0 || !it.str.trim()) return [it];
+    const b = it.bbox;
+    const on = links.filter((k) => Math.min(k.y + k.h, b.y + b.h) - Math.max(k.y, b.y) > b.h * 0.4 && k.x < it.x + it.w - 0.5 && k.x + k.w > it.x + 0.5);
+    if (!on.length) return [it];
+    const ws = Array.from(it.str, (c) => glyphW(c, it.family));
+    const total = ws.reduce((a, c) => a + c, 0) || 1;
+    const at: number[] = [0];
+    for (const w of ws) at.push(at[at.length - 1] + (w / total) * it.w);
+    // Each character goes with the link its middle is in.
+    const url = ws.map((_, k) => {
+      const cx = it.x + (at[k] + at[k + 1]) / 2;
+      return on.find((l) => cx >= l.x - 0.5 && cx <= l.x + l.w + 0.5)?.url;
+    });
+    if (url.every((u) => u === url[0])) return [url[0] ? { ...it, link: url[0] } : it];
+    const out: Item[] = [];
+    for (let k = 0; k < url.length; ) {
+      let e = k + 1;
+      while (e < url.length && url[e] === url[k]) e++;
+      const x = it.x + at[k];
+      const w = at[e] - at[k];
+      out.push({
+        ...it,
+        str: it.str.slice(k, e),
+        x,
+        w,
+        ox: it.ox + at[k],
+        bbox: { ...b, x: b.x + at[k], w },
+        gaps: it.gaps?.filter((g) => g.at >= k && g.at < e).map((g) => ({ ...g, at: g.at - k })),
+        ...(url[k] ? { link: url[k] } : {}),
+      });
+      k = e;
+    }
+    return out;
+  });
+}
+
 /* ------------------------------------------------------------- page furniture */
 
 const normalize = (s: string) => s.replace(/\d+/g, "#").replace(/\s+/g, " ").trim().toLowerCase();
+/** A page number as a line reads once its figures are #: "#", "page #", "# of #", "- # -". */
+const PAGE_NO = /^(?:(?:page )?#(?: (?:of|\/) #)?|- # -)$/;
 
 /** Lines that repeat at the top or bottom of many pages (running heads, page numbers). */
 function furniture(pages: { lines: Line[]; height: number }[]): Set<string> {
@@ -531,7 +591,7 @@ function furniture(pages: { lines: Line[]; height: number }[]): Set<string> {
   // On every page of a two-page document, or on at least half the pages (three or more) of a longer one.
   const min = pages.length === 2 ? 2 : Math.max(3, Math.ceil(pages.length * 0.5));
   const out = new Set<string>();
-  for (const [k, n] of counts) if (n >= min || /^(page )?#( (of|\/) #)?$/.test(k) || /^- # -$/.test(k)) out.add(k);
+  for (const [k, n] of counts) if (n >= min || PAGE_NO.test(k)) out.add(k);
   return out;
 }
 
@@ -545,7 +605,8 @@ function graphicsOf(shapes: Shape[], pw: number, ph: number, pics: Pic[] = []): 
   for (const s of shapes) {
     const color = s.fill ?? s.stroke;
     if (s.h <= 3.2 && s.w >= 10) g.hrules.push({ x: s.x, y: s.y, w: s.w, h: s.h, color });
-    else if (s.w <= 3.2 && s.h >= 8) g.vrules.push({ x: s.x, y: s.y, w: s.w, h: s.h, color });
+    // (A thicker bar down the side of a quote or callout is a rule too.)
+    else if ((s.w <= 3.2 && s.h >= 8) || (s.w <= 6 && s.h >= Math.max(8, s.w * 5) && !s.slant && !s.round)) g.vrules.push({ x: s.x, y: s.y, w: s.w, h: s.h, color });
     else if (s.w >= 2.5 && s.h >= 2.5 && s.w <= 16 && s.h <= 16 && Math.abs(s.w - s.h) <= 0.3 * Math.max(s.w, s.h)) {
       if (!(s.fill && isWhite(s.fill) && !s.stroke)) {
         const hollow = !s.fill || isWhite(s.fill);
@@ -567,9 +628,9 @@ function graphicsOf(shapes: Shape[], pw: number, ph: number, pics: Pic[] = []): 
 /* ------------------------------------------------------------- regions */
 
 /** A page, or a box on it, with the text and shapes inside (boxes inside it are its kids). */
-/** `x1`: how far right its text may run, where that's more than its longest line (a block beside another). */
+/** `x0`, `x1`: how far left and right its text may run, where that's more than its own lines do (a block beside another, the part of a page above its columns). */
 /** `pic`: the region is a picture (its box is where the picture shows), placed among the text like a box. */
-type Region = { box?: Box; items: Item[]; kids: Region[]; hrules: Rule[]; vrules: Rule[]; marks: Mark[]; fills: Box[]; outlines: Box[]; x1?: number; pic?: Pic };
+type Region = { box?: Box; items: Item[]; kids: Region[]; hrules: Rule[]; vrules: Rule[]; marks: Mark[]; fills: Box[]; outlines: Box[]; x0?: number; x1?: number; pic?: Pic };
 
 const newRegion = (box?: Box): Region => ({ box, items: [], kids: [], hrules: [], vrules: [], marks: [], fills: [], outlines: [] });
 
@@ -744,7 +805,7 @@ export function analyze(pagesText: PageText[]): SBlock[] {
   return analyzeDoc(pagesText).blocks;
 }
 
-export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: BodyStyle; layout: PageLayout; furniture: Furniture; unread: Set<number> } {
+export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: BodyStyle; layout: PageLayout; furniture: Furniture; unread: Set<number>; drawn: DrawnFigure[] } {
   const pages = pagesText.map((p) => {
     const all = toLines(p);
     const dir = all[0]?.dir ?? 0;
@@ -752,19 +813,49 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
   });
   // Running heads repeat on many pages; a page number counts even on one.
   const skip = furniture(pages);
+  const atEdge = (l: Line, p: { height: number }) => l.y < p.height * 0.1 || l.y + l.h > p.height * 0.9;
+  // Where the pages that number themselves on a line of its own have the number.
+  const numbers = pages.flatMap((p) => p.lines.filter((l) => atEdge(l, p) && skip.has(normalize(l.text)) && PAGE_NO.test(normalize(l.text))).map((l) => ({ x: l.x, x2: l.x + l.w, base: l.base })));
   const kept = pages.map((p) => {
     const gone = new Set<TextItem>();
-    for (const l of p.lines) if (skip.has(normalize(l.text)) && (l.y < p.height * 0.1 || l.y + l.h > p.height * 0.9)) for (const it of l.items) gone.add(it);
-    return p.pt.items.filter((it) => it.dir === p.dir && !gone.has(it)).map((it) => ({ ...it }) as Item);
+    for (const l of p.lines) {
+      if (!atEdge(l, p)) continue;
+      if (skip.has(normalize(l.text))) for (const it of l.items) gone.add(it);
+      // A page number on a line with other text (a source note at the foot of a slide), where the other pages have theirs.
+      else
+        for (const sg of segments(l))
+          if (PAGE_NO.test(normalize(sg.text)) && numbers.some((n) => Math.abs(n.base - l.base) < 3 && (Math.abs(n.x2 - sg.x2) < 4 || Math.abs(n.x - sg.x) < 4))) for (const it of sg.items) gone.add(it);
+    }
+    return linkItems(
+      p.pt.items.filter((it) => it.dir === p.dir && !gone.has(it)).map((it) => ({ ...it }) as Item),
+      p.pt.links ?? [],
+    );
+  });
+  // Charts and drawings made of shapes: each a picture of its part of the page, its labels in it (see drawn.ts).
+  const drawn: DrawnFigure[] = [];
+  const pagePics: Pic[][] = [];
+  const pageShapes: Shape[][] = [];
+  pages.forEach((p, pi) => {
+    const pics = p.pt.pics ?? [];
+    const shapes = p.pt.shapes ?? [];
+    const f = p.dir === 0 && shapes.length >= 3 ? drawnFigures({ page: pi, width: p.width, height: p.height }, [...kept[pi], ...p.pt.items.filter((it) => it.dir !== p.dir)], shapes, pics) : null;
+    pagePics.push(f?.figures.length ? [...pics, ...f.figures.map((x) => x.pic)] : pics);
+    pageShapes.push(f?.figures.length ? shapes.filter((x) => !f.shapes.has(x)) : shapes);
+    if (!f?.figures.length) return;
+    drawn.push(...f.figures);
+    // A legend's keys read as squares (or dots) of their colour before their names.
+    const keys = f.keys.map(({ shape: s, before: it }): Item => ({ ...it, str: s.round ? "\u25CF " : "\u25A0 ", x: s.x, w: s.w, ox: s.x, bbox: { x: s.x, y: s.y, w: s.w, h: s.h }, color: s.fill, bold: false, italic: false, track: undefined, gaps: undefined, link: undefined, mode: undefined, key: true }));
+    if (keys.length) pageShapes[pi] = pageShapes[pi].filter((x) => !f.keys.some((k) => k.shape === x));
+    kept[pi] = [...kept[pi].filter((it) => !f.text.has(it)), ...keys];
   });
   const body = bodyStyle(kept, pages);
 
   const graphics: Graphics[] = [];
   let carry: number[] | undefined;
-  const running = runningPics(pages);
+  const running = runningPics(pages.map((p, pi) => ({ pics: pagePics[pi], height: p.height })));
   const perPage = pages.map((p, pi) => {
-    const pics = (p.pt.pics ?? []).filter((x) => !running.has(x));
-    const g = p.dir === 0 ? graphicsOf(p.pt.shapes ?? [], p.width, p.height, pics) : { hrules: [], vrules: [], boxes: [], marks: [], pics: [] };
+    const pics = pagePics[pi].filter((x) => !running.has(x));
+    const g = p.dir === 0 ? graphicsOf(pageShapes[pi], p.width, p.height, pics) : { hrules: [], vrules: [], boxes: [], marks: [], pics: [] };
     graphics.push(g);
     const blocks = layoutRegion(regionsOf(kept[pi], g, p), { page: pi, pt: p.pt, body: body.size, leading: body.leading, columns: carry });
     const last = blocks[blocks.length - 1];
@@ -778,9 +869,19 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
     const ys = [...items.filter((it) => it.str.trim()).map((it) => it.y + it.h), ...[...g.boxes, ...g.hrules, ...g.vrules, ...g.pics].map((r) => r.y + r.h)];
     return ys.length ? Math.max(...ys) : 0;
   });
+  // Slides (pages wider than tall, most of them opening with a title in one place): each page was begun on purpose.
+  const titles = perPage.flatMap((bs) => (bs[0]?.kind === "heading" && bs[0].geo ? [bs[0].geo.top] : []));
+  const slides = pages.length >= 2 && pages.every((p) => p.width > p.height * 1.15) && titles.length >= pages.length * 0.6 && titles.filter((t) => Math.abs(t - median(titles)) < 8).length >= titles.length * 0.7;
   const out: SBlock[] = [];
   perPage.forEach((blocks, pi) => {
-    if (pi > 0) out.push({ kind: "pagebreak", page: pi, deliberate: deliberateBreak(perPage[pi - 1], blocks, layout.height - layout.bottom - bottoms[pi - 1], body, graphics[pi].boxes) });
+    if (pi > 0) {
+      const deliberate = slides || deliberateBreak(perPage[pi - 1], blocks, layout.height - layout.bottom - bottoms[pi - 1], body, graphics[pi].boxes, layout.top);
+      // Nothing follows the last block of a page left on purpose: no space after it, which
+      // would only push it past the page's foot.
+      const last = [...perPage[pi - 1]].reverse().find((b) => "geo" in b && b.geo);
+      if (deliberate && last && "geo" in last && last.geo && last.geo.gap === undefined) last.geo.gap = 0;
+      out.push({ kind: "pagebreak", page: pi, deliberate });
+    }
     out.push(...blocks);
   });
   joinAcrossPages(out, layout);
@@ -788,20 +889,22 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
   const furn = furnitureLines(pages, skip);
   // Each running picture once, from the first page that has it.
   const pics = new Map<string, { pic: Pic; at: "header" | "footer" }>();
-  for (const p of pages) for (const pic of p.pt.pics ?? []) if (running.has(pic) && !pics.has(pic.id)) pics.set(pic.id, { pic, at: pic.y + pic.h / 2 < p.height / 2 ? "header" : "footer" });
+  pages.forEach((p, pi) => {
+    for (const pic of pagePics[pi]) if (running.has(pic) && !pics.has(pic.id)) pics.set(pic.id, { pic, at: pic.y + pic.h / 2 < p.height / 2 ? "header" : "footer" });
+  });
   // Pages read in another direction (text running up or down the page) don't place their pictures.
   const unread = new Set(pages.flatMap((p, pi) => (p.dir === 0 ? [] : [pi])));
-  return { blocks: out, body, layout, furniture: pics.size ? { ...furn, pics: [...pics.values()] } : furn, unread };
+  return { blocks: out, body, layout, furniture: pics.size ? { ...furn, pics: [...pics.values()] } : furn, unread, drawn };
 }
 
 /**
  * Pictures that repeat in the same place at the top or foot of the pages (a logo in the
  * letterhead, a band along the bottom): the running header and footer, not content.
  */
-function runningPics(pages: { pt: PageText; height: number }[]): Set<Pic> {
+function runningPics(pages: { pics: Pic[]; height: number }[]): Set<Pic> {
   const out = new Set<Pic>();
   if (pages.length < 2) return out;
-  const all = pages.flatMap((p, pi) => (p.pt.pics ?? []).map((pic) => ({ pic, pi, h: p.height })));
+  const all = pages.flatMap((p, pi) => p.pics.map((pic) => ({ pic, pi, h: p.height })));
   for (const a of all) {
     if (out.has(a.pic) || !(a.pic.y + a.pic.h < a.h * 0.2 || a.pic.y > a.h * 0.8)) continue;
     const same = all.filter((b) => b.pic.id === a.pic.id && Math.abs(b.pic.x - a.pic.x) < 3 && Math.abs(b.pic.y - a.pic.y) < 3 && Math.abs(b.pic.w - a.pic.w) < 3);
@@ -841,13 +944,16 @@ function furnitureLines(pages: { lines: Line[]; height: number; width: number }[
  * than one where the text simply ran on: the page ended with room to spare for what comes
  * next. Only those are kept in a reflowed document; elsewhere the text flows on.
  */
-function deliberateBreak(before: SBlock[], after: SBlock[], free: number, body: BodyStyle, boxes: Box[]): boolean {
+function deliberateBreak(before: SBlock[], after: SBlock[], free: number, body: BodyStyle, boxes: Box[], top: number): boolean {
   if (!before.length || !after.length) return true;
   const lead = body.leading ?? body.size * 1.4;
   const geo = (b: SBlock) => ("geo" in b ? b.geo : undefined);
   const first = after.find((b) => geo(b));
   const g = first && geo(first);
   if (!first || !g) return free > lead * 4;
+  // Text that simply ran on starts at the top of the next page; a page starting well down (a
+  // closing slide, a chapter's opening page) was begun on purpose.
+  if (g.top > top + lead * 4) return true;
   const height = g.bottom - g.top;
   // How much of it had to fit: text can split after a few lines; a box can't; a heading or
   // lead-in comes with the start of what follows it.
@@ -1007,21 +1113,38 @@ function bodyStyle(kept: Item[][], pages: { pt: PageText }[]): BodyStyle {
     }
   // Line spacing: baseline to baseline within paragraphs of body text. The gap between
   // paragraphs: from a line that ends a sentence to one that starts a new one.
+  // (Lines are taken down each column, one after the other: lines of text set in columns
+  // interleave down the page.)
   const steps: number[] = [];
   const breaks: number[] = [];
   kept.forEach((items, i) => {
-    const lines = toLines({ ...pages[i].pt, items }).filter((l) => Math.abs(half(l.size) - size) <= 0.5);
-    for (let k = 1; k < lines.length; k++) {
-      const a = lines[k - 1];
-      const b = lines[k];
-      if (Math.abs(a.x - b.x) >= 4 || b.base <= a.base) continue;
-      if (/[.!?:]["”’)]?$/.test(a.text) && /^[A-Z“"(]/.test(b.text)) breaks.push(b.base - a.base);
-      else steps.push(b.base - a.base);
+    const all = toLines({ ...pages[i].pt, items });
+    const lines = all.filter((l) => Math.abs(half(l.size) - size) <= 0.5);
+    const cols: Line[][] = [];
+    for (const l of lines) {
+      const c = cols.find((g) => Math.abs(g[0].x - l.x) < 4);
+      if (c) c.push(l);
+      else cols.push([l]);
+    }
+    for (const col of cols) {
+      col.sort((a, b) => a.base - b.base);
+      for (let k = 1; k < col.length; k++) {
+        const a = col[k - 1];
+        const b = col[k];
+        // (Only lines with nothing between them in their column: not across a heading or a list.)
+        if (b.base <= a.base || all.some((o) => o !== a && o !== b && o.base > a.base + 0.5 && o.base < b.base - 0.5 && Math.min(o.x + o.w, a.x + a.w) > Math.max(o.x, a.x))) continue;
+        if (/[.!?:]["”’)]?$/.test(a.text) && /^[A-Z“"(]/.test(b.text)) breaks.push(b.base - a.base);
+        else steps.push(b.base - a.base);
+      }
     }
   });
-  // Lines inside paragraphs sit closest: the tighter half of the steps (items of a list, set apart a little, are looser).
+  // Lines inside paragraphs sit closest: the tighter half of the steps (items of a list, set apart a
+  // little, are looser). Averaged around that: line positions come rounded to a grid, so the steps
+  // alternate (14.25, then 15, for 14.6).
   const inPara = steps.filter((s) => s >= size * 0.95 && s <= size * 2.2).sort((a, b) => a - b);
-  const leading = inPara.length >= 3 ? median(inPara.slice(0, Math.ceil(inPara.length / 2))) : undefined;
+  const core = inPara.length >= 3 ? median(inPara.slice(0, Math.ceil(inPara.length / 2))) : undefined;
+  const near = core === undefined ? [] : inPara.filter((s) => Math.abs(s - core) <= Math.max(1, size * 0.1));
+  const leading = near.length ? near.reduce((a, b) => a + b, 0) / near.length : core;
   const between = leading ? breaks.filter((s) => s > leading * 1.15 && s < leading * 2.5) : [];
   return {
     size,
@@ -1033,21 +1156,27 @@ function bodyStyle(kept: Item[][], pages: { pt: PageText }[]): BodyStyle {
   };
 }
 
-/** Heading levels from size across the whole document: the largest size is level 1. */
+/**
+ * Heading levels from size across the whole document, wherever the headings sit (in boxes,
+ * columns, cards, side by side): the largest size is level 1. Sizes within a few percent of
+ * each other (a title slide's 46 pt and a closing slide's 44 pt) are one level.
+ */
 function rankHeadings(blocks: SBlock[]) {
   const all: Extract<SBlock, { kind: "heading" }>[] = [];
   const walk = (bs: SBlock[]) => {
     for (const b of bs) {
       if (b.kind === "heading") all.push(b);
       else if (b.kind === "box" || b.kind === "columns") walk(b.blocks);
+      else if (b.kind === "table") for (const row of b.cells) for (const c of row) if (c?.blocks) walk(c.blocks);
     }
   };
   walk(blocks);
   const sizes = [...new Set(all.map((h) => h.size))].sort((a, b) => b - a);
+  const near = (top: number, s: number) => top - s <= Math.max(0.75, top * 0.06);
   const tiers: number[] = [];
-  for (const s of sizes) if (!tiers.length || tiers[tiers.length - 1] - s > 0.75) tiers.push(s);
+  for (const s of sizes) if (!tiers.length || !near(tiers[tiers.length - 1], s)) tiers.push(s);
   for (const h of all) {
-    const t = tiers.findIndex((x) => x - h.size <= 0.75);
+    const t = tiers.findIndex((x) => near(x, h.size));
     h.level = Math.min(3, Math.max(1, t + 1)) as 1 | 2 | 3;
   }
 }
@@ -1063,6 +1192,10 @@ type Base = { page: number; pt: Ctx["pt"]; body: number; leading?: number; colum
 function layoutRegion(r: Region, base: Base): SBlock[] {
   if (r.pic) return [picsBlock([r], base)];
   const sb = sidebarOf(r, base);
+  if (!sb) {
+    const cols = columnsWithKids(r, base);
+    if (cols) return cols;
+  }
   const sp = sb ? null : (picSide(r, base) ?? sideBySide(r, base));
   if (!sb && !sp) return layoutPlain(r, base);
   const [y0, y1] = sb ? [sb.y0, sb.y1] : [sp!.y0, sp!.y1];
@@ -1150,13 +1283,71 @@ function layoutRegion(r: Region, base: Base): SBlock[] {
     widths: ws.map((w) => w / total),
     layout,
     page: base.page,
-    geo: { top: y0, bottom: y1, first: topText && topText.y <= topKid + 1 ? half(topText.fontSize) : 0, last: 0 },
+    // (Its top is where its highest text or box starts: a line set a little higher on one side is in it.)
+    geo: { top: Math.min(y0, topText?.y ?? y0, topKid), bottom: y1, first: topText && topText.y <= topKid + 1 ? half(topText.fontSize) : 0, last: 0 },
   };
   const out = layoutRegion(part((o) => !inSpan(o), r.box), base);
   const at = out.findIndex((b) => "geo" in b && !!b.geo && b.geo.top >= y1 - 1);
   out.splice(at < 0 ? out.length : at, 0, table);
   setGaps(out, r.box);
   return out;
+}
+
+/**
+ * A stretch of the region set in two columns with a picture or box in one of them (a figure at
+ * the head of a column, as in a paper): each column laid out on its own, the picture in its
+ * place in that column, and the two read one after the other. Columns of text alone are read
+ * line by line (see columnZones and columnsBlock).
+ */
+function columnsWithKids(r: Region, base: Base): SBlock[] | null {
+  if (!r.kids.length) return null;
+  const lines = linesOf(r.items, base.pt);
+  if (lines.length < 6) return null;
+  const x0 = Math.min(...lines.map((l) => l.x));
+  const x1 = Math.max(...lines.map((l) => l.x + l.w), r.x1 ?? -Infinity);
+  const ctx: Ctx = { ...base, hrules: r.hrules, used: new Set(), vrules: r.vrules, marks: r.marks, fills: r.fills, outlines: r.outlines, x0, x1 };
+  const mid = (o: Rect) => o.y + o.h / 2;
+  for (const z of columnZones(lines, ctx)) {
+    const zl = lines.slice(z.from, z.to);
+    const g = z.gutter;
+    const lead = median(zl.map((l) => l.h));
+    let y0 = Math.min(...zl.map((l) => l.y));
+    let y1 = Math.max(...zl.map((l) => l.y + l.h));
+    // Pictures and boxes level with the stretch, each on one side of the gutter.
+    const level = (o: Rect) => o.y < y1 + lead && o.y + o.h > y0 - lead;
+    const side = (o: Rect) => o.x + o.w <= g + 2 || o.x >= g - 2;
+    const kids = r.kids.filter((k) => level(k.box!));
+    if (!kids.length || !kids.every((k) => side(k.box!))) continue;
+    y0 = Math.min(y0, ...kids.map((k) => k.box!.y));
+    y1 = Math.max(y1, ...kids.map((k) => k.box!.y + k.box!.h));
+    // Nothing else level with it may run across the gutter.
+    if (lines.some((l, i) => (i < z.from || i >= z.to) && mid(l) > y0 && mid(l) < y1 && segments(l).some((sg) => sg.x < g - 1 && sg.x2 > g + 1))) continue;
+    if (r.kids.some((k) => !kids.includes(k) && mid(k.box!) > y0 && mid(k.box!) < y1)) continue;
+    const part = (keep: (o: Rect) => boolean): Region => ({
+      items: r.items.filter(keep),
+      kids: r.kids.filter((k) => keep(k.box!)),
+      hrules: r.hrules.filter(keep),
+      vrules: r.vrules.filter(keep),
+      marks: r.marks.filter(keep),
+      fills: r.fills.filter(keep),
+      outlines: r.outlines.filter(keep),
+    });
+    const inZone = (o: Rect) => mid(o) >= y0 && mid(o) <= y1;
+    const cols = [part((o) => inZone(o) && o.x + o.w / 2 < g), part((o) => inZone(o) && o.x + o.w / 2 >= g)];
+    const starts = cols.map((c) => Math.min(...[...c.items.filter((it) => it.str.trim()), ...c.kids.map((k) => k.box!)].map((o) => o.x)));
+    if (starts.some((x) => !Number.isFinite(x))) continue;
+    // A paragraph running from the foot of one column to the head of the next is one paragraph.
+    const blocks = layoutRegion(cols[0], base);
+    joinBlocks(blocks, layoutRegion(cols[1], base));
+    const tops = zl.slice(0, 2);
+    const columns: SBlock = { kind: "columns", count: 2, blocks, page: base.page, geo: { top: y0, bottom: y1, first: tops[0]?.dom ?? 0, last: zl[zl.length - 1]?.dom ?? 0 }, starts };
+    // What is above and below the columns keeps the page's edges (an abstract set in from both).
+    const across = (keep: (o: Rect) => boolean): Region => ({ ...part(keep), x0, x1 });
+    const out = [...layoutRegion(across((o) => mid(o) < y0), base), columns, ...layoutRegion(across((o) => mid(o) > y1), base)];
+    setGaps(out, r.box);
+    return out;
+  }
+  return null;
 }
 
 /**
@@ -1210,6 +1401,10 @@ function sideBySide(r: Region, base: Base): { y0: number; y1: number; gx: number
     if (run.length < 4) continue;
     // Running text in two columns is read down one column then the next (see columnZones).
     const sides = [0, 1].map((n) => linesFromItems(run.flatMap((l) => l.items.filter((it) => it.str.trim() && (it.x + it.w / 2 < gx) === (n === 0))), base.pt));
+    // A bulleted list on each side (each under its own heading, after a paragraph or not):
+    // two columns, even where their lines pair up like a table's rows.
+    const marked = (side: SLine[]) => side.filter((l) => ["bullet", "check"].includes(markerAt(l, { marks: r.marks } as Ctx)?.kind ?? "")).length >= 2;
+    if (sides.every(marked)) return { y0: Math.min(...run.map((l) => l.y)), y1: Math.max(...run.map((l) => l.y + l.h)), gx };
     if (proseSides(sides, base.body)) continue;
     const ls = run.filter(leftOf);
     const rs = run.filter(rightOf);
@@ -1287,10 +1482,18 @@ function picSide(r: Region, base: Base): { y0: number; y1: number; gx: number } 
  */
 function setGaps(out: SBlock[], box?: Box) {
   const placed = out.filter((b): b is Extract<SBlock, { geo?: Geo }> & { geo: Geo } => "geo" in b && !!b.geo);
+  // How far down the page the blocks so far reach: a block set level with the one before it
+  // (a legend beside a title) leaves only the space below the lower of the two.
+  let reach = -Infinity;
   placed.forEach((b, k) => {
     const nx = placed[k + 1]?.geo;
+    // How much of the block sits level with what came before it: in Word it goes below instead,
+    // so the space after it gives that back.
+    const over = Number.isFinite(reach) ? Math.max(0, Math.min(b.geo.bottom, reach) - b.geo.top) : 0;
+    // (A picture with text set over it keeps no room of its own: the text runs over it.)
+    if (!(b.kind === "image" && nx && nx.top < b.geo.bottom - 2)) reach = Math.max(reach, b.geo.bottom);
     if (nx) {
-      const gap = Math.max(0, nx.top - b.geo.bottom);
+      const gap = Math.max(0, nx.top - (b.kind === "image" ? b.geo.bottom : reach) - over);
       const empty = !placed.some((o, j) => j !== k && j !== k + 1 && o.geo.top < nx.top - 1 && o.geo.bottom > b.geo.bottom + 1);
       b.geo.gap = empty ? gap : Math.min(gap, 72);
       b.geo.next = nx.first;
@@ -1308,7 +1511,7 @@ function layoutPlain(r: Region, base: Base): SBlock[] {
   const groups = cardGroups(r.kids);
   // Captions set one under each picture of a row go with their picture (see captionsOf).
   const lines = captionsOf(groups, linesOf(r.items, base.pt));
-  const x0 = lines.length ? Math.min(...lines.map((l) => l.x)) : 0;
+  const x0 = lines.length ? Math.min(...lines.map((l) => l.x), r.x0 ?? Infinity) : 0;
   // In a box, text can run as far from its right edge as it starts from the left.
   const x1 = lines.length ? Math.max(...lines.map((l) => l.x + l.w), r.box ? r.box.x + r.box.w - Math.min(24, x0 - r.box.x) : -Infinity, r.x1 ?? -Infinity) : 0;
   const ctx: Ctx = { ...base, hrules: r.hrules, used: new Set(), vrules: r.vrules, marks: r.marks, fills: r.fills, outlines: r.outlines, x0, x1 };
@@ -1684,7 +1887,9 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
       // Lines set further apart than the paragraph's own spacing (or the text's usual spacing) start a new one.
       const step = l.domBase - para.last.domBase;
       const usual = para.lines.length >= 2 ? para.last.domBase - para.lines[para.lines.length - 2].domBase : sameSize && ctx.leading && Math.abs(l.dom - ctx.body) < 0.6 ? ctx.leading : undefined;
-      const spaced = usual !== undefined && l.col === para.last.col && step > usual + Math.max(1.5, l.dom * 0.15);
+      // (Raised text, a footnote marker, can push its line down a little.)
+      const raised = l.items.some((it) => it.sup) ? l.dom * 0.35 : 0;
+      const spaced = usual !== undefined && l.col === para.last.col && step > usual + Math.max(1.5, l.dom * 0.15) + raised;
       if (gap < l.h * 0.75 && sameSize && !indented && !prevShort && !newColumn && !spaced && !(early && sentenceEnd) && bar === para.bar && l.x >= para.first.x - l.size * 1.5) {
         if (early) breakRuns(para.runs, runs);
         else joinRuns(para.runs, runs);
@@ -1950,9 +2155,9 @@ function proseSides(sides: SLine[][], body: number): boolean {
   });
 }
 
-/** Lines built from items (raised text kept raised). */
+/** Lines built from items (raised text kept raised, or put back by the word it was raised from). */
 function linesFromItems(items: Item[], pt: Ctx["pt"]): SLine[] {
-  const lines = toLines({ page: pt.page, width: pt.width, height: pt.height, items }) as SLine[];
+  const lines = linesOf(items, pt);
   for (const l of lines) relayout(l);
   return lines.sort((a, b) => a.y - b.y || a.x - b.x);
 }
@@ -1999,10 +2204,16 @@ function columnZones(lines: SLine[], ctx: Ctx): { from: number; to: number; gutt
     let from = k;
     let to = e;
     k = e;
-    // Small print on one side only before or after the columns (a note, a footnote) is outside them.
+    // Small print on one side only before or after the columns (a note, a footnote) is outside
+    // them; small print running on in its column (references under their heading) is in it.
     const size = median(lines.slice(from, to).map((l) => l.dom));
     const oneSided = (l: SLine) => !side(l, 0).length || !side(l, 1).length;
-    while (to - from > 0 && oneSided(lines[to - 1]) && lines[to - 1].dom < size * 0.9) to--;
+    const runsOn = (k: number) => {
+      const own = side(lines[k], 0).length ? 0 : 1;
+      const prev = lines.slice(from, k).filter((l) => side(l, own).length).pop();
+      return !!prev && lines[k].y - (prev.y + prev.h) <= Math.max(prev.h, lines[k].h) * 1.2;
+    };
+    while (to - from > 0 && oneSided(lines[to - 1]) && lines[to - 1].dom < size * 0.9 && !runsOn(to - 1)) to--;
     // The columns start where both do (within a line or so): short lines well above that are ordinary text.
     while (to - from > 0 && oneSided(lines[from])) {
       const own = side(lines[from], 0).length ? 0 : 1;
@@ -2045,9 +2256,14 @@ function headingAt(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx): { bl
   // A numbered title ("1. Definitions" over its clauses) is a heading; one followed by the next number is an item of a list.
   const mk = markerAt(l, ctx);
   const after = lines[i + 1] ? markerAt(lines[i + 1], ctx) : null;
+  const before = i > 0 ? markerAt(lines[i - 1], ctx) : null;
   const titled = !mk || (mk.kind === "decimal" && !!mk.after && text.length < 60 && !(after?.kind === "decimal" && Math.abs(after.x - mk.x) < 4));
   const boldish = l.bold && l.dom >= ctx.body * 0.98 && text.length < 80 && (text.match(/\p{L}/gu) ?? []).length >= 3 && !/[.:,;!?]$/.test(text) && titled;
+  // A bullet, or a number next to the one before or after it, is an item of a list, however large its type (slides).
+  if (mk && (mk.kind === "bullet" || mk.kind === "check" || [after, before].some((o) => o?.kind === mk.kind && Math.abs(o.x - mk.x) < 4))) return null;
   if ((!big && !boldish) || l.dom < ctx.body * 0.95) return null;
+  // Large plain type giving an address (an email, a web address) is a line to read, not a title.
+  if (!l.bold && /[\w.+-]+@[\w-]+\.\w|https?:\/\/|\bwww\.\w/i.test(text)) return null;
   // A heading that wraps continues with lines of the same size and weight.
   let end = i + 1;
   while (
@@ -2056,7 +2272,8 @@ function headingAt(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx): { bl
     Math.abs(lines[end].dom - l.dom) < 0.6 &&
     lines[end].bold === l.bold &&
     lines[end].y - (lines[end - 1].y + lines[end - 1].h) < l.h * 0.8 &&
-    Math.abs(lines[end].x - l.x) < l.dom * 2
+    Math.abs(lines[end].x - l.x) < l.dom * 2 &&
+    !markerAt(lines[end], ctx)
   )
     end++;
   const group = lines.slice(i, end);
@@ -2122,6 +2339,7 @@ function markerAt(l: SLine, ctx: Ctx, x0 = -Infinity): Marker | null {
   while (k < chs.length && !chs[k].c.trim()) k++;
   if (k >= chs.length) return null;
   const first = chs[k];
+  if ((first.it as Item).key) return null;
   // A check box or bullet drawn just left of the text.
   const mark = ctx.marks.find((m) => m.x + m.w <= first.x + 1 && first.x - (m.x + m.w) < first.it.fontSize * 2.5 && m.x >= x0 - 1 && Math.min(m.y + m.h, l.y + l.h) - Math.max(m.y, l.y) > Math.min(m.h, l.h) * 0.4);
   if (mark) return { kind: mark.check ? "check" : "bullet", value: 1, before: "", after: "", bullet: mark.bullet, x: mark.x, textX: first.x, ...(mark.color ? { run: { size: half(first.it.fontSize), color: mark.color, bold: false } } : {}) };
@@ -2229,7 +2447,9 @@ function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX =
     if (j > i) {
       const prev = lines[j - 1];
       if (l.y - (prev.y + prev.h) > Math.max(lineH, prev.h) * 2.6) break;
-      if (l.dom >= ctx.body * 1.18 && headingAt(lines, segs, j, ctx)) break;
+      // Large type that follows on under an item's text is the item wrapping (slides), not a heading.
+      const continues = open.some((c) => c && Math.abs(l.x - c.m.textX) <= Math.max(4, l.dom * 0.6) && Math.abs(l.dom - c.size) < 0.6 && l.y - c.bottom < l.h * 0.8);
+      if (l.dom >= ctx.body * 1.18 && !continues && headingAt(lines, segs, j, ctx)) break;
       if (l.x < cols[0].x - 4) break;
     }
     let ok = true;
@@ -3154,8 +3374,10 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     // Text of near-equal widths, centred under a heading of another width, is centred.
     const mids = body.map((p) => (p.x + p.x2) / 2);
     const headCentre = !!headCell && starts <= 4 && spread(mids) < 2.5 && Math.abs((headCell.x + headCell.x2) / 2 - median(mids)) < 2 && Math.abs(headCell.x - median(body.map((p) => p.x))) > 3;
-    const right = !headCentre && spread(body.map((p) => p.x2)) < 2.5 && (starts > 4 || (figures && !headLeft));
-    const centre = !right && spread(mids) < 2.5 && (starts > 4 || headCentre);
+    // (Texts of different widths sharing their middles, but neither their starts nor their ends, are centred.)
+    const ends = spread(body.map((p) => p.x2));
+    const right = !headCentre && ends < 2.5 && (starts > 4 || (figures && !headLeft));
+    const centre = !right && spread(mids) < 2.5 && (starts > 4 || headCentre || (spread(mids) < 1 && starts > 1.5 && ends > 1.5));
     if (!right && !centre) return;
     const end = Math.max(...body.map((p) => p.x2));
     const mid = (Math.max(...body.map((p) => p.x)) + Math.min(...body.map((p) => p.x2))) / 2;

@@ -385,7 +385,8 @@ export const CASES = [
   } },
   { id: "pdf-to-markdown-table", slug: "pdf-to-markdown", files: ["partners.pdf"], check: (s) => {
       const lines = readFileSync(first(s, ".md").path, "utf8").split("\n").filter((l) => l.startsWith("| "));
-      return ok([lines.length === 10 ? "10 table lines" : `✗ ${lines.length} table lines`, lines.some((l) => l.startsWith("| Northwind Labs | Consulting and training firm")) ? "row intact" : "✗ row broken"]);
+      // (The partner's name is bold in the PDF, and stays so.)
+      return ok([lines.length === 10 ? "10 table lines" : `✗ ${lines.length} table lines`, lines.some((l) => l.startsWith("| **Northwind Labs** | Consulting and training firm")) ? "row intact" : "✗ row broken"]);
   } },
   { id: "pdf-to-word-exact", slug: "pdf-to-word", files: ["cmp-a.pdf"], options: { mode: "exact" }, check: (s, h) => {
       const o = h.officeText(first(s, ".docx").path);
@@ -578,11 +579,109 @@ print('cells' if found else 'flat')`);
   } },
   { id: "pdf-to-html", slug: "pdf-to-html", files: ["text.pdf"], check: (s) => {
       const t = readFileSync(first(s, ".html").path, "utf8");
-      return ok([/<h1>Quarterly Operations Report<\/h1>/.test(t) ? "h1" : "✗ h1", /<table>/.test(t) ? "table" : "✗ table", /<img/.test(t) ? "images" : "✗ images", /<ul>/.test(t) ? "list" : "✗ list"]);
+      return ok([/<h1[^>]*>Quarterly Operations Report<\/h1>/.test(t) ? "h1" : "✗ h1", /<table>/.test(t) ? "table" : "✗ table", /<img/.test(t) ? "images" : "✗ images", /<ul>/.test(t) ? "list" : "✗ list"]);
   } },
   { id: "pdf-to-html-exact", slug: "pdf-to-html", files: ["cmp-a.pdf"], options: { mode: "exact" }, check: (s) => {
       const t = readFileSync(first(s, ".html").path, "utf8");
       return ok([/Alpha clause/.test(t) ? "text layer" : "✗ text", /data:image\/jpeg/.test(t) ? "page image" : "✗ image"]);
+  } },
+  // A slide deck printed to PDF, as a web page: the title over the slides' titles, a chart drawn
+  // with shapes as one picture with its labels in it, the legend's keys in their colours, two
+  // columns of bullets side by side, a link, no slide number in the text, a mark between slides.
+  { id: "pdf-to-html-deck", slug: "pdf-to-html", files: ["deck.pdf"], check: (s) => {
+      const t = readFileSync(first(s, ".html").path, "utf8");
+      const text = t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+      const two = t.indexOf('<div class="side">');
+      return ok([
+        expect(/<h1[^>]*>Northwind Outdoor Co\.<\/h1>/.test(t) && /<h2[^>]*>Agenda<\/h2>/.test(t) && /<h2[^>]*>Revenue by channel \(\$M\)<\/h2>/.test(t), "title h1, slide titles h2"),
+        expect(/<img src="data:image\/png/.test(t) && !/\b10\.8\b/.test(text) && !/Wholesale/.test(text), "the chart is one picture, its labels in it"),
+        expect(/<span style="color:#2f6fb3">■ <\/span>Q3 2025/.test(t) && /<span style="color:#e0663a">■ <\/span>Q3 2026/.test(t), "legend keys in their colours"),
+        expect(two >= 0 && two < t.indexOf(">Went well<") && /<ul><li>Two new stores opened on time<\/li><li>Delivery promise met on 97% of orders<\/li><\/ul>/.test(t) && /<ul><li>Rebalance stock weekly, not monthly<\/li>/.test(t), "two columns of bullets side by side"),
+        expect(/<a href="https:\/\/northwind\.example\/reviews">northwind\.example\/reviews<\/a>/.test(t), "link kept"),
+        expect(/Source: finance ledger, 30 September 2026<\/p>/.test(t), "no slide number in the text"),
+        expect((t.match(/<hr class="page"/g) ?? []).length === 8, "a mark between each of the 9 slides"),
+      ]);
+  } },
+  // The same deck as Markdown: headings, each column's heading, paragraph and list in turn, the
+  // link, cards read one after another, and no loose chart labels.
+  { id: "pdf-to-markdown-deck", slug: "pdf-to-markdown", files: ["deck.pdf"], check: (s) => {
+      const t = readFileSync(first(s, ".md").path, "utf8");
+      return ok([
+        expect(/^# Northwind Outdoor Co\.$/m.test(t) && /^## Agenda$/m.test(t) && /^# Thank you$/m.test(t), "title #, slide titles ##"),
+        expect(/^### Went well\n\n.+\n\n- Two new stores opened on time\n- Delivery promise met on 97% of orders$/m.test(t), "each column's heading, paragraph and list in turn"),
+        expect(/\[northwind\.example\/reviews\]\(https:\/\/northwind\.example\/reviews\)/.test(t), "link kept"),
+        expect(/^\*\*42%\*\*\n\nof buyers came back within 90 days$/m.test(t), "cards read in turn"),
+        expect(!/\b10\.8\b/.test(t) && !/Wholesale/.test(t), "no loose chart labels"),
+      ]);
+  } },
+  // The deck in Word: one page per slide, the chart a picture, a working link, both columns' bullets.
+  { id: "pdf-to-word-deck", slug: "pdf-to-word", files: ["deck.pdf"], check: (s, h) => {
+      const p = first(s, ".docx").path;
+      const x = JSON.parse(py(h, `import zipfile,json;z=zipfile.ZipFile(${JSON.stringify(p)});d=z.read('word/document.xml').decode();r=z.read('word/_rels/document.xml.rels').decode();print(json.dumps({'png':sum(1 for n in z.namelist() if n.startswith('word/media/') and n.endswith('.png')),'link':'<w:hyperlink' in d and 'https://northwind.example/reviews' in r,'chart':'10.8' in d}))`));
+      const ps = parasIn(docxDump(h, p).body);
+      const bullets = ps.filter((q) => q.list && /^(Two new stores|Delivery promise|Rebalance stock|Hire four)/.test(q.text)).length;
+      const o = h.officeText(p);
+      return ok([
+        expect(o.ok && o.pages === 9, `${o.pages} pages, one per slide`),
+        expect(x.png >= 1 && !x.chart, "the chart is a picture, its labels in it"),
+        expect(x.link, "link opens its address"),
+        expect(bullets === 4, "both columns' bullets are list items"),
+      ]);
+  } },
+  // A paper's page: abstract across the page, then two columns with a chart drawn in SVG at the
+  // head of the second, a footnote mark, a table, references numbered [1] [2] with a link.
+  { id: "pdf-to-html-paper", slug: "pdf-to-html", files: ["paper.pdf"], check: (s) => {
+      const t = readFileSync(first(s, ".html").path, "utf8");
+      const at = (x) => t.indexOf(x);
+      return ok([
+        expect(at("1 Introduction") < at("2 Method") && at("2 Method") < at("<figure>") && at("<figure>") < at("3 Results") && at("3 Results") < at("References"), "each column read in turn, the figure in its place"),
+        expect(/<figure><img src="data:image\/png[^>]*><figcaption>Figure 1\. Agreement with human readers, in percent\.<\/figcaption><\/figure>/.test(t), "chart a picture, with its caption"),
+        expect(/in an editor\.<sup>1<\/sup><\/p>/.test(t), "footnote mark kept by its word"),
+        expect(/<span class="n">\[1\]<\/span>/.test(t) && /<a href="https:\/\/doi\.example\/10\.1000\/jde\.2021\.45">/.test(t), "references keep [1], and their link"),
+        expect(/columns:2 15rem/.test(t), "set in two columns, one on a phone"),
+      ]);
+  } },
+  // The paper in Word: a section of two columns holding the figure, the mark raised, the link.
+  { id: "pdf-to-word-paper", slug: "pdf-to-word", files: ["paper.pdf"], check: (s, h) => {
+      const p = first(s, ".docx").path;
+      const x = JSON.parse(py(h, `import zipfile,json,re;z=zipfile.ZipFile(${JSON.stringify(p)});d=z.read('word/document.xml').decode()
+i=d.find('in an editor.');j=d.find('Figure 1.');k=d.find('w:num="2"',i);g=d.find('<w:drawing',i)
+print(json.dumps({'sup':bool(re.search(r'in an editor\\.</w:t></w:r><w:r><w:rPr>(?:(?!</w:rPr>).)*<w:vertAlign w:val="superscript"/>(?:(?!</w:rPr>).)*</w:rPr><w:t[^>]*>1<',d)),'cols':i>0 and k>j,'fig':0<g<j,'link':'<w:hyperlink' in d}))`));
+      const o = h.officeText(p);
+      return ok([
+        expect(o.ok && o.pages === 1, `${o.pages} page`),
+        expect(x.cols, "set in two columns, the figure in them"),
+        expect(x.fig, "the chart a picture, before its caption"),
+        expect(x.sup, "footnote mark raised, by its word"),
+        expect(x.link, "the reference's link opens"),
+      ]);
+  } },
+  // The paper in Markdown: one column read after the other, the caption after the figure's text, references.
+  { id: "pdf-to-markdown-paper", slug: "pdf-to-markdown", files: ["paper.pdf"], check: (s) => {
+      const t = readFileSync(first(s, ".md").path, "utf8");
+      return ok([
+        expect(/^## 1 Introduction\n\nPortable documents describe where each character sits on a page but say little about the order in which the characters should be read\. A converter must recover that order before it can produce text that flows correctly in an editor\.<sup>1<\/sup>$/m.test(t), "paragraph whole, mark kept"),
+        expect(t.indexOf("## 2 Method") < t.indexOf("Figure 1.") && t.indexOf("Figure 1.") < t.indexOf("## 3 Results"), "columns read in turn"),
+        expect(/^- \[1\] B\. Kumar\./m.test(t) && /\(https:\/\/doi\.example\/10\.1000\/jde\.2021\.45\)/.test(t), "references with their numbers and link"),
+      ]);
+  } },
+  // A contract as a web page: clause numbers hanging before their text, sub-clauses keeping their
+  // brackets, and no page mark where the text simply runs on to the next page.
+  { id: "pdf-to-html-contract", slug: "pdf-to-html", files: ["contract.pdf"], check: (s) => {
+      const t = readFileSync(first(s, ".html").path, "utf8");
+      return ok([
+        expect(/<ul class="lbl"><li><span class="n">1\.1<\/span>/.test(t), "clause numbers hang before their text"),
+        expect(/<span class="n">\(a\)<\/span>/.test(t), "sub-clauses keep their brackets"),
+        expect(!/<hr class="page"/.test(t), "no page mark where the text runs on"),
+        expect(/<header class="running">/.test(t), "running header once"),
+      ]);
+  } },
+  // An ebook with the report's pictures as files, each listed and shown.
+  { id: "pdf-to-epub-pictures", slug: "pdf-to-epub", files: ["site-report.pdf"], check: (s, h) => {
+      const e = first(s, ".epub").path;
+      const r = JSON.parse(py(h, `import zipfile,json;z=zipfile.ZipFile(${JSON.stringify(e)});n=z.namelist();opf=z.read('OEBPS/content.opf').decode();x=''.join(z.read(k).decode() for k in n if k.startswith('OEBPS/ch'));p=[k[6:] for k in n if k.startswith('OEBPS/images/') and not k.endswith('/')]
+print(json.dumps({'n':len(p),'listed':all(('href="%s"' % q) in opf for q in p),'shown':all(('src="%s"' % q) in x for q in p)}))`));
+      return ok([expect(r.n >= 4, `${r.n} pictures`), expect(r.listed, "each listed in the package"), expect(r.shown, "each shown in the text")]);
   } },
   { id: "pdf-to-markdown", slug: "pdf-to-markdown", files: ["text.pdf"], check: (s) => {
       const t = readFileSync(first(s, ".md").path, "utf8");
