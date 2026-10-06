@@ -4,6 +4,7 @@ import { pushGraphicsState, popGraphicsState, concatTransformationMatrix } from 
 import {
   MM,
   appendPages,
+  copyPages,
   degrees,
   loadPdf,
   newDoc,
@@ -77,12 +78,28 @@ export async function mixPdfs(srcs: Src[], opts: { reverseSecond?: boolean; chun
   return pdfOut("mixed.pdf", await saveDoc(out));
 }
 
-async function writeParts(src: PDFDocument, groups: number[][], name: string, labels?: string[]): Promise<OutFile[]> {
+/**
+ * Bookmarks of the source that point at pages a new document takes (`order[k]`: the source
+ * page that is its page k), pointing at those pages there.
+ */
+function carryOutline(doc: PDFDocument, outline: Flat[], order: number[]) {
+  const at = new Map<number, number>();
+  order.forEach((pi, k) => (at.has(pi) ? undefined : at.set(pi, k)));
+  const kept = outline.flatMap((f) => (at.has(f.page - 1) ? [{ ...f, page: at.get(f.page - 1)! + 1 }] : []));
+  const tree = treeFromFlat(kept);
+  if (tree.length) setOutline(doc, tree, false);
+}
+
+type Flat = { title: string; page: number; level: number };
+const outlineOf = (src: Src): Promise<Flat[]> => getOutline(src.bytes, src.password).catch(() => []);
+
+async function writeParts(src: PDFDocument, groups: number[][], name: string, labels?: string[], outline: Flat[] = []): Promise<OutFile[]> {
   const out: OutFile[] = [];
   const used = new Set<string>();
   for (let i = 0; i < groups.length; i++) {
     const doc = await newDoc();
     await appendPages(doc, src, groups[i]);
+    carryOutline(doc, outline, groups[i]);
     let fname = `${stem(name)}-${labels?.[i] ? safeFileName(labels[i], 40) : `part-${i + 1}`}.pdf`;
     for (let k = 2; used.has(fname); k++) fname = fname.replace(/(-\d+)?\.pdf$/, `-${k}.pdf`);
     used.add(fname);
@@ -118,7 +135,7 @@ export async function splitPdf(
     if (!groups.length) throw new Error(`List pages as numbers and ranges separated by commas (this PDF has ${n} page${n === 1 ? "" : "s"}).`);
     if (opts.merge) groups = [groups.flat()];
   }
-  return writeParts(doc, groups, src.name);
+  return writeParts(doc, groups, src.name, undefined, await outlineOf(src));
 }
 
 export async function extractSelected(src: Src, spec: string): Promise<OutFile> {
@@ -128,6 +145,7 @@ export async function extractSelected(src: Src, spec: string): Promise<OutFile> 
   if (!pages.length) throw new Error(`No pages matched “${spec}”. This PDF has ${n} pages.`);
   const out = await newDoc();
   await appendPages(out, doc, pages);
+  carryOutline(out, await outlineOf(src), pages);
   return pdfOut(`${stem(src.name)}-pages.pdf`, await saveDoc(out), `${pages.length} of ${n} pages`);
 }
 
@@ -140,13 +158,16 @@ export async function removePages(src: Src, spec: string): Promise<OutFile> {
   const keep = doc.getPageIndices().filter((i) => !drop.has(i));
   const out = await newDoc();
   await appendPages(out, doc, keep);
+  carryOutline(out, await outlineOf(src), keep);
   return pdfOut(`${stem(src.name)}-trimmed.pdf`, await saveDoc(out), `Removed ${drop.size} page${drop.size === 1 ? "" : "s"}`);
 }
 
 export async function reversePages(src: Src): Promise<OutFile> {
   const doc = await open(src);
   const out = await newDoc();
-  await appendPages(out, doc, doc.getPageIndices().reverse());
+  const order = doc.getPageIndices().reverse();
+  await appendPages(out, doc, order);
+  carryOutline(out, await outlineOf(src), order);
   return pdfOut(`${stem(src.name)}-reversed.pdf`, await saveDoc(out));
 }
 
@@ -168,11 +189,12 @@ export async function splitByText(src: Src, query: string, opts: { regex?: boole
   });
   if (starts.length === 1) throw new Error(`“${q}” doesn't appear after the first page, so the file can't be split on it. For a scan, open it in OCR: Searchable PDF first.`);
   const groups = starts.map((a, i) => Array.from({ length: (starts[i + 1] ?? doc.getPageCount()) - a }, (_, k) => a + k));
-  return writeParts(doc, groups, src.name);
+  return writeParts(doc, groups, src.name, undefined, await outlineOf(src));
 }
 
 export async function splitByBookmarks(src: Src, level = 0): Promise<OutFile[]> {
-  const outline = (await getOutline(src.bytes, src.password)).filter((o) => o.page > 0 && o.level <= level);
+  const all = await outlineOf(src);
+  const outline = all.filter((o) => o.page > 0 && o.level <= level);
   if (!outline.length) throw new Error("This PDF has no bookmarks to split by.");
   const doc = await open(src);
   const n = doc.getPageCount();
@@ -187,7 +209,7 @@ export async function splitByBookmarks(src: Src, level = 0): Promise<OutFile[]> 
       labels.push(`${String(i + 1).padStart(2, "0")}-${title}`);
     }
   });
-  return writeParts(doc, groups, src.name, labels);
+  return writeParts(doc, groups, src.name, labels, all);
 }
 
 /** Split each page into two halves using crop boxes (keeps text and vectors intact). */
@@ -196,7 +218,7 @@ export async function splitInHalf(src: Src, axis: "v" | "h", opts: { rtl?: boole
   const out = await newDoc();
   const n = doc.getPageCount();
   for (let i = 0; i < n; i++) {
-    const [a, b] = await out.copyPages(doc, [i, i]);
+    const [a, b] = await copyPages(out, doc, [i, i]);
     const f = pageFrame(doc.getPage(i));
     const halves =
       axis === "v"
@@ -251,7 +273,7 @@ export async function splitBySize(src: Src, maxMb: number, onProgress?: Progress
     await tick();
   }
   if (current.length) groups.push(current);
-  const parts = await writeParts(doc, groups, src.name);
+  const parts = await writeParts(doc, groups, src.name, undefined, await outlineOf(src));
   const big = parts.filter((p) => p.mime === "application/pdf" && p.bytes.byteLength > cap);
   if (big.length) big.forEach((p) => (p.note = `${p.note} · one page alone is over the size limit`));
   return parts;
@@ -274,19 +296,28 @@ export async function organizePdf(src: Src, plan: PagePlan[], extras: Src[] = []
   if (!plan.length) throw new Error("Keep at least one page.");
   const docs = [await open(src), ...(await Promise.all(extras.map(open)))];
   const out = await newDoc();
+  // Each file's pages copied together, so links between them keep working, then laid out as planned.
+  const copies = await Promise.all(
+    docs.map((d, di) => {
+      const wanted = plan.flatMap((s) => ("blank" in s || (s.doc ?? 0) !== di ? [] : [s.source]));
+      return wanted.length ? copyPages(out, d, wanted) : Promise.resolve([]);
+    }),
+  );
+  const next = docs.map(() => 0);
   let lastSize: [number, number] = [595.28, 841.89];
   for (const step of plan) {
     if ("blank" in step) {
       out.addPage(step.size ?? lastSize);
       continue;
     }
-    const d = docs[step.doc ?? 0];
-    const [p] = await out.copyPages(d, [step.source]);
+    const di = step.doc ?? 0;
+    const p = copies[di][next[di]++];
     if (step.rotate) p.setRotation(degrees((((p.getRotation().angle + step.rotate) % 360) + 360) % 360));
     const f = pageFrame(p);
     lastSize = [f.width, f.height];
     out.addPage(p);
   }
+  carryOutline(out, await outlineOf(src), plan.map((s) => ("blank" in s || (s.doc ?? 0) !== 0 ? -1 : s.source)));
   return pdfOut(`${stem(src.name)}-organized.pdf`, await saveDoc(out), `${plan.length} pages`);
 }
 
@@ -511,11 +542,10 @@ export async function addBlankPages(src: Src, opts: { where: "end" | "start" | "
     return [f.width, f.height];
   };
   const count = Math.max(1, opts.count ?? 1);
-  if (opts.where === "start") for (let k = 0; k < count; k++) out.addPage(size(0));
-  for (let i = 0; i < n; i++) {
-    await appendPages(out, doc, [i]);
-    if (opts.where === "every") for (let k = 0; k < count; k++) out.addPage(size(i));
-  }
+  // All the pages at once (links between them keep working), then the blank pages between them.
+  await appendPages(out, doc);
+  if (opts.where === "every") for (let i = n - 1; i >= 0; i--) for (let k = 0; k < count; k++) out.insertPage(i + 1, size(i));
+  if (opts.where === "start") for (let k = 0; k < count; k++) out.insertPage(0, size(0));
   if (opts.where === "end") for (let k = 0; k < count; k++) out.addPage(size(n - 1));
   return pdfOut(`${stem(src.name)}-with-blanks.pdf`, await saveDoc(out));
 }

@@ -16,23 +16,29 @@ import { renderPage, withPdfjs } from "./pdfjs";
 
 export type CompressLevel = "lossless" | "recommended" | "strong" | "extreme";
 
-const PRESETS: Record<Exclude<CompressLevel, "extreme">, { dpi: number; quality: number } | null> = {
+/**
+ * Image resolution and JPEG quality for each level. `scan`: the resolution for a picture that
+ * fills the page (a scanned page), where the picture is the text and must stay legible.
+ */
+const PRESETS: Record<CompressLevel, { dpi: number; quality: number; scan?: number } | null> = {
   lossless: null,
   recommended: { dpi: 150, quality: 0.72 },
   strong: { dpi: 100, quality: 0.55 },
+  extreme: { dpi: 72, quality: 0.45, scan: 100 },
 };
 
-export type CompressOpts = { level: CompressLevel; dpi?: number; quality?: number; grayscale?: boolean };
+/** `flatten`: turn each page into one picture (for pages heavy with drawings; text is no longer selectable). */
+export type CompressOpts = { level: CompressLevel; dpi?: number; quality?: number; grayscale?: boolean; flatten?: boolean };
 
 export async function compressPdf(src: Src, o: CompressOpts, onProgress?: ProgressFn): Promise<OutFile> {
   const before = src.bytes.byteLength;
-  if (o.level === "extreme") return rasterCompress(src, o, onProgress);
+  if (o.flatten) return rasterCompress(src, o, onProgress);
   const doc = await open(src);
   const preset = PRESETS[o.level];
   const dpi = o.dpi ?? preset?.dpi;
   const quality = o.quality ?? preset?.quality ?? 0.75;
   let recoded = 0;
-  if (dpi || o.grayscale) recoded = await recodeImages(doc, { dpi: dpi ?? 300, quality, grayscale: !!o.grayscale }, onProgress);
+  if (dpi || o.grayscale) recoded = await recodeImages(doc, { dpi: dpi ?? 300, scan: o.dpi ? undefined : preset?.scan, quality, grayscale: !!o.grayscale }, onProgress);
   const merged = dedupeStreams(doc);
   deflateLooseStreams(doc);
   removeUnused(doc);
@@ -43,7 +49,8 @@ export async function compressPdf(src: Src, o: CompressOpts, onProgress?: Progre
   }
   let bytes = await saveDoc(doc, { objectStreams: true });
   let note: string;
-  if (bytes.byteLength >= before) {
+  // (Under one percent is nothing worth a new file.)
+  if (bytes.byteLength >= before * 0.99) {
     bytes = src.bytes;
     note = "This level found nothing to save, so the original is returned. Strong or Extreme may still shrink it.";
   } else {
@@ -53,7 +60,9 @@ export async function compressPdf(src: Src, o: CompressOpts, onProgress?: Progre
   return pdfOut(`${stem(src.name)}-compressed.pdf`, bytes, note);
 }
 
-async function recodeImages(doc: PDFDocument, o: { dpi: number; quality: number; grayscale: boolean }, onProgress?: ProgressFn): Promise<number> {
+type Recode = { dpi: number; scan?: number; quality: number; grayscale: boolean };
+
+async function recodeImages(doc: PDFDocument, o: Recode, onProgress?: ProgressFn): Promise<number> {
   const sizes = imageDisplaySizes(doc);
   const images = listImages(doc).filter((im) => !im.isMask && !im.usedAsMask && im.width * im.height > 64 * 64);
   let done = 0;
@@ -70,13 +79,15 @@ async function recodeImages(doc: PDFDocument, o: { dpi: number; quality: number;
   return done;
 }
 
-async function recodeOne(doc: PDFDocument, im: ImgObj, shown: { w: number; h: number } | undefined, o: { dpi: number; quality: number; grayscale: boolean }): Promise<boolean> {
+async function recodeOne(doc: PDFDocument, im: ImgObj, shown: { w: number; h: number } | undefined, o: Recode): Promise<boolean> {
   // Target pixel size from the displayed size (or the page size if we never saw it drawn).
   const fallback = doc.getPageCount() ? pageFrame(doc.getPage(0)) : { width: 595, height: 842 };
   const dispW = shown?.w || Math.min(fallback.width, (im.width / Math.max(im.width, im.height)) * Math.max(fallback.width, fallback.height));
   const dispH = shown?.h || (dispW * im.height) / im.width;
-  const maxW = Math.max(16, Math.round((dispW / 72) * o.dpi));
-  const maxH = Math.max(16, Math.round((dispH / 72) * o.dpi));
+  // A picture filling the page is a scanned page: its text is in the picture.
+  const dpi = o.scan && dispW * dispH >= fallback.width * fallback.height * 0.8 ? o.scan : o.dpi;
+  const maxW = Math.max(16, Math.round((dispW / 72) * dpi));
+  const maxH = Math.max(16, Math.round((dispH / 72) * dpi));
   const scale = Math.min(1, maxW / im.width, maxH / im.height);
   const jpeg = jpegBytes(im);
   const isCmyk = im.colorSpace.kind === "cmyk" || (im.colorSpace.kind === "indexed" && im.colorSpace.base.kind === "cmyk");

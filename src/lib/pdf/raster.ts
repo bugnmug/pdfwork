@@ -3,6 +3,7 @@ import {
   MM,
   appendPages,
   canvasToBytes,
+  degrees,
   embedImage,
   imageToCanvas,
   newDoc,
@@ -13,6 +14,7 @@ import {
   stem,
   tick,
   type OutFile,
+  type PDFDocument,
   type ProgressFn,
 } from "./core";
 import { pageFrame } from "./geometry";
@@ -38,8 +40,10 @@ export async function pdfToImages(
         onProgress?.(k / list.length, `Rendering page ${i} of ${pageCount}`);
         const page = await pdf.getPage(i);
         const canvas = await renderPage(page, scale);
+        // The resolution it came out at (a very large page is drawn smaller, within what browsers allow).
+        const dpi = (canvas.width / page.getViewport({ scale: 1 }).width) * 72;
         page.cleanup();
-        const bytes = await canvasToBytesAny(canvas, mime, o.quality ?? 0.9);
+        const bytes = withDpi(await canvasToBytesAny(canvas, mime, o.quality ?? 0.9), mime, dpi);
         out.push({ filename: `${stem(src.name)}-page-${String(i).padStart(pad, "0")}.${fmt}`, bytes, mime, note: `${canvas.width}×${canvas.height}px` });
         canvas.width = canvas.height = 0;
         await tick();
@@ -49,6 +53,67 @@ export async function pdfToImages(
     src.password,
   );
   return withZip(files, `${stem(src.name)}-${fmt}.zip`);
+}
+
+/**
+ * The image's resolution written into the file (JPEG's JFIF header, PNG's pHYs chunk), so a page
+ * drawn at 300 dpi prints, and goes into Word, at the page's own size rather than 3 times it.
+ */
+export function withDpi(bytes: Uint8Array, mime: string, dpi: number): Uint8Array {
+  const d = Math.max(1, Math.min(65535, Math.round(dpi)));
+  if (mime === "image/jpeg" && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    // JFIF: units 1 (dots per inch), then the densities across and down.
+    if (bytes[2] === 0xff && bytes[3] === 0xe0 && String.fromCharCode(...bytes.subarray(6, 11)) === "JFIF\0") {
+      const out = bytes.slice();
+      out[13] = 1;
+      out[14] = d >> 8;
+      out[15] = d & 255;
+      out[16] = d >> 8;
+      out[17] = d & 255;
+      return out;
+    }
+    const app0 = new Uint8Array([0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 1, d >> 8, d & 255, d >> 8, d & 255, 0, 0]);
+    const out = new Uint8Array(bytes.length + app0.length);
+    out.set(bytes.subarray(0, 2));
+    out.set(app0, 2);
+    out.set(bytes.subarray(2), 2 + app0.length);
+    return out;
+  }
+  if (mime === "image/png" && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    // pHYs (pixels per metre, unit 1) right after the IHDR chunk, unless there is one already.
+    const ihdrEnd = 8 + 4 + 4 + 13 + 4;
+    if (String.fromCharCode(...bytes.subarray(ihdrEnd + 4, ihdrEnd + 8)) === "pHYs") return bytes;
+    const ppm = Math.round(d / 0.0254);
+    const chunk = new Uint8Array(21);
+    const v = new DataView(chunk.buffer);
+    v.setUint32(0, 9);
+    chunk.set([0x70, 0x48, 0x59, 0x73], 4);
+    v.setUint32(8, ppm);
+    v.setUint32(12, ppm);
+    chunk[16] = 1;
+    v.setUint32(17, crc32(chunk.subarray(4, 17)));
+    const out = new Uint8Array(bytes.length + chunk.length);
+    out.set(bytes.subarray(0, ihdrEnd));
+    out.set(chunk, ihdrEnd);
+    out.set(bytes.subarray(ihdrEnd), ihdrEnd + chunk.length);
+    return out;
+  }
+  return bytes;
+}
+
+let crcTable: Uint32Array | undefined;
+function crc32(data: Uint8Array): number {
+  if (!crcTable) {
+    crcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c >>> 0;
+    }
+  }
+  let c = 0xffffffff;
+  for (const b of data) c = crcTable[(c ^ b) & 255] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
 }
 
 async function canvasToBytesAny(canvas: HTMLCanvasElement, mime: string, quality: number) {
@@ -71,25 +136,36 @@ export async function imagesToPdf(images: { bytes: Uint8Array; mime: string; nam
     const doc = await newDoc();
     for (let k = 0; k < list.length; k++) {
       onProgress?.(k / images.length, `Adding ${list[k].name}`);
-      const img = await embedImage(doc, list[k].bytes, list[k].mime);
+      const meta = imageMeta(list[k].bytes);
+      // A photo taken with the phone turned is stored on its side, with a note of how to turn it
+      // (PDF readers don't read the note): turned or flipped ones are drawn upright; mirrored
+      // ones (rare) are decoded upright instead.
+      let turn = meta.orientation;
+      const img = [2, 4, 5, 7].includes(turn) ? ((turn = 1), await embedUpright(doc, list[k].bytes, list[k].mime)) : await embedImage(doc, list[k].bytes, list[k].mime);
+      const sideways = turn === 6 || turn === 8;
+      const iw = sideways ? img.height : img.width;
+      const ih = sideways ? img.width : img.height;
       const mg = (o.marginMm ?? 0) * MM;
+      let page;
+      let box: { x: number; y: number; w: number; h: number };
       if (!o.pageSize || o.pageSize === "fit") {
-        // 1 image pixel = 1 pt at 96 dpi feel: cap very large photos to a sane page size.
-        const maxSide = 1440;
-        const s = Math.min(1, maxSide / Math.max(img.width, img.height)) * 0.75;
-        const w = img.width * s;
-        const h = img.height * s;
-        const page = doc.addPage([w + mg * 2, h + mg * 2]);
-        page.drawImage(img, { x: mg, y: mg, width: w, height: h });
+        // At the resolution the image says it has (a scan at 300 dpi comes out at its paper size);
+        // otherwise 1 pixel to 1 pt at a 96 dpi feel, very large photos capped to a sane page.
+        const s = meta.dpi ? 72 / meta.dpi : Math.min(1, 1440 / Math.max(iw, ih)) * 0.75;
+        box = { x: mg, y: mg, w: iw * s, h: ih * s };
+        page = doc.addPage([box.w + mg * 2, box.h + mg * 2]);
       } else {
-        const land = o.orientation === "landscape" || (o.orientation !== "portrait" && img.width > img.height);
+        const land = o.orientation === "landscape" || (o.orientation !== "portrait" && iw > ih);
         const [pw, ph] = paperSize(o.pageSize, land);
-        const s = Math.min((pw - mg * 2) / img.width, (ph - mg * 2) / img.height);
-        const w = img.width * s;
-        const h = img.height * s;
-        const page = doc.addPage([pw, ph]);
-        page.drawImage(img, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
+        const s = Math.min((pw - mg * 2) / iw, (ph - mg * 2) / ih);
+        box = { x: (pw - iw * s) / 2, y: (ph - ih * s) / 2, w: iw * s, h: ih * s };
+        page = doc.addPage([pw, ph]);
       }
+      const { x, y, w, h } = box;
+      if (turn === 6) page.drawImage(img, { x, y: y + h, width: h, height: w, rotate: degrees(-90) });
+      else if (turn === 8) page.drawImage(img, { x: x + w, y, width: h, height: w, rotate: degrees(90) });
+      else if (turn === 3) page.drawImage(img, { x: x + w, y: y + h, width: w, height: h, rotate: degrees(180) });
+      else page.drawImage(img, { x, y, width: w, height: h });
       await tick();
     }
     return saveDoc(doc);
@@ -100,6 +176,70 @@ export async function imagesToPdf(images: { bytes: Uint8Array; mime: string; nam
     return withZip(out, "images-pdf.zip");
   }
   return [pdfOut(images.length === 1 ? `${stem(images[0].name)}.pdf` : "images.pdf", await build(images), `${images.length} page${images.length === 1 ? "" : "s"}`)];
+}
+
+/** An image decoded with its orientation note applied, then embedded. */
+async function embedUpright(doc: PDFDocument, bytes: Uint8Array, mime: string) {
+  const canvas = await imageToCanvas(bytes, mime);
+  const img = await doc.embedJpg(await canvasToBytes(canvas, "image/jpeg", 0.92));
+  canvas.width = canvas.height = 0;
+  return img;
+}
+
+/**
+ * What a photo's or scan's file says about it: how to turn it to view it (EXIF orientation, 1 =
+ * as stored) and its resolution in dots per inch (JFIF or EXIF for a JPEG, pHYs for a PNG), when
+ * that is a real one (100 to 1200 dpi: cameras write a meaningless 72).
+ */
+export function imageMeta(b: Uint8Array): { orientation: number; dpi?: number } {
+  let orientation = 1;
+  let dpi: number | undefined;
+  const real = (d: number) => (d >= 100 && d <= 1200 ? d : undefined);
+  if (b[0] === 0xff && b[1] === 0xd8) {
+    for (let i = 2; i + 4 < b.length && b[i] === 0xff; ) {
+      const marker = b[i + 1];
+      const len = (b[i + 2] << 8) | b[i + 3];
+      if (marker === 0xda || marker === 0xd9) break;
+      const seg = i + 4;
+      if (marker === 0xe0 && String.fromCharCode(...b.subarray(seg, seg + 5)) === "JFIF\0") {
+        const units = b[seg + 7];
+        const x = (b[seg + 8] << 8) | b[seg + 9];
+        if (units === 1) dpi ??= real(x);
+        else if (units === 2) dpi ??= real(x * 2.54);
+      } else if (marker === 0xe1 && String.fromCharCode(...b.subarray(seg, seg + 6)) === "Exif\0\0") {
+        const t = seg + 6;
+        const le = b[t] === 0x49;
+        const u16 = (o: number) => (le ? b[t + o] | (b[t + o + 1] << 8) : (b[t + o] << 8) | b[t + o + 1]);
+        const u32 = (o: number) => (le ? (b[t + o] | (b[t + o + 1] << 8) | (b[t + o + 2] << 16) | (b[t + o + 3] << 24)) >>> 0 : ((b[t + o] << 24) | (b[t + o + 1] << 16) | (b[t + o + 2] << 8) | b[t + o + 3]) >>> 0);
+        const ifd = u32(4);
+        const n = u16(ifd);
+        let res: number | undefined;
+        let unit = 2;
+        for (let e = 0; e < n && t + ifd + 2 + e * 12 + 12 <= b.length; e++) {
+          const at = ifd + 2 + e * 12;
+          const tag = u16(at);
+          if (tag === 0x0112) orientation = u16(at + 8) || 1;
+          else if (tag === 0x0128) unit = u16(at + 8);
+          else if (tag === 0x011a) {
+            const off = u32(at + 8);
+            const den = u32(off + 4);
+            if (den) res = u32(off) / den;
+          }
+        }
+        if (res) dpi ??= real(unit === 3 ? res * 2.54 : res);
+      }
+      i = seg + len - 2;
+    }
+  } else if (b[0] === 0x89 && b[1] === 0x50) {
+    for (let i = 8; i + 12 <= b.length; ) {
+      const len = ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+      const type = String.fromCharCode(...b.subarray(i + 4, i + 8));
+      if (type === "pHYs" && b[i + 16] === 1) dpi = real((((b[i + 8] << 24) | (b[i + 9] << 16) | (b[i + 10] << 8) | b[i + 11]) >>> 0) * 0.0254);
+      if (type === "IDAT" || type === "IEND") break;
+      i += 12 + len;
+    }
+  }
+  return { orientation: orientation >= 1 && orientation <= 8 ? orientation : 1, dpi };
 }
 
 type PixelFn = (d: Uint8ClampedArray) => void;

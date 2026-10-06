@@ -143,7 +143,8 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
     /* optimize */
     case "compress-pdf": {
       const { compressPdf } = await import("./compress");
-      return each(pdfFiles(ctx), ctx, (s, _i, r) => compressPdf(s, { level: str(o, "level", "recommended") as never, grayscale: bool(o, "grayscale") }, r));
+      const level = str(o, "level", "recommended") as never;
+      return each(pdfFiles(ctx), ctx, (s, _i, r) => compressPdf(s, { level, grayscale: bool(o, "grayscale"), flatten: level === "extreme" && bool(o, "flatten") }, r));
     }
     case "repair-pdf": {
       const { repairPdf } = await import("./repair");

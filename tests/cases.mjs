@@ -64,6 +64,32 @@ export const CASES = [
   { id: "merge-encrypted-needs-password", slug: "merge-pdf", files: ["encrypted.pdf", "cmp-a.pdf"], expectError: true },
   { id: "merge-encrypted-with-password", slug: "merge-pdf", files: ["encrypted.pdf", "cmp-a.pdf"], passwords: { "encrypted.pdf": "secret" }, check: (s, h) => ok(needPdf(s, h, { pages: 5, text: ["Quarterly", "Alpha clause"] }).notes) },
   { id: "merge-restricted", slug: "merge-pdf", files: ["restricted.pdf", "cmp-a.pdf"], check: (s, h) => ok(needPdf(s, h, { pages: 5, text: ["Quarterly"] }).notes) },
+  // Pages copied into a new file keep what points between them: links go to the copies of their
+  // pages (by number or by name), a form stays a form (a second copy's fields renamed, so each
+  // keeps its own value), and the bookmarks of the pages taken come along.
+  { id: "merge-links-forms", slug: "merge-pdf", files: ["links.pdf", "form.pdf", "form.pdf"], check: (s, h) => {
+      const p = first(s, ".pdf").path;
+      const r = JSON.parse(py(h, `import pymupdf,json;d=pymupdf.open(${JSON.stringify(p)})
+print(json.dumps({'links':[l.get('page') for l in d[0].get_links()],'form':d.is_form_pdf,'names':[w.field_name for q in d for w in q.widgets()]}))`));
+      return ok([
+        expect(JSON.stringify(r.links) === "[1,2]", `contents links go to pages ${r.links.map((x) => x + 1).join(", ")}`),
+        expect(r.form === 8, "both forms' fields are fields"),
+        expect(r.names.includes("full_name") && r.names.includes("full_name_2"), "the second copy's fields renamed"),
+      ]);
+  } },
+  { id: "extract-pages-links", slug: "extract-pages", files: ["links.pdf"], options: { pages: "1,3" }, check: (s, h) => {
+      const p = first(s, ".pdf").path;
+      const r = JSON.parse(py(h, `import pymupdf,json;d=pymupdf.open(${JSON.stringify(p)})
+print(json.dumps({'links':[l.get('page') for l in d[0].get_links()],'toc':[t[1] for t in d.get_toc()]}))`));
+      return ok([
+        expect(JSON.stringify(r.links) === "[1]", "the link to the page taken goes to it, the other is dropped"),
+        expect(JSON.stringify(r.toc) === JSON.stringify(["Contents", "Chapter 2"]), "bookmarks of the pages taken"),
+      ]);
+  } },
+  { id: "split-bookmarks-kept", slug: "split-pdf", files: ["text.pdf"], options: { mode: "range", ranges: "1-2,3-4" }, check: (s, h) => {
+      const tocs = all(s, ".pdf").map((x) => py(h, `import pymupdf;print([t[1] for t in pymupdf.open(${JSON.stringify(x.path)}).get_toc()])`));
+      return ok([expect(tocs[0] === "['Introduction', 'Chapter A', 'Photos']" && tocs[1] === "['Invoice', 'Chapter B']", `bookmarks in each part: ${tocs.join(" / ")}`)]);
+  } },
   { id: "mix-reverse", slug: "mix-pdf", files: ["text.pdf", "cmp-a.pdf"], options: { reverseSecond: true }, check: (s, h) => ok(needPdf(s, h, { pages: 5 }).notes) },
   { id: "split-ranges", slug: "split-pdf", files: ["text.pdf"], options: { mode: "range", ranges: "1-2, 4" }, check: (s, h) => {
       const pdfs = all(s, ".pdf");
@@ -119,7 +145,8 @@ export const CASES = [
   ...["lossless", "recommended", "strong", "extreme"].map((level) => ({
     id: `compress-${level}`, slug: "compress-pdf", files: ["heavy.pdf"], options: { level },
     check: (s, h) => {
-      const r = needPdf(s, h, { pages: 3, text: level === "extreme" ? [] : ["Caption text that must stay selectable"] });
+      // Text stays text at every level, Extreme included.
+      const r = needPdf(s, h, { pages: 3, text: ["Caption text that must stay selectable"] });
       const before = statSync(h.join(h.FX, "heavy.pdf")).size;
       const after = r.pdf ? r.pdf.size : 0;
       const pct = Math.round((1 - after / before) * 100);
@@ -128,6 +155,11 @@ export const CASES = [
       return ok(notes);
     },
   })),
+  // Flattening pages into pictures is a choice of its own: the text goes, the pages stay.
+  { id: "compress-flatten", slug: "compress-pdf", files: ["heavy.pdf"], options: { level: "extreme", flatten: true }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 3, notText: ["Caption text that must stay selectable"] });
+      return ok([...r.notes, expect(/flattened/.test(s[0].note ?? ""), s[0].note ?? "no note")]);
+  } },
   { id: "compress-text-pdf", slug: "compress-pdf", files: ["text.pdf"], options: { level: "recommended" }, check: (s, h) => {
       const r = needPdf(s, h, { pages: 4, text: ["Quarterly", "Consulting hours"] });
       const before = statSync(h.join(h.FX, "text.pdf")).size;
@@ -176,6 +208,15 @@ export const CASES = [
   { id: "text-to-handwriting", slug: "text-to-handwriting", options: { heading: "Homework", body: "Dear diary,\nToday I merged twelve PDFs. नमस्ते दुनिया ₹500." }, check: (s, h) => ok(needPdf(s, h, { text: ["Homework", "merged twelve"] }).notes) },
   { id: "images-to-pdf", slug: "images-to-pdf", files: ["photo.jpg", "logo.png", "pic.webp"], options: { pageSize: "A4" }, check: (s, h) => ok([...needPdf(s, h, { pages: 3 }).notes, imgCount(h, s[0].path) >= 3 ? "3 images" : "✗ images"]) },
   { id: "images-to-pdf-fit", slug: "images-to-pdf", files: ["photo.jpg"], options: { pageSize: "fit", marginMm: 0 }, check: (s, h) => ok(needPdf(s, h, { pages: 1 }).notes) },
+  // A phone photo stored on its side with a note to turn it: the page shows it the right way up.
+  { id: "images-to-pdf-turned", slug: "images-to-pdf", files: ["phone-turned.jpg"], options: { pageSize: "A4", orientation: "auto", marginMm: 10 }, check: (s, h) => {
+      const p = first(s, ".pdf").path;
+      const r = JSON.parse(py(h, `import pymupdf,json;d=pymupdf.open(${JSON.stringify(p)});q=d[0];px=q.get_pixmap(dpi=36)
+red=lambda x,y:(lambda c:c[0]>150 and c[1]<90)(px.pixel(int(x*px.width),int(y*px.height)))
+print(json.dumps({'portrait':q.rect.height>q.rect.width,'up':red(0.42,0.17) and not red(0.42,0.83)}))`));
+      // (The arrow's head is wide, its shaft narrow: off the middle, red near the top and not near the foot.)
+      return ok([expect(r.portrait, "a portrait page for a portrait photo"), expect(r.up, "the photo the right way up")]);
+  } },
   { id: "word-to-pdf", slug: "word-to-pdf", files: ["sample.docx"], check: (s, h) => {
       const r = needPdf(s, h, { text: ["Project Charter", "Hiring plan", "Reach 500 paying users", "₹12,50,000", "success criteria", "नमस्ते"] });
       const toc = py(h, `import pymupdf;print(len(pymupdf.open(${JSON.stringify(r.pdf.path)}).get_toc()))`);

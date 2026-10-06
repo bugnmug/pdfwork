@@ -350,4 +350,42 @@ Price: ₹499 — “smart quotes”.
 """)
 open(os.path.join(OUT, "sample.html"), "w").write("""<h1>Offer Letter</h1><p>Dear <b>Asha</b>,</p><p>We are pleased to offer you the role of <i>Account Executive</i>.</p><table border="1"><tr><th>Component</th><th>Amount</th></tr><tr><td>Base</td><td>₹18,00,000</td></tr><tr><td>Variable</td><td>₹6,00,000</td></tr></table><ol><li>Join by Nov 1</li><li>Bring documents</li></ol><pre>  indented   code
     stays</pre><p>Regards,<br/>HR</p>""")
+# links.pdf: a contents page whose entries jump to the chapters (one by an explicit page, one by a
+# named destination), for checking links survive merging, splitting and extracting.
+d = pymupdf.open()
+for i in range(3):
+    p = d.new_page()
+    p.insert_text((72, 72), "Contents" if i == 0 else f"Chapter {i}", fontsize=18)
+    if i:
+        p.insert_text((72, 110), f"Text of chapter {i}.", fontsize=11)
+d[0].insert_text((72, 120), "Go to chapter 1", fontsize=12)
+d[0].insert_text((72, 150), "Go to chapter 2", fontsize=12)
+d[0].insert_link({"kind": pymupdf.LINK_GOTO, "from": pymupdf.Rect(70, 108, 200, 124), "page": 1, "to": pymupdf.Point(72, 72)})
+d[0].insert_link({"kind": pymupdf.LINK_GOTO, "from": pymupdf.Rect(70, 138, 200, 154), "page": 2, "to": pymupdf.Point(72, 72)})
+d.set_toc([[1, "Contents", 1], [1, "Chapter 1", 2], [1, "Chapter 2", 3]])
+d.save(os.path.join(OUT, "links.pdf"))
+# The second link by name: a named destination in the catalog's Dests tree.
+d = pymupdf.open(os.path.join(OUT, "links.pdf"))
+page2 = d[2].xref
+names = d.get_new_xref()
+d.update_object(names, f"<< /Names [(chapter-2) [{page2} 0 R /XYZ 72 720 0]] >>")
+cat = d.pdf_catalog()
+d.xref_set_key(cat, "Names", f"<< /Dests {names} 0 R >>")
+annot = [a for a in d[0].annot_xrefs() if a[1] == pymupdf.PDF_ANNOT_LINK][1][0]
+d.xref_set_key(annot, "A", "null")
+d.xref_set_key(annot, "Dest", "(chapter-2)")
+d.save(os.path.join(OUT, "links-named.pdf"))
+d.close()
+os.replace(os.path.join(OUT, "links-named.pdf"), os.path.join(OUT, "links.pdf"))
+
+# phone-turned.jpg: a photo taken with the phone upright, stored on its side with an EXIF note to
+# turn it 90 degrees clockwise (as phones save them). Viewed the right way up, a red arrow points up.
+raw = Image.new("RGB", (600, 400), "white")
+dr = ImageDraw.Draw(raw)
+dr.polygon([(20, 200), (120, 140), (120, 260)], fill=(220, 0, 0))
+dr.rectangle([120, 180, 560, 220], fill=(220, 0, 0))
+ex = Image.Exif()
+ex[0x0112] = 6
+raw.save(os.path.join(OUT, "phone-turned.jpg"), quality=90, exif=ex.tobytes())
+
 print("fixtures:", sorted(os.listdir(OUT)))

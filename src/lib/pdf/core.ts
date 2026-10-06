@@ -1,11 +1,19 @@
 import {
+  PDFArray,
+  PDFDict,
   PDFDocument,
+  PDFHexString,
   PDFName,
+  PDFNumber,
+  PDFObjectCopier,
+  PDFRef,
+  PDFString,
   StandardFonts,
   degrees,
   rgb,
   PageSizes,
   type PDFFont,
+  type PDFObject,
   type PDFPage,
   type RGB,
 } from "@cantoo/pdf-lib";
@@ -102,11 +110,242 @@ export async function saveDoc(doc: PDFDocument, opts: { objectStreams?: boolean 
   return saved instanceof Uint8Array ? saved : new Uint8Array(saved);
 }
 
-/** Copy pages (by zero-based index) from src into target, appending them. */
+/**
+ * Copy pages (by zero-based index) from src into target, appending them, with what points
+ * between pages kept working: a link to a page that comes along goes to its copy (a link to a
+ * page left behind is dropped), and the form fields on the pages stay fields of the new
+ * document (one named like a field already there gets a new name, so each keeps its own value).
+ * Without this a link's destination, or a field's page, would drag a stray copy of its page
+ * into the file, and the fields would stop being fields.
+ */
 export async function appendPages(target: PDFDocument, src: PDFDocument, indices?: number[]): Promise<PDFPage[]> {
-  const copied = await target.copyPages(src, indices ?? src.getPageIndices());
+  const copied = await copyPages(target, src, indices);
   for (const p of copied) target.addPage(p);
   return copied;
+}
+
+/** Pages copied as appendPages does, for the caller to place (in another order, between others). */
+export async function copyPages(target: PDFDocument, src: PDFDocument, indices?: number[]): Promise<PDFPage[]> {
+  const idx = indices ?? src.getPageIndices();
+  const ctx = src.context;
+  const pages = src.getPages();
+  const pageOf = new Map(pages.map((p, i) => [p.ref.toString(), i]));
+  const named = namedDestinations(src);
+  const DEST = PDFName.of("Dest");
+  const A = PDFName.of("A");
+  const P = PDFName.of("P");
+  // Entries taken off the source while copying, put back afterwards (the source may be copied from again).
+  const taken: { dict: PDFDict; key: PDFName; value: PDFObject }[] = [];
+  const take = (dict: PDFDict, key: PDFName) => {
+    const value = dict.get(key);
+    if (value === undefined) return;
+    taken.push({ dict, key, value });
+    dict.delete(key);
+  };
+  type Jump = { at: number; annot: number; page: number; tail: PDFObject[] };
+  const jumps: Jump[] = [];
+  const roots = new Set<PDFDict>();
+  const parentOf = (d: PDFDict) => d.lookupMaybe(PDFName.of("Parent"), PDFDict);
+  idx.forEach((pi, at) => {
+    const annots = pages[pi].node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+    annots?.asArray().forEach((ref, j) => {
+      const a = ctx.lookup(ref);
+      if (!(a instanceof PDFDict)) return;
+      take(a, P);
+      const sub = a.lookupMaybe(PDFName.of("Subtype"), PDFName)?.asString();
+      if (sub === "/Widget") {
+        let f = a;
+        for (let up = parentOf(f), k = 0; up && k < 50; up = parentOf(f), k++) f = up;
+        roots.add(f);
+        return;
+      }
+      if (sub !== "/Link") return;
+      const action = a.lookupMaybe(A, PDFDict);
+      const goTo = action?.lookupMaybe(PDFName.of("S"), PDFName)?.asString() === "/GoTo";
+      const dest = resolveDest(ctx, goTo ? action!.get(PDFName.of("D")) : a.get(DEST), named);
+      if (!dest) return;
+      // (Its page by reference, or, from some writers, by number.)
+      const first = dest.get(0);
+      const page = first instanceof PDFRef ? pageOf.get(first.toString()) : first instanceof PDFNumber && first.asNumber() >= 0 && first.asNumber() < pages.length ? first.asNumber() : undefined;
+      if (page === undefined) return;
+      jumps.push({ at, annot: j, page, tail: dest.asArray().slice(1) });
+      if (goTo) take(a, A);
+      else take(a, DEST);
+    });
+  });
+  // The fields' other widgets (a field shown on another page too) mustn't bring their pages either.
+  const walk = (f: PDFDict, depth = 0) => {
+    take(f, P);
+    if (depth < 20) for (const k of f.lookupMaybe(PDFName.of("Kids"), PDFArray)?.asArray() ?? []) {
+      const kid = ctx.lookup(k);
+      if (kid instanceof PDFDict) walk(kid, depth + 1);
+    }
+  };
+  for (const r of roots) walk(r);
+  let copied: PDFPage[];
+  try {
+    copied = await target.copyPages(src, idx);
+  } finally {
+    for (const t of taken) t.dict.set(t.key, t.value);
+  }
+  const tctx = target.context;
+  const at = new Map<number, number>();
+  idx.forEach((pi, k) => (at.has(pi) ? undefined : at.set(pi, k)));
+  // Links go to the copies of their pages; links to pages left behind go.
+  const dropped = new Map<number, Set<number>>();
+  for (const j of jumps) {
+    const annots = copied[j.at].node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+    const a = annots ? tctx.lookup(annots.get(j.annot)) : undefined;
+    if (!(a instanceof PDFDict)) continue;
+    const to = at.get(j.page);
+    if (to === undefined) dropped.set(j.at, (dropped.get(j.at) ?? new Set()).add(j.annot));
+    else a.set(DEST, tctx.obj([copied[to].ref, ...j.tail]));
+  }
+  for (const [k, gone] of dropped) {
+    const annots = copied[k].node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+    if (!annots) continue;
+    const keep = annots.asArray().filter((_, j) => !gone.has(j));
+    copied[k].node.set(PDFName.of("Annots"), tctx.obj(keep));
+  }
+  // Every annotation knows its page again.
+  for (const p of copied) for (const r of p.node.lookupMaybe(PDFName.of("Annots"), PDFArray)?.asArray() ?? []) {
+    const a = tctx.lookup(r);
+    if (a instanceof PDFDict) a.set(P, p.ref);
+  }
+  if (roots.size) carryFields(target, src, copied);
+  return copied;
+}
+
+/** A destination as an explicit array (named destinations looked up in the document). */
+function resolveDest(ctx: PDFDocument["context"], d: PDFObject | undefined, named: Map<string, PDFObject>): PDFArray | undefined {
+  const v = d instanceof PDFRef ? ctx.lookup(d) : d;
+  if (v instanceof PDFArray) return v;
+  if (v instanceof PDFDict) return resolveDest(ctx, v.get(PDFName.of("D")), named);
+  const name = v instanceof PDFName ? v.decodeText() : v instanceof PDFString || v instanceof PDFHexString ? v.decodeText() : undefined;
+  if (name === undefined) return undefined;
+  const hit = named.get(name);
+  return hit && hit !== d ? resolveDest(ctx, hit, named) : undefined;
+}
+
+/** The document's named destinations: the Dests name tree, and the older Dests dictionary. */
+function namedDestinations(doc: PDFDocument): Map<string, PDFObject> {
+  const out = new Map<string, PDFObject>();
+  const ctx = doc.context;
+  const old = doc.catalog.lookupMaybe(PDFName.of("Dests"), PDFDict);
+  if (old) for (const [k, v] of old.entries()) out.set(k.decodeText(), v);
+  const tree = doc.catalog.lookupMaybe(PDFName.of("Names"), PDFDict)?.lookupMaybe(PDFName.of("Dests"), PDFDict);
+  const walk = (node: PDFDict, depth: number) => {
+    const names = node.lookupMaybe(PDFName.of("Names"), PDFArray);
+    if (names)
+      for (let i = 0; i + 1 < names.size(); i += 2) {
+        const k = names.lookup(i);
+        if (k instanceof PDFString || k instanceof PDFHexString) out.set(k.decodeText(), names.get(i + 1));
+      }
+    if (depth < 30) for (const kid of node.lookupMaybe(PDFName.of("Kids"), PDFArray)?.asArray() ?? []) {
+      const n = ctx.lookup(kid);
+      if (n instanceof PDFDict) walk(n, depth + 1);
+    }
+  };
+  if (tree) walk(tree, 0);
+  return out;
+}
+
+/**
+ * The form fields of copied pages, made fields of the target: each field's top (its widget or
+ * the field above it) joins the target's form, renamed where a field there has the name already,
+ * with the source form's defaults (fonts, text look) where the target has none. Widgets of a
+ * field left on pages not copied are left out.
+ */
+function carryFields(target: PDFDocument, src: PDFDocument, copied: PDFPage[]) {
+  const tctx = target.context;
+  const ACRO = PDFName.of("AcroForm");
+  const FIELDS = PDFName.of("Fields");
+  const T = PDFName.of("T");
+  const srcForm = src.catalog.lookupMaybe(ACRO, PDFDict);
+  let form = target.catalog.lookupMaybe(ACRO, PDFDict);
+  if (!form) {
+    form = tctx.obj({}) as PDFDict;
+    target.catalog.set(ACRO, tctx.register(form));
+  }
+  if (!form.lookupMaybe(FIELDS, PDFArray)) form.set(FIELDS, tctx.obj([]));
+  const fields = form.lookupMaybe(FIELDS, PDFArray)!;
+  if (srcForm) {
+    const copier = PDFObjectCopier.for(src.context, tctx);
+    for (const key of ["DA", "Q", "NeedAppearances"]) {
+      const v = srcForm.get(PDFName.of(key));
+      if (v !== undefined && form.get(PDFName.of(key)) === undefined) form.set(PDFName.of(key), copier.copy(v));
+    }
+    // Default fonts: the target's, with the source's added under names it doesn't use yet.
+    const dr = srcForm.lookupMaybe(PDFName.of("DR"), PDFDict);
+    if (dr) {
+      let tdr = form.lookupMaybe(PDFName.of("DR"), PDFDict);
+      if (!tdr) form.set(PDFName.of("DR"), (tdr = tctx.obj({}) as PDFDict));
+      for (const [kind, sub] of dr.entries()) {
+        const s = src.context.lookup(sub);
+        if (!(s instanceof PDFDict)) continue;
+        let t = tdr.lookupMaybe(kind, PDFDict);
+        if (!t) tdr.set(kind, (t = tctx.obj({}) as PDFDict));
+        for (const [name, v] of s.entries()) if (t.get(name) === undefined) t.set(name, copier.copy(v));
+      }
+    }
+  }
+  const on = new Set<string>();
+  for (const p of copied) for (const r of p.node.lookupMaybe(PDFName.of("Annots"), PDFArray)?.asArray() ?? []) on.add(r.toString());
+  const nameOf = (d: PDFDict) => {
+    const t = d.lookup(T);
+    return t instanceof PDFString || t instanceof PDFHexString ? t.decodeText() : undefined;
+  };
+  const taken = new Set<string>();
+  for (const r of fields.asArray()) {
+    const d = tctx.lookup(r);
+    const n = d instanceof PDFDict ? nameOf(d) : undefined;
+    if (n !== undefined) taken.add(n);
+  }
+  const listed = new Set(fields.asArray().map((r) => r.toString()));
+  // Each copied widget's field, up to its top.
+  const tops = new Map<string, PDFRef>();
+  for (const p of copied)
+    for (const r of p.node.lookupMaybe(PDFName.of("Annots"), PDFArray)?.asArray() ?? []) {
+      const a = tctx.lookup(r);
+      if (!(a instanceof PDFDict) || a.lookupMaybe(PDFName.of("Subtype"), PDFName)?.asString() !== "/Widget") continue;
+      let ref = r as PDFRef;
+      let d: PDFDict = a;
+      for (let k = 0; k < 50; k++) {
+        const up = d.get(PDFName.of("Parent"));
+        if (!(up instanceof PDFRef)) break;
+        const u = tctx.lookup(up);
+        if (!(u instanceof PDFDict)) break;
+        [ref, d] = [up, u];
+      }
+      tops.set(ref.toString(), ref);
+    }
+  // Widgets of these fields that aren't on a copied page are left out of their field.
+  const prune = (d: PDFDict, depth: number) => {
+    const kids = d.lookupMaybe(PDFName.of("Kids"), PDFArray);
+    if (!kids || depth > 20) return;
+    const keep = kids.asArray().filter((k) => {
+      const kd = tctx.lookup(k);
+      if (!(kd instanceof PDFDict)) return false;
+      if (kd.lookupMaybe(PDFName.of("Subtype"), PDFName)?.asString() === "/Widget") return on.has(k.toString());
+      prune(kd, depth + 1);
+      return true;
+    });
+    d.set(PDFName.of("Kids"), tctx.obj(keep));
+  };
+  for (const ref of tops.values()) {
+    if (listed.has(ref.toString())) continue;
+    const d = tctx.lookup(ref) as PDFDict;
+    prune(d, 0);
+    const name = nameOf(d);
+    if (name !== undefined && taken.has(name)) {
+      let n = 2;
+      while (taken.has(`${name}_${n}`)) n++;
+      d.set(T, PDFString.of(`${name}_${n}`));
+      taken.add(`${name}_${n}`);
+    } else if (name !== undefined) taken.add(name);
+    fields.push(ref);
+    listed.add(ref.toString());
+  }
 }
 
 export function hexToRgb(hex: string): RGB {
