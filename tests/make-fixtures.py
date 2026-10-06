@@ -240,6 +240,66 @@ shp.fill.solid(); shp.fill.fore_color.rgb = PRGB(0x2F, 0x6B, 0x4F)
 shp.text_frame.text = "Up 38% QoQ"
 prs.save(os.path.join(OUT, "sample.pptx"))
 
+# office-deck.pdf: a deck made the way people make them in PowerPoint (placeholders, bullets
+# from the master at two levels, two columns, a native chart, a table, cards drawn as shapes, a
+# picture), exported to PDF by LibreOffice. PDF to PowerPoint must give it back nearly as it was.
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.text import PP_ALIGN
+prs = Presentation()
+prs.slide_width, prs.slide_height = PInches(13.333), PInches(7.5)
+L = prs.slide_layouts
+s = prs.slides.add_slide(L[0])
+s.shapes.title.text = "Harbour Logistics"
+s.placeholders[1].text = "Annual planning offsite, 2027"
+s = prs.slides.add_slide(L[1])
+s.shapes.title.text = "Where we stand"
+tf = s.placeholders[1].text_frame
+tf.text = "Volumes grew 14% across all three hubs, the strongest year since the network opened"
+for t, lvl in [("Northern hub ran at 96% of capacity for eight months", 1), ("Southern hub added a night shift", 1), ("On-time delivery reached 93.4%", 0), ("Fuel costs fell for the first time in four years", 0)]:
+    p = tf.add_paragraph(); p.text = t; p.level = lvl
+s = prs.slides.add_slide(L[3])
+s.shapes.title.text = "Priorities"
+a = s.placeholders[1].text_frame; a.text = "Automate sorting at the northern hub"
+a.add_paragraph().text = "Open a cross-dock in the east"
+b = s.placeholders[2].text_frame; b.text = "Renew the fleet lease on better terms"
+b.add_paragraph().text = "Train forty new forklift drivers"
+s = prs.slides.add_slide(L[5])
+s.shapes.title.text = "Parcels handled (thousands)"
+cd = CategoryChartData(); cd.categories = ["Q1", "Q2", "Q3", "Q4"]
+cd.add_series("2025", (410, 455, 470, 520)); cd.add_series("2026", (468, 512, 540, 601))
+ch = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, PInches(1), PInches(1.6), PInches(11.3), PInches(5.4), cd).chart
+ch.has_legend = True; ch.legend.position = XL_LEGEND_POSITION.BOTTOM; ch.legend.include_in_layout = False
+ch.plots[0].has_data_labels = True
+s = prs.slides.add_slide(L[5])
+s.shapes.title.text = "Hub scorecard"
+rows = [("Hub", "Parcels (K)", "On time", "Cost per parcel"), ("Northern", "1,204", "94.1%", "$1.82"), ("Southern", "865", "92.7%", "$1.95"), ("Eastern", "462", "93.0%", "$2.10")]
+tb = s.shapes.add_table(4, 4, PInches(1), PInches(1.8), PInches(11.3), PInches(2.4)).table
+for r, row in enumerate(rows):
+    for c, v in enumerate(row):
+        cell = tb.cell(r, c); cell.text = v
+        if c: cell.text_frame.paragraphs[0].alignment = PP_ALIGN.RIGHT
+s = prs.slides.add_slide(L[6])
+for i, (big, small, col) in enumerate([("14%", "volume growth", "1F4E79"), ("93.4%", "on-time delivery", "2E7D32"), ("$1.91", "average cost per parcel", "B71C1C")]):
+    sh = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, PInches(0.9 + i * 4), PInches(1.5), PInches(3.5), PInches(2.4))
+    sh.fill.solid(); sh.fill.fore_color.rgb = PRGB.from_string(col); sh.line.fill.background()
+    tf = sh.text_frame; tf.text = big; tf.paragraphs[0].runs[0].font.size = PPt(48); tf.paragraphs[0].runs[0].font.bold = True
+    p = tf.add_paragraph(); p.text = small; p.runs[0].font.size = PPt(18)
+tx = s.shapes.add_textbox(PInches(0.9), PInches(4.6), PInches(11.5), PInches(1.5)).text_frame
+tx.word_wrap = True
+tx.text = "Figures are for the twelve months to 30 September 2026 and include contract work for partner carriers. Cost per parcel excludes depreciation."
+tx.paragraphs[0].runs[0].font.size = PPt(16)
+s = prs.slides.add_slide(L[5])
+s.shapes.title.text = "The new sorting line"
+s.shapes.add_picture(io.BytesIO(save_img(photo(900, 600, 5), "JPEG")), PInches(0.9), PInches(1.6), PInches(6.5), PInches(4.3))
+t = s.shapes.add_textbox(PInches(7.8), PInches(1.6), PInches(4.6), PInches(4)).text_frame; t.word_wrap = True
+t.text = "Installed in March, the line sorts 9,000 parcels an hour and cut manual handling by half."
+t.paragraphs[0].runs[0].font.size = PPt(20)
+os.makedirs(os.path.join(OUT, "lo"), exist_ok=True)
+prs.save(os.path.join(OUT, "lo", "office-deck.pptx"))
+subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", os.path.join(OUT, "lo"), os.path.join(OUT, "lo", "office-deck.pptx")], check=True, capture_output=True)
+os.replace(os.path.join(OUT, "lo", "office-deck.pdf"), os.path.join(OUT, "office-deck.pdf"))
+
 # ---------- EPUB (spine order differs from manifest order) ----------
 ep = zipfile.ZipFile(os.path.join(OUT, "sample.epub"), "w")
 ep.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)

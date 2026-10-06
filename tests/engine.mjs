@@ -117,7 +117,7 @@ for (const c of CASES) {
           for (const [k, v] of Object.entries(opts)) if (v && typeof v === "object" && v.__file) opts[k] = toFile(extra[v.__file]);
           const work = run.runTool(tool, { files: files.map(toFile), options: opts, passwords });
           const out = hidden ? await Promise.race([work, new Promise((_, no) => setTimeout(() => no(new Error("stalled with the tab hidden")), 60000))]) : await work;
-          return { ok: true, out: out.map((o) => ({ filename: o.filename, mime: o.mime, b64: b64(o.bytes) })) };
+          return { ok: true, out: out.map((o) => ({ filename: o.filename, mime: o.mime, note: o.note, b64: b64(o.bytes) })) };
         } catch (e) {
           return { ok: false, error: String((e && e.message) || e) };
         } finally {
@@ -137,7 +137,7 @@ for (const c of CASES) {
     for (const o of res.out) {
       const p = join(caseDir, o.filename.replace(/\//g, "_"));
       writeFileSync(p, Buffer.from(o.b64, "base64"));
-      saved.push({ path: p, mime: o.mime, filename: o.filename, size: Buffer.from(o.b64, "base64").length });
+      saved.push({ path: p, mime: o.mime, filename: o.filename, note: o.note, size: Buffer.from(o.b64, "base64").length });
     }
   }
   let verdict = { pass: res.ok, notes: res.ok ? [] : [res.error] };

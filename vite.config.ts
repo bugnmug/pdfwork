@@ -35,7 +35,6 @@ export default defineConfig(({ command, isPreview }) => ({
       "docx",
       "diff",
       "jszip",
-      "pptxgenjs",
       "tesseract.js",
       "qrcode",
       "peerjs",

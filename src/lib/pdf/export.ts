@@ -5,7 +5,10 @@ import { canvasToBytes, stem, tick, type OutFile, type ProgressFn } from "./core
 import { imagesByPage, placementOf, viewTransform, walkImages } from "./contentstream";
 import { open, withZip, type Src } from "./pages";
 import { decodePixels, jpegBytes, listImages, pixelsToCanvas } from "./pdfimages";
-import { extractPages, linesToText, renderPage, toLines, withPdfjs, type PageText, type Pic } from "./pdfjs";
+import { enrichFontStyles, extractPages, linesToText, loosePictures, pageText, pictureCanvas, renderPage, toLines, withPdfjs, type LoosePicture, type PageText, type Pic } from "./pdfjs";
+import type { PMedia, PPic, PRun, PSlide, PText } from "./pptxwrite";
+import type { Link } from "./toslides";
+import type { PDFPageProxy } from "pdfjs-dist";
 import { analyzeDoc, listLabel, luminance, runsText, type BodyStyle, type Cell, type Family, type Furniture, type FurnitureLine, type Geo, type ListFormat, type PageLayout, type Run, type SBlock, type Under } from "./structure";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1465,49 +1468,278 @@ export async function pdfToCsv(src: Src, onProgress?: ProgressFn): Promise<OutFi
 
 /* ---------------------------------------------------------------- pptx */
 
-export async function pdfToPptx(src: Src, o: { notes?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
-  const { default: PptxGenJS } = await import("pptxgenjs");
-  const pptx = new PptxGenJS();
-  const texts = o.notes !== false ? await extractPages(src.bytes, { password: src.password }).catch(() => [] as PageText[]) : [];
+export async function pdfToPptx(src: Src, o: { mode?: "editable" | "exact"; notes?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
+  const [{ writePptx }, { slideTexts }] = await Promise.all([import("./pptxwrite"), import("./toslides")]);
+  const exact = o.mode === "exact";
+  const measure = exact ? undefined : measurer();
+  const slides: PSlide[] = [];
+  const media: PMedia[] = [];
+  const faces = new Map<string, { chars: number; big: number }>();
+  let W = 0;
+  let H = 0;
+  let pictures = 0;
+  let recognised = 0;
   await withPdfjs(
     src.bytes,
     async ({ pdf, pageCount }) => {
-      const first = await pdf.getPage(1);
-      const vp = first.getViewport({ scale: 1 });
-      const W = 10;
-      const H = (W * vp.height) / vp.width;
-      pptx.defineLayout({ name: "PDF", width: W, height: H });
-      pptx.layout = "PDF";
       for (let i = 1; i <= pageCount; i++) {
         onProgress?.(i / pageCount, `Slide ${i} of ${pageCount}`);
         const page = await pdf.getPage(i);
-        const canvas = await renderPage(page, 2);
-        page.cleanup();
-        const data = `data:image/jpeg;base64,${b64(await canvasToBytes(canvas, "image/jpeg", 0.88))}`;
-        const slide = pptx.addSlide();
-        const pv = page.getViewport({ scale: 1 });
-        const ratio = Math.min(W / (pv.width / 72), H / (pv.height / 72));
-        const iw = (pv.width / 72) * ratio;
-        const ih = (pv.height / 72) * ratio;
-        slide.addImage({ data, x: (W - iw) / 2, y: (H - ih) / 2, w: iw, h: ih });
-        const t = texts[i - 1];
-        if (t) {
-          const notes = linesToText(toLines(t)).slice(0, 8000);
-          if (notes.trim()) slide.addNotes(notes);
+        const vp = page.getViewport({ scale: 1 });
+        if (i === 1) {
+          // The slides take the first page's size (PowerPoint allows 1 to 56 inches a side).
+          const s = Math.min(1, 4032 / Math.max(vp.width, vp.height));
+          W = Math.max(72, vp.width * s);
+          H = Math.max(72, vp.height * s);
         }
+        // Pages of another size are fitted in, centred.
+        const k = Math.min(W / vp.width, H / vp.height);
+        const fit = { x: (W - vp.width * k) / 2, y: (H - vp.height * k) / 2, w: vp.width * k, h: vp.height * k };
+        const fills = fit.x < 0.5 && fit.y < 0.5;
+        const pt = await pageText(page);
+        const slide: PSlide = { items: [] };
+        let canvas: HTMLCanvasElement;
+        if (exact) {
+          canvas = await renderPage(page, 2, { snap: true });
+          media.push({ bytes: await canvasToBytes(canvas, "image/jpeg", 0.88), ext: "jpeg" });
+          slide.items.push({ kind: "pic", ...fit, media: media.length - 1, name: `Page ${i}` });
+          if (o.notes !== false) {
+            const notes = linesToText(toLines(pt)).slice(0, 8000);
+            if (notes.trim()) slide.notes = notes;
+          }
+        } else {
+          const shapes = await enrichFontStyles(page, pt.items);
+          await sampleColours(page, pt);
+          const { texts, erase } = slideTexts(pt, shapes, { fontOf: wordFont, links: await linksOf(page), measure });
+          if (!texts.length) {
+            pictures++;
+            // A scan with recognised text (OCR) can't have its text on the slide: it goes in the notes.
+            const ocr = linesToText(toLines(pt)).slice(0, 8000);
+            if (ocr.trim()) {
+              slide.notes = ocr;
+              recognised++;
+            }
+          }
+          // Pictures that stand on their own come off the page, to move or replace.
+          const loose: PPic[] = [];
+          const taken: LoosePicture[] = [];
+          if (texts.length)
+            for (const p of await loosePictures(page)) {
+              const c = await pictureCanvas(page, p.id);
+              if (!c) continue;
+              media.push(await imageOf(c));
+              c.width = c.height = 0;
+              taken.push(p);
+              loose.push({ kind: "pic", x: fit.x + p.x * k, y: fit.y + p.y * k, w: p.w * k, h: p.h * k, media: media.length - 1, name: `Picture ${loose.length + 1}`, ...(p.crop ? { crop: p.crop } : {}) });
+            }
+          // The page without its text (the text goes on top, editable); a page with none stays whole.
+          const scale = Math.min(2, 2400 / Math.max(vp.width, vp.height));
+          canvas = await renderPage(page, scale, { text: texts.length ? false : undefined, erase, snap: true, skip: taken, readback: true });
+          const plain = plainColour(canvas);
+          if (plain && fills) {
+            if (plain !== "FFFFFF") slide.background = { color: plain };
+          } else {
+            media.push(await pictureOf(canvas));
+            if (fills) slide.background = { media: media.length - 1 };
+            else slide.items.push({ kind: "pic", ...fit, media: media.length - 1, name: `Page ${i}` });
+          }
+          slide.items.push(...loose);
+          for (const t of texts) {
+            const placed = k === 1 && !fit.x && !fit.y ? t : scaled(t, k, fit.x, fit.y);
+            slide.items.push(placed);
+            for (const p of placed.paras)
+              for (const r of p.runs) {
+                const f = faces.get(r.face ?? "") ?? { chars: 0, big: 0 };
+                f.chars += r.text.length;
+                if (r.size >= 24) f.big += r.text.length;
+                faces.set(r.face ?? "", f);
+              }
+          }
+        }
+        page.cleanup();
         canvas.width = canvas.height = 0;
+        slides.push(slide);
         await tick();
       }
     },
     src.password,
   );
-  const blob = (await pptx.write({ outputType: "blob" })) as Blob;
+  // New text added to these slides starts in the deck's own faces.
+  const byUse = [...faces.entries()].filter(([f]) => f);
+  const minor = byUse.sort((a, b) => b[1].chars - a[1].chars)[0]?.[0];
+  const major = byUse.sort((a, b) => b[1].big - a[1].big)[0];
+  const bytes = writePptx({ width: W, height: H, slides, media, title: stem(src.name), fonts: minor ? { minor, major: major && major[1].big ? major[0] : minor } : undefined });
+  const n = slides.length;
+  let note = exact ? (o.notes !== false ? "One slide per page, page text in speaker notes" : "One slide per page") : "One slide per page, with editable text";
+  if (!exact && pictures) {
+    note =
+      pictures === n
+        ? `${n === 1 ? "The page has" : "The pages have"} no text to edit (a scan, or a picture), so each slide is a picture of its page`
+        : `${note}. ${pictures} page${pictures === 1 ? " has" : "s have"} no text to edit (a scan, or a picture), so ${pictures === 1 ? "its slide is a picture" : "their slides are pictures"}`;
+    if (recognised) note += ", with the recognised text in the speaker notes";
+  }
   return {
     filename: `${stem(src.name)}.pptx`,
-    bytes: new Uint8Array(await blob.arrayBuffer()),
+    bytes,
     mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    note: o.notes !== false ? "One slide per page, page text in speaker notes" : "One slide per page",
+    note,
   };
+}
+
+/**
+ * Widths of text in the faces the slides name, measured with the fonts installed here (most
+ * likely the computer that opens the slides). Faces not installed can't be measured.
+ */
+function measurer(): ((r: PRun, text: string) => number | undefined) | undefined {
+  const ctx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  if (!ctx) return undefined;
+  const installed = new Map<string, boolean>();
+  const has = (face: string) => {
+    let v = installed.get(face);
+    if (v === undefined) {
+      // An installed face sets this probe differently from at least one of the generic faces.
+      const probe = "mmmmmmmmmmlli1WQ@#0123456789 abcdefghijklmnopqrstuvwxyz";
+      v = ["monospace", "serif", "sans-serif"].some((g) => {
+        ctx.font = `40px ${g}`;
+        const a = ctx.measureText(probe).width;
+        ctx.font = `40px "${face.replace(/"/g, "")}", ${g}`;
+        return Math.abs(ctx.measureText(probe).width - a) > 0.5;
+      });
+      installed.set(face, v);
+    }
+    return v;
+  };
+  return (r, text) => {
+    if (!r.face || !has(r.face)) return undefined;
+    ctx.font = `${r.italic ? "italic " : ""}${r.bold ? "bold " : ""}40px "${r.face.replace(/"/g, "")}"`;
+    return (ctx.measureText(text).width / 40) * r.size;
+  };
+}
+
+/**
+ * Colours of text the PDF paints in a colour that can't be read without drawing it (a spot
+ * colour, a pattern, a gradient seen through lettering): taken from the page drawn with and
+ * without its text, as the colour of the pixels the text changes most. Text that changes
+ * nothing gets the colour under it.
+ */
+async function sampleColours(page: PDFPageProxy, pt: PageText) {
+  // (Text that clips shows what's painted through it, a gradient say: its own colour isn't what shows.)
+  const unknown = pt.items.filter((it) => (!it.color || (it.mode ?? 0) >= 4) && it.str.trim() && it.mode !== 3);
+  if (!unknown.length) return;
+  const k = 1.5;
+  const [withText, without] = [await renderPage(page, k, { readback: true }), await renderPage(page, k, { text: false, readback: true })];
+  try {
+    const a = withText.getContext("2d", { willReadFrequently: true });
+    const b = without.getContext("2d", { willReadFrequently: true });
+    if (!a || !b) return;
+    const hex2 = (r: number, g: number, bl: number) => "#" + [r, g, bl].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+    for (const it of unknown) {
+      const x = Math.max(0, Math.floor(it.bbox.x * k));
+      const y = Math.max(0, Math.floor(it.bbox.y * k));
+      const w = Math.min(withText.width - x, Math.ceil(it.bbox.w * k));
+      const h = Math.min(withText.height - y, Math.ceil(it.bbox.h * k));
+      if (w <= 0 || h <= 0) continue;
+      const p = a.getImageData(x, y, w, h).data;
+      const q = b.getImageData(x, y, w, h).data;
+      let most = 0;
+      const diff = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        diff[i] = Math.abs(p[i * 4] - q[i * 4]) + Math.abs(p[i * 4 + 1] - q[i * 4 + 1]) + Math.abs(p[i * 4 + 2] - q[i * 4 + 2]);
+        most = Math.max(most, diff[i]);
+      }
+      if (most < 24) {
+        it.color = hex2(q[0], q[1], q[2]);
+        continue;
+      }
+      // The glyphs' solid middles: pixels changed by more than half the most.
+      const rs: number[] = [];
+      const gs: number[] = [];
+      const bs: number[] = [];
+      for (let i = 0; i < w * h; i++)
+        if (diff[i] >= most * 0.6) {
+          rs.push(p[i * 4]);
+          gs.push(p[i * 4 + 1]);
+          bs.push(p[i * 4 + 2]);
+        }
+      const mid = (v: number[]) => v.sort((m, n) => m - n)[Math.floor(v.length / 2)];
+      it.color = hex2(mid(rs), mid(gs), mid(bs));
+    }
+  } finally {
+    withText.width = withText.height = without.width = without.height = 0;
+  }
+}
+
+/** A text box moved and scaled with its page (a page fitted into a slide of another size). */
+function scaled(t: PText, k: number, dx: number, dy: number): PText {
+  return {
+    ...t,
+    x: dx + t.x * k,
+    y: dy + t.y * k,
+    w: t.w * k,
+    h: t.h * k,
+    paras: t.paras.map((p) => ({
+      ...p,
+      ...(p.spacing && "pts" in p.spacing ? { spacing: { pts: p.spacing.pts * k } } : {}),
+      ...(p.before ? { before: p.before * k } : {}),
+      ...(p.marL !== undefined ? { marL: p.marL * k } : {}),
+      ...(p.indent !== undefined ? { indent: p.indent * k } : {}),
+      runs: p.runs.map((r) => ({ ...r, size: Math.round(r.size * k * 20) / 20, ...(r.spc ? { spc: r.spc * k } : {}) })),
+    })),
+  };
+}
+
+/** The colour a picture is filled with, as RRGGBB, when it is one colour throughout. */
+function plainColour(canvas: HTMLCanvasElement): string | null {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx || !canvas.width || !canvas.height) return null;
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const [r, g, b] = [d[0], d[1], d[2]];
+  for (let i = 0; i < d.length; i += 4 * 3) if (Math.abs(d[i] - r) > 2 || Math.abs(d[i + 1] - g) > 2 || Math.abs(d[i + 2] - b) > 2) return null;
+  return ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0").toUpperCase();
+}
+
+/** A picture from the page: PNG where it has see-through parts or flat colour (logos, diagrams), JPEG for photos. */
+async function imageOf(canvas: HTMLCanvasElement): Promise<PMedia> {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  let alpha = false;
+  if (ctx) {
+    const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let i = 3; i < d.length; i += 4 * 7) if (d[i] < 250) {
+      alpha = true;
+      break;
+    }
+  }
+  const png = await canvasToBytes(canvas, "image/png");
+  if (alpha) return { bytes: png, ext: "png" };
+  const jpeg = await canvasToBytes(canvas, "image/jpeg", 0.92);
+  return png.length <= jpeg.length * 1.1 ? { bytes: png, ext: "png" } : { bytes: jpeg, ext: "jpeg" };
+}
+
+/** A page picture: PNG, sharp and true to colour, unless JPEG is much smaller (photos). */
+async function pictureOf(canvas: HTMLCanvasElement): Promise<PMedia> {
+  const png = await canvasToBytes(canvas, "image/png");
+  if (png.length < 160_000) return { bytes: png, ext: "png" };
+  const jpeg = await canvasToBytes(canvas, "image/jpeg", 0.9);
+  return png.length <= jpeg.length * 2 ? { bytes: png, ext: "png" } : { bytes: jpeg, ext: "jpeg" };
+}
+
+/** Web links on a page and where they sit (visual frame, points). */
+async function linksOf(page: PDFPageProxy): Promise<Link[]> {
+  try {
+    const vp = page.getViewport({ scale: 1 });
+    const annots = (await page.getAnnotations()) as { subtype?: string; url?: string; unsafeUrl?: string; rect?: number[] }[];
+    const out: Link[] = [];
+    for (const a of annots) {
+      const url = a.url ?? a.unsafeUrl;
+      if (a.subtype !== "Link" || !url || !a.rect || !/^(https?:|mailto:)/i.test(url)) continue;
+      const [x1, y1] = vp.convertToViewportPoint(a.rect[0], a.rect[1]);
+      const [x2, y2] = vp.convertToViewportPoint(a.rect[2], a.rect[3]);
+      out.push({ x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1), url });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /* ---------------------------------------------------------------- epub */

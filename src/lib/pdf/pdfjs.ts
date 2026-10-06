@@ -81,7 +81,13 @@ const CANVAS_AREA_LIMIT = 4096 * 4096;
 export async function renderPage(
   page: PDFPageProxy,
   scale: number,
-  opts: { background?: string; pixelBudget?: number; annotations?: boolean; readback?: boolean } = {},
+  /**
+   * `text: false`: leave the text out (see textless), and the shapes inside `erase` (page
+   * points, top-left origin): bullets and underlines drawn as shapes that the text now carries.
+   * `snap`: align the edges of filled boxes with whole pixels (see textless). `skip`: pictures
+   * to leave out (taken off the page, see loosePictures).
+   */
+  opts: { background?: string; pixelBudget?: number; annotations?: boolean; readback?: boolean; text?: boolean; erase?: { x: number; y: number; w: number; h: number }[]; snap?: boolean; skip?: LoosePicture[] } = {},
 ): Promise<HTMLCanvasElement> {
   let s = scale;
   const base = page.getViewport({ scale: 1 });
@@ -98,15 +104,153 @@ export async function renderPage(
   if (!ctx) throw new Error("Canvas is not available in this browser.");
   ctx.fillStyle = opts.background ?? "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const operationsFilter =
+    opts.text === false || opts.snap || opts.skip?.length
+      ? textless((await getPdfjs()).OPS as unknown as Record<string, number>, base.transform, { text: opts.text !== false, erase: opts.erase ?? [], snap: opts.snap ? s : 0, skip: opts.skip ?? [] })
+      : undefined;
   const task = page.render({
     canvasContext: ctx,
     canvas,
     viewport,
     annotationMode: opts.annotations === false ? 0 : 2, // 2 = ENABLE_FORMS: draw annotation appearances
+    ...(operationsFilter ? { operationsFilter } : {}),
   } as Parameters<PDFPageProxy["render"]>[0]);
   keepRenderingWhenHidden(task);
   await task.promise;
   return canvas;
+}
+
+/**
+ * Move the corners of a box-like path (straight edges, square to the pixel grid) to whole
+ * pixels, in place. `m` maps the path's space to pixels. Curves and thin shapes stay.
+ */
+function snapPath(d: Float32Array | number[], m: number[]) {
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (Math.abs(det) < 1e-9) return;
+  const pts: number[] = [];
+  for (let k = 0; k < d.length; ) {
+    const op = d[k++];
+    if (op === 0 || op === 1) {
+      pts.push(k);
+      k += 2;
+    } else if (op === 4) continue;
+    else return;
+  }
+  if (pts.length < 3) return;
+  const dev = pts.map((k) => [m[0] * d[k] + m[2] * d[k + 1] + m[4], m[1] * d[k] + m[3] * d[k + 1] + m[5]]);
+  for (let i = 1; i < dev.length; i++) if (Math.abs(dev[i][0] - dev[i - 1][0]) > 0.01 && Math.abs(dev[i][1] - dev[i - 1][1]) > 0.01) return;
+  const xs = dev.map((p) => p[0]);
+  const ys = dev.map((p) => p[1]);
+  if (Math.max(...xs) - Math.min(...xs) < 3 || Math.max(...ys) - Math.min(...ys) < 3) return;
+  pts.forEach((k, i) => {
+    const X = Math.round(dev[i][0]) - m[4];
+    const Y = Math.round(dev[i][1]) - m[5];
+    d[k] = (m[3] * X - m[2] * Y) / det;
+    d[k + 1] = (m[0] * Y - m[1] * X) / det;
+  });
+}
+
+/** Characters with no meaning of their own: private-use code points (icon fonts, symbol bullets), or none at all. */
+export const PICTORIAL = /^[\s\uE000-\uF8FF\uFFFD\u{F0000}-\u{FFFFD}]*$/u;
+
+/**
+ * An operator filter for page.render that leaves the page's text out, for a background that
+ * editable text will sit on. What can't come back as text stays: glyphs from icon fonts
+ * (pictures, not characters) and annotations (form field values). Text used as a clipping
+ * path (lettering filled with a gradient or a photo) is left out with what is painted
+ * through it, up to where the PDF restores the graphics state. Shapes that lie inside an
+ * `erase` box are left out as well. With `text`, the text stays and only the rest applies.
+ *
+ * `snap` (the render's scale): filled boxes get their edges moved to whole pixels. A table's
+ * cells are boxes drawn edge to edge; where an edge falls between pixels, both boxes cover that
+ * pixel partly and the background shows through, a faint line down the table. Boxes thinner
+ * than a few pixels (rules) are left as they are. Calls arrive in drawing order, once per operator.
+ */
+function textless(OPS: Record<string, number>, vt: number[], o: { text: boolean; erase: { x: number; y: number; w: number; h: number }[]; snap: number; skip: LoosePicture[] }) {
+  const erase = o.erase;
+  const structural = new Set([OPS.dependency, OPS.save, OPS.restore, OPS.paintFormXObjectBegin, OPS.paintFormXObjectEnd, OPS.beginGroup, OPS.endGroup, OPS.beginMarkedContent, OPS.beginMarkedContentProps, OPS.endMarkedContent, OPS.beginCompat, OPS.endCompat, OPS.beginText, OPS.endText]);
+  const opens = new Set([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup]);
+  const closes = new Set([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup]);
+  const shows = new Set([OPS.showText, OPS.showSpacedText, OPS.nextLineShowText, OPS.nextLineSetSpacingShowText]);
+  const modes = [0];
+  // The transformation in force (for shapes to erase), saved and restored with the graphics state.
+  const ctms: number[][] = [[1, 0, 0, 1, 0, 0]];
+  let depth = 0;
+  let clipAt = -1;
+  let annot = 0;
+  /** Whether a path, in user space bounds `mm`, is one of the shapes to erase. */
+  const erased = (mm: ArrayLike<number> | null | undefined) => {
+    if (!erase.length || !mm || !(mm[2] >= mm[0]) || !(mm[3] >= mm[1])) return false;
+    const m = multiply(vt, ctms[depth]);
+    const xs = [m[0] * mm[0] + m[2] * mm[1] + m[4], m[0] * mm[2] + m[2] * mm[1] + m[4], m[0] * mm[0] + m[2] * mm[3] + m[4], m[0] * mm[2] + m[2] * mm[3] + m[4]];
+    const ys = [m[1] * mm[0] + m[3] * mm[1] + m[5], m[1] * mm[2] + m[3] * mm[1] + m[5], m[1] * mm[0] + m[3] * mm[3] + m[5], m[1] * mm[2] + m[3] * mm[3] + m[5]];
+    const x0 = Math.min(...xs);
+    const x1 = Math.max(...xs);
+    const y0 = Math.min(...ys);
+    const y1 = Math.max(...ys);
+    return erase.some((r) => x0 >= r.x - 1 && x1 <= r.x + r.w + 1 && y0 >= r.y - 1 && y1 <= r.y + r.h + 1 && (x1 - x0 + 0.5) * (y1 - y0 + 0.5) >= (r.w * r.h) * 0.3);
+  };
+  const pictorial = (glyphs: unknown) => {
+    if (!Array.isArray(glyphs)) return false;
+    let n = 0;
+    let icons = 0;
+    for (const g of glyphs) {
+      if (!g || typeof g !== "object") continue;
+      const u = (g as { unicode?: string }).unicode ?? "";
+      if ((g as { isSpace?: boolean }).isSpace || (u && !u.trim())) continue;
+      n++;
+      if (PICTORIAL.test(u)) icons++;
+    }
+    return n > 0 && icons * 2 >= n;
+  };
+  return (i: number, ops: { fnArray: number[]; argsArray: unknown[] }): boolean => {
+    const fn = ops.fnArray[i];
+    if (fn === OPS.beginAnnotation) {
+      // Annotations start from the page's initial state: no clip from the content applies.
+      annot++;
+      clipAt = -1;
+      return true;
+    }
+    if (fn === OPS.endAnnotation) {
+      annot = Math.max(0, annot - 1);
+      return true;
+    }
+    if (annot) return true;
+    const args = ops.argsArray[i] as unknown[];
+    if (opens.has(fn)) {
+      depth++;
+      modes[depth] = modes[depth - 1];
+      ctms[depth] = ctms[depth - 1];
+      const m = fn === OPS.paintFormXObjectBegin ? (args?.[0] as number[] | null) : null;
+      if (m && m.length === 6) ctms[depth] = multiply(ctms[depth], Array.from(m));
+    } else if (closes.has(fn)) {
+      if (clipAt >= depth) clipAt = -1;
+      depth = Math.max(0, depth - 1);
+    } else if (fn === OPS.setTextRenderingMode) modes[depth] = Number(args?.[0]) | 0;
+    else if (fn === OPS.transform && args?.length === 6) ctms[depth] = multiply(ctms[depth], args as number[]);
+    if (structural.has(fn) || fn === OPS.setTextRenderingMode) return true;
+    if (fn === OPS.constructPath && clipAt < 0 && erased(args?.[2] as ArrayLike<number> | null)) return false;
+    if (fn === OPS.paintImageXObject && o.skip.length) {
+      // A picture taken off the page: the same image, drawn in the same place.
+      const m = multiply(vt, ctms[depth]);
+      const x0 = Math.min(m[4], m[0] + m[4]);
+      const y0 = Math.min(m[5], m[3] + m[5]);
+      if (o.skip.some((p) => p.id === args?.[0] && Math.abs(p.box[0] - x0) < 0.5 && Math.abs(p.box[1] - y0) < 0.5 && Math.abs(p.box[2] - p.box[0] - Math.abs(m[0])) < 0.5 && Math.abs(p.box[3] - p.box[1] - Math.abs(m[3])) < 0.5)) return false;
+    }
+    if (fn === OPS.constructPath && o.snap && (args?.[0] === OPS.fill || args?.[0] === OPS.eoFill)) {
+      const data = args[1] as unknown[] | undefined;
+      const m = multiply(vt, ctms[depth]).map((v) => v * o.snap);
+      if (data && data[0] && typeof (data[0] as ArrayLike<number>).length === "number") snapPath(data[0] as Float32Array, m);
+    }
+    if (o.text) return clipAt < 0;
+    if (shows.has(fn)) {
+      // Outlined lettering stays a picture too (editable text can't carry its outline).
+      if (clipAt < 0 && ((modes[depth] & 3) === 1 || pictorial(args?.[args.length - 1]))) return true;
+      if (modes[depth] & 4) clipAt = clipAt < 0 ? depth : Math.min(clipAt, depth);
+      return false;
+    }
+    return clipAt < 0;
+  };
 }
 
 /**
@@ -202,6 +346,11 @@ export type TextItem = {
    * and how wide it is, in the upright frame (points).
    */
   gaps?: { at: number; x: number; w: number }[];
+  /**
+   * How the text is painted, where not simply filled: 1 outlined, 2 filled and outlined,
+   * 3 invisible (the text layer over a scan), 4–7 the same and also clipping what follows.
+   */
+  mode?: number;
 };
 
 /** A filled or stroked shape (rectangle, rule, box), as its bounding box in the visual frame; `round` when drawn with curves. */
@@ -279,7 +428,7 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
   const items: TextItem[] = [];
   for (const raw of content.items) {
     if (!("str" in raw)) continue;
-    const item = raw as { str: string; dir?: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean; color?: string };
+    const item = raw as { str: string; dir?: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean; color?: string; mode?: number };
     const settled = settleItemText(item.str);
     item.str = settled.str;
     if (!item.str) continue;
@@ -333,6 +482,7 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
       italic: /italic|oblique/i.test(fam),
       hasEOL: item.hasEOL,
       ...(item.color && /^#[0-9a-f]{6}$/.test(item.color) ? { color: item.color } : {}),
+      ...(item.mode ? { mode: item.mode } : {}),
       ...(settled.track ? { track: settled.track } : {}),
       // (Where each closed-up gap sits; text set right to left is reordered, so its gaps are left out.)
       ...(settled.gaps?.some((g) => g.off !== undefined) && item.dir !== "rtl" ? { gaps: settled.gaps.flatMap((g) => (g.off !== undefined ? [{ at: g.at, x: X + g.off * unit, w: g.em * fontSize }] : [])) } : {}),
@@ -342,6 +492,187 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
 }
 
 type OpList = { fnArray: number[]; argsArray: unknown[] };
+
+/** A picture that can come off its page: which drawing operator and image it is, and where it shows (points, top-left origin). `crop`: the share of the image cut off each side by a clip. */
+export type LoosePicture = { index: number; id: string; x: number; y: number; w: number; h: number; box: [number, number, number, number]; crop?: { l: number; t: number; r: number; b: number } };
+
+/**
+ * Pictures on a page that can stand on their own (to move, resize or replace in another app):
+ * drawn upright and opaque, clipped by rectangles at most, smaller than the page, and with
+ * nothing drawn over them afterwards (text aside). The operator indices are those of the list
+ * that render (forms drawn) uses, so they can be skipped there.
+ */
+export async function loosePictures(page: PDFPageProxy): Promise<LoosePicture[]> {
+  const OPS = (await getPdfjs()).OPS as unknown as Record<string, number>;
+  let ops: OpList;
+  try {
+    ops = (await page.getOperatorList({ annotationMode: 2 } as never)) as unknown as OpList;
+  } catch {
+    return [];
+  }
+  const vp = page.getViewport({ scale: 1 });
+  const vt = vp.transform;
+  type Box = [number, number, number, number];
+  type St = { ctm: number[]; clip: Box | null; shaped: boolean; plain: boolean };
+  let st: St = { ctm: [1, 0, 0, 1, 0, 0], clip: null, shaped: false, plain: true };
+  const stack: St[] = [];
+  const boxOf = (m: number[], x0: number, y0: number, x1: number, y1: number): Box => {
+    const pts = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]);
+    return [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+  };
+  const cut = (a: Box, b: Box | null): Box | null => {
+    if (!b) return a;
+    const r: Box = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+    return r[2] > r[0] && r[3] > r[1] ? r : null;
+  };
+  const PAINT = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject, OPS.paintImageMaskXObjectGroup, OPS.paintInlineImageXObjectGroup, OPS.paintImageXObjectRepeat, OPS.paintImageMaskXObjectRepeat, OPS.paintSolidColorImageMask]);
+  const paints: { i: number; box: Box }[] = [];
+  const cands: { i: number; id: string; box: Box; clip: Box | null }[] = [];
+  let pendingClip = false;
+  let annot = false;
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn = ops.fnArray[i];
+    const a = ops.argsArray[i] as unknown[];
+    if (fn === OPS.beginAnnotation) {
+      // A form field or stamp drawn over the page: covers its rectangle.
+      annot = true;
+      const r = a?.[1] as number[] | null;
+      if (r && r.length === 4) paints.push({ i, box: boxOf(vt, r[0], r[1], r[2], r[3]) });
+      continue;
+    }
+    if (fn === OPS.endAnnotation) {
+      annot = false;
+      continue;
+    }
+    if (annot) continue;
+    if (fn === OPS.save) stack.push({ ...st });
+    else if (fn === OPS.restore || fn === OPS.endGroup || fn === OPS.paintFormXObjectEnd) st = stack.pop() ?? st;
+    else if (fn === OPS.beginGroup) {
+      // Transparency groups blend what's in them with what's under: their pictures stay on the page.
+      stack.push({ ...st });
+      st = { ...st, plain: false };
+    } else if (fn === OPS.paintFormXObjectBegin) {
+      stack.push({ ...st });
+      const m = a?.[0] as number[] | null;
+      if (m && m.length === 6) st = { ...st, ctm: multiply(st.ctm, Array.from(m)) };
+      const bb = a?.[1] as number[] | null;
+      if (bb && bb.length === 4) st = { ...st, clip: cut(boxOf(multiply(vt, st.ctm), bb[0], bb[1], bb[2], bb[3]), st.clip) ?? [0, 0, 0, 0] };
+    } else if (fn === OPS.transform && a?.length === 6) st = { ...st, ctm: multiply(st.ctm, a as number[]) };
+    else if (fn === OPS.setGState) {
+      for (const [k, v] of (a?.[0] as [string, unknown][]) ?? []) {
+        if ((k === "ca" && Number(v) < 0.999) || (k === "SMask" && v) || (k === "BM" && v !== "source-over")) st = { ...st, plain: false };
+        else if (k === "ca" || (k === "SMask" && !v) || k === "BM") st = { ...st, plain: true };
+      }
+    } else if (fn === OPS.clip || fn === OPS.eoClip) pendingClip = true;
+    else if (fn === OPS.constructPath) {
+      const m = multiply(vt, st.ctm);
+      const mm = a?.[2] as ArrayLike<number> | null;
+      const box = mm && mm[2] >= mm[0] && mm[3] >= mm[1] ? boxOf(m, mm[0], mm[1], mm[2], mm[3]) : null;
+      if (pendingClip) {
+        pendingClip = false;
+        const path = (a?.[1] as ArrayLike<number>[] | undefined)?.[0];
+        st = { ...st, clip: box ? (cut(box, st.clip) ?? [0, 0, 0, 0]) : st.clip, shaped: st.shaped || !rectangular(path, m) };
+      }
+      if (a?.[0] !== OPS.endPath && box) paints.push({ i, box: [box[0] - 1, box[1] - 1, box[2] + 1, box[3] + 1] });
+    } else if (fn === OPS.shadingFill) paints.push({ i, box: st.clip ?? [0, 0, vp.width, vp.height] });
+    else if (PAINT.has(fn)) {
+      const m = multiply(vt, st.ctm);
+      const box = boxOf(m, 0, 0, 1, 1);
+      paints.push({ i, box });
+      const upright = m[0] > 0 && m[3] < 0 && Math.abs(m[1]) < 1e-6 && Math.abs(m[2]) < 1e-6;
+      if (fn === OPS.paintImageXObject && typeof a?.[0] === "string" && upright && st.plain && !st.shaped) cands.push({ i, id: a[0] as string, box, clip: st.clip });
+    }
+  }
+  const out: LoosePicture[] = [];
+  for (const c of cands) {
+    const vis = cut(c.box, c.clip);
+    if (!vis) continue;
+    const w = vis[2] - vis[0];
+    const h = vis[3] - vis[1];
+    if (w < 8 || h < 8 || w * h > vp.width * vp.height * 0.85) continue;
+    // Anything drawn over it afterwards (a caption bar, a frame, another picture) keeps it on the page.
+    if (paints.some((p) => p.i > c.i && Math.min(p.box[2], vis[2]) - Math.max(p.box[0], vis[0]) > 1 && Math.min(p.box[3], vis[3]) - Math.max(p.box[1], vis[1]) > 1)) continue;
+    const bw = c.box[2] - c.box[0];
+    const bh = c.box[3] - c.box[1];
+    const crop = { l: (vis[0] - c.box[0]) / bw, t: (vis[1] - c.box[1]) / bh, r: (c.box[2] - vis[2]) / bw, b: (c.box[3] - vis[3]) / bh };
+    const cropped = Object.values(crop).some((v) => v > 0.002);
+    out.push({ index: c.i, id: c.id, x: vis[0], y: vis[1], w, h, box: c.box, ...(cropped ? { crop } : {}) });
+  }
+  return out;
+}
+
+/** Whether a path is a rectangle square to the page (a clip that only crops). */
+function rectangular(path: ArrayLike<number> | undefined, m: number[]): boolean {
+  if (!path || typeof path.length !== "number") return false;
+  const pts: [number, number][] = [];
+  for (let k = 0; k < path.length; ) {
+    const op = path[k++];
+    if (op === 0 || op === 1) {
+      pts.push([m[0] * path[k] + m[2] * path[k + 1] + m[4], m[1] * path[k] + m[3] * path[k + 1] + m[5]]);
+      k += 2;
+    } else if (op === 4) continue;
+    else return false;
+  }
+  if (pts.length < 4 || pts.length > 5) return false;
+  for (let i = 1; i < pts.length; i++) if (Math.abs(pts[i][0] - pts[i - 1][0]) > 0.01 && Math.abs(pts[i][1] - pts[i - 1][1]) > 0.01) return false;
+  return true;
+}
+
+/**
+ * A page's picture (by its id in the drawing list) as a canvas, at most `max` pixels a side.
+ * Null when it isn't available.
+ */
+export async function pictureCanvas(page: PDFPageProxy, id: string, max = 2400): Promise<HTMLCanvasElement | null> {
+  type Img = { width: number; height: number; bitmap?: ImageBitmap; data?: Uint8Array | Uint8ClampedArray; kind?: number };
+  const objs = (id.startsWith("g_") ? (page as unknown as { commonObjs: unknown }).commonObjs : (page as unknown as { objs: unknown }).objs) as { get(id: string, cb?: (v: unknown) => void): unknown };
+  const img = await new Promise<Img | null>((res) => {
+    const t = setTimeout(() => res(null), 4000);
+    try {
+      objs.get(id, (v) => {
+        clearTimeout(t);
+        res((v as Img) ?? null);
+      });
+    } catch {
+      clearTimeout(t);
+      res(null);
+    }
+  });
+  if (!img || !img.width || !img.height) return null;
+  const k = Math.min(1, max / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * k));
+  canvas.height = Math.max(1, Math.round(img.height * k));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  let src: CanvasImageSource | null = img.bitmap ?? null;
+  if (!src && img.data) {
+    // Decoded pixels: 1 bit grey (rows padded to bytes), RGB or RGBA (pdf.js ImageKind 1, 2, 3).
+    const full = document.createElement("canvas");
+    full.width = img.width;
+    full.height = img.height;
+    const fctx = full.getContext("2d");
+    if (!fctx) return null;
+    const out = fctx.createImageData(img.width, img.height);
+    const d = img.data;
+    const n = img.width * img.height;
+    if (img.kind === 3 && d.length >= n * 4) out.data.set(d.subarray(0, n * 4));
+    else if (img.kind === 2 && d.length >= n * 3) for (let p = 0; p < n; p++) out.data.set([d[p * 3], d[p * 3 + 1], d[p * 3 + 2], 255], p * 4);
+    else if (img.kind === 1) {
+      const row = Math.ceil(img.width / 8);
+      for (let y = 0; y < img.height; y++)
+        for (let x = 0; x < img.width; x++) {
+          const v = d[y * row + (x >> 3)] & (128 >> (x & 7)) ? 255 : 0;
+          out.data.set([v, v, v, 255], (y * img.width + x) * 4);
+        }
+    } else return null;
+    fctx.putImageData(out, 0, 0);
+    src = full;
+  }
+  if (!src) return null;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
 
 /**
  * Filled and stroked shapes on a page (backgrounds, boxes, rules, check boxes), from its

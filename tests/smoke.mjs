@@ -18,7 +18,13 @@ const info = (p) => {
 const browser = await launch();
 let failed = 0;
 
-async function run(name, slug, files, press, check) {
+/** A .pptx as slides and their text (see pptx-dump.py). */
+const slidesInfo = (p) => {
+  const d = JSON.parse(execFileSync("python3", [new URL("./pptx-dump.py", import.meta.url).pathname, p]).toString());
+  return { pages: d.slides.length, text: d.slides.flatMap((s) => s.texts.map((t) => t.text)).join(" ").replace(/\s+/g, " "), dump: d };
+};
+
+async function run(name, slug, files, press, check, ext = "pdf") {
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1360, height: 900 } });
   const page = await ctx.newPage();
   const errors = [];
@@ -29,14 +35,14 @@ async function run(name, slug, files, press, check) {
     await page.goto(`${BASE}/${slug}`, { waitUntil: "networkidle", timeout: 60000 });
     await page.locator('input[type="file"]').first().setInputFiles(files);
     await page.getByRole("button", { name: press }).first().click({ timeout: 60000 });
-    const perFile = page.getByRole("button", { name: /^Download .+\.pdf$/i }).first();
+    const perFile = page.getByRole("button", { name: new RegExp(`^Download .+\\.${ext}$`, "i") }).first();
     const big = page.getByRole("button", { name: /^Download PDF$/ }).first();
-    await Promise.race([perFile.waitFor({ timeout: 120000 }), big.waitFor({ timeout: 120000 })]);
+    await Promise.race([perFile.waitFor({ timeout: 120000 }), ...(ext === "pdf" ? [big.waitFor({ timeout: 120000 })] : [])]);
     const btn = (await perFile.count()) ? perFile : big;
     const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 30000 }), btn.click()]);
     const f = `${OUT}${name}-${dl.suggestedFilename()}`;
     await dl.saveAs(f);
-    notes.push(...check(info(f)));
+    notes.push(...check(ext === "pptx" ? slidesInfo(f) : info(f)));
     const meter = await page.locator('[aria-label^="Your files sent to servers"]').first().getAttribute("aria-label");
     notes.push(/: 0 B\./.test(meter ?? "") ? "meter 0 B" : `✗ meter: ${meter}`);
   } catch (e) {
@@ -60,6 +66,7 @@ await run("csv-bom", "csv-to-pdf", [OUT + "bom.csv"], "Convert to PDF", (t) => [
 await run("markdown", "markdown-to-pdf", [FX + "sample.md"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Release Notes", "₹499", "nested item"])]);
 await run("auto-redact", "auto-redact", [FX + "text.pdf"], /^Redact selected/, (t) => [`${t.pages} pages`, ...want(t, ["Quarterly", "Consulting hours"], ["priya.sharma@example.com", "ABCDE1234F", "4111 1111 1111 1111", "27ABCDE1234F1Z5"])]);
 await run("ocr", "ocr-pdf", [FX + "scan.pdf"], /^Make searchable|^Run OCR|^OCR|^Convert|^Recognize/i, (t) => [`${t.pages} page(s)`, t.text.trim().length > 40 ? `text ${t.text.trim().length} chars` : "✗ no OCR text"]);
+await run("pdf-to-ppt", "pdf-to-ppt", [FX + "deck.pdf"], "Convert to PowerPoint", (t) => [t.pages === 9 ? "9 slides" : `✗ ${t.pages} slides`, ...want(t, ["Northwind Outdoor Co.", "Gross margin improved to 46.5%"])], "pptx");
 
 await browser.close();
 console.log(failed ? `${failed} failed` : "all passed");

@@ -259,8 +259,8 @@ type Box = Rect & { fill?: string; stroke?: string };
 /** A drawn list marker: an empty square (check box), or a bullet (a dot, ring or small square). */
 type Mark = Rect & { check: boolean; bullet: string; color?: string };
 /** A text item as used here: may be raised (superscript) or sit on a drawn badge. */
-type Item = TextItem & { sup?: boolean; bg?: string; /** Right edge of the badge it sits on. */ bgRight?: number; /** A picture set in the line, standing in as one character. */ pic?: Pic; /** Drawn over a picture. */ onPic?: boolean };
-type SLine = Omit<Line, "items"> & { items: Item[]; dom: number; domBase: number; /** Column it was read from, for text set in columns. */ col?: number };
+export type Item = TextItem & { sup?: boolean; bg?: string; /** Right edge of the badge it sits on. */ bgRight?: number; /** A picture set in the line, standing in as one character. */ pic?: Pic; /** Drawn over a picture. */ onPic?: boolean };
+export type SLine = Omit<Line, "items"> & { items: Item[]; dom: number; domBase: number; /** Column it was read from, for text set in columns. */ col?: number };
 
 const centerIn = (r: Rect, x: number, y: number, pad = 1) => x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad;
 const itemCenter = (it: TextItem): [number, number] => [it.x + it.w / 2, it.base - it.fontSize * 0.3];
@@ -314,7 +314,7 @@ function relayout(l: SLine) {
  * Lines of a set of items, with superscripts (footnote markers set smaller and raised, which
  * PDF.js may report as lines of their own) attached to the line they belong to.
  */
-function linesOf(items: Item[], pt: { page: number; width: number; height: number }): SLine[] {
+export function linesOf(items: Item[], pt: { page: number; width: number; height: number }): SLine[] {
   const lines = toLines({ page: pt.page, width: pt.width, height: pt.height, items }) as SLine[];
   for (const l of lines) setDom(l);
   // Raised text sits right after (or right before) a word of the text it belongs to.
@@ -2530,7 +2530,7 @@ function splitAtStarts(sg: Segment, starts: number[]): Segment[] {
    an em: to estimate where each character of a run of text sits. */
 const SANS_W = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584];
 const SERIF_W = [250,333,408,500,500,833,778,180,333,333,500,564,250,333,250,278,500,500,500,500,500,500,500,500,500,500,278,278,564,564,564,444,921,722,667,667,722,611,556,722,722,333,389,722,611,889,722,722,556,722,667,556,611,722,722,944,722,722,611,333,278,333,469,500,333,444,500,444,500,444,333,500,500,278,278,500,278,778,500,500,500,500,333,389,278,500,500,722,500,500,444,480,200,480,541];
-const glyphW = (c: string, family: TextItem["family"]) => {
+export const glyphW = (c: string, family: TextItem["family"]) => {
   if (family === "mono") return 600;
   const k = c.charCodeAt(0) - 32;
   if (k >= 0 && k < 95) return (family === "serif" ? SERIF_W : SANS_W)[k];

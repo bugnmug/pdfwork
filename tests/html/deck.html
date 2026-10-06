@@ -1,0 +1,178 @@
+<!doctype html>
+<!-- A slide deck printed to PDF, the way web slide tools and AI tools export one: a dark title
+     slide with letter-spaced labels, numbered and bulleted lists (coloured bullets, a nested
+     level, items that wrap), text in two columns, a bar chart with a turned axis title, a
+     styled table, cards with big figures, a quote, a photo with a caption, links and page
+     numbers. PDF to PowerPoint must give back each piece of text as editable text, in place. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: 13.333in 7.5in; margin: 0; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "DejaVu Sans", Verdana, sans-serif; color: #1d2433; }
+.slide { width: 13.333in; height: 7.5in; position: relative; overflow: hidden; page-break-after: always; padding: 0.7in 0.85in; }
+.slide:last-child { page-break-after: auto; }
+.num { position: absolute; right: 0.6in; bottom: 0.35in; font-size: 10pt; color: #8a93a3; }
+h1 { font-size: 32pt; margin: 0 0 22pt; color: #12203a; }
+.eyebrow { font-size: 11pt; letter-spacing: 0.22em; text-transform: uppercase; color: #e0663a; font-weight: bold; margin: 0 0 10pt; }
+/* 1: title */
+.title { background: #12203a; color: #fff; padding-top: 2.3in; }
+.title .bar { position: absolute; left: 0; top: 0; width: 100%; height: 0.18in; background: linear-gradient(90deg, #e0663a, #f2b134); }
+.title h1 { color: #fff; font-size: 46pt; margin-bottom: 14pt; }
+.title .sub { font-size: 22pt; color: #c9d2e3; margin: 0; }
+.title .foot { position: absolute; left: 0.85in; bottom: 0.6in; font-size: 12pt; color: #8fa0bf; }
+/* lists */
+ol.agenda { font-size: 24pt; line-height: 1.5; margin: 0; padding-left: 0.6in; }
+ol.agenda li::marker { color: #e0663a; font-weight: bold; }
+ul.points { font-size: 20pt; line-height: 1.35; margin: 0; padding-left: 0.45in; max-width: 8.4in; }
+ul.points > li { margin-bottom: 12pt; }
+ul.points li::marker { color: #e0663a; }
+ul.points ul { font-size: 16pt; margin-top: 6pt; padding-left: 0.4in; list-style: circle; }
+ul.points ul li { margin-bottom: 4pt; }
+/* columns */
+.cols { display: flex; gap: 0.6in; }
+.col { flex: 1; }
+.col h2 { font-size: 20pt; margin: 0 0 10pt; color: #e0663a; }
+.col p { font-size: 15pt; line-height: 1.45; margin: 0 0 12pt; }
+.col ul { font-size: 15pt; line-height: 1.4; margin: 0; padding-left: 0.3in; }
+/* chart */
+.chart { position: relative; margin-left: 0.9in; width: 9.5in; height: 4.2in; border-left: 1.5px solid #9aa3b2; border-bottom: 1.5px solid #9aa3b2; }
+.bar2 { position: absolute; bottom: 0; width: 1.1in; background: #2f6fb3; }
+.bar2.b { background: #e0663a; }
+.bar2 span { position: absolute; top: -24pt; width: 100%; text-align: center; font-size: 14pt; font-weight: bold; color: #1d2433; }
+.cat { position: absolute; bottom: -28pt; width: 2.3in; text-align: center; font-size: 13pt; color: #4a5468; }
+.ylabel { position: absolute; left: -1.05in; top: 1.7in; transform: rotate(-90deg); font-size: 13pt; color: #4a5468; white-space: nowrap; }
+.legend { position: absolute; right: 0.9in; top: 0.8in; font-size: 12pt; color: #4a5468; }
+.legend i { display: inline-block; width: 12pt; height: 12pt; margin: 0 6pt 0 16pt; vertical-align: -1pt; }
+.source { position: absolute; left: 0.85in; bottom: 0.4in; font-size: 10pt; color: #8a93a3; }
+/* table */
+table { border-collapse: collapse; font-size: 15pt; width: 10.2in; }
+th { background: #12203a; color: #fff; text-align: left; padding: 9pt 14pt; }
+td { padding: 9pt 14pt; border-bottom: 1px solid #dfe3ea; }
+tr:nth-child(even) td { background: #f3f5f8; }
+td.n, th.n { text-align: right; }
+/* cards */
+.cards { display: flex; gap: 0.4in; margin-bottom: 0.45in; }
+.card { flex: 1; background: #f3f5f8; border-radius: 10px; padding: 18pt 20pt; }
+.card .big { font-size: 40pt; font-weight: bold; color: #2f6fb3; margin: 0; }
+.card .lbl { font-size: 14pt; color: #4a5468; margin: 4pt 0 0; }
+.quote { font-family: "Lora", Georgia, serif; font-style: italic; font-size: 22pt; line-height: 1.35; color: #12203a; border-left: 5px solid #e0663a; padding-left: 18pt; margin: 0 0 8pt; max-width: 9in; }
+.who { font-size: 13pt; color: #4a5468; padding-left: 23pt; margin: 0; }
+a { color: #2f6fb3; }
+/* photo */
+.photo { display: flex; gap: 0.5in; align-items: flex-start; }
+.photo img { width: 6in; height: 4in; object-fit: cover; border-radius: 6px; }
+.photo .cap { font-size: 16pt; line-height: 1.45; max-width: 4.2in; margin: 0; }
+.photo .cap b { display: block; font-size: 20pt; margin-bottom: 8pt; }
+/* end */
+.end { text-align: center; padding-top: 2.6in; }
+.end h1 { font-size: 44pt; }
+.end p { font-size: 18pt; color: #4a5468; margin: 0; }
+</style></head><body>
+
+<section class="slide title">
+  <div class="bar"></div>
+  <p class="eyebrow">Quarterly business review</p>
+  <h1>Northwind Outdoor Co.</h1>
+  <p class="sub">Q3 2026 results and the plan for Q4</p>
+  <p class="foot">October 2026 · For the leadership team</p>
+</section>
+
+<section class="slide">
+  <h1>Agenda</h1>
+  <ol class="agenda">
+    <li>Where we landed in Q3</li>
+    <li>Revenue by channel</li>
+    <li>Store performance</li>
+    <li>Customer voice</li>
+    <li>Priorities for Q4</li>
+  </ol>
+  <div class="num">2</div>
+</section>
+
+<section class="slide">
+  <h1>Q3 highlights</h1>
+  <ul class="points">
+    <li>Revenue reached $18.4M, up 12% on last year and 3% ahead of plan</li>
+    <li>Online orders grew faster than stores for the third quarter running, and now make up 41% of sales
+      <ul><li>Mobile checkout drove most of the gain</li><li>Returns held steady at 6.2%</li></ul>
+    </li>
+    <li>Gross margin improved to 46.5% as discounting eased</li>
+  </ul>
+  <div class="num">3</div>
+</section>
+
+<section class="slide">
+  <h1>What went well, and what to fix</h1>
+  <div class="cols">
+    <div class="col">
+      <h2>Went well</h2>
+      <p>The autumn range sold through early. Waterproof jackets and trail shoes led the quarter, and the new sizing guide cut exchanges by a fifth.</p>
+      <ul><li>Two new stores opened on time</li><li>Delivery promise met on 97% of orders</li></ul>
+    </div>
+    <div class="col">
+      <h2>To fix</h2>
+      <p>Stock ran short in the north-west region for six weeks. Customers waited longer for replacements, and support queues doubled at the peak.</p>
+      <ul><li>Rebalance stock weekly, not monthly</li><li>Hire four seasonal support staff</li></ul>
+    </div>
+  </div>
+  <div class="num">4</div>
+</section>
+
+<section class="slide">
+  <h1>Revenue by channel ($M)</h1>
+  <div class="chart">
+    <div class="ylabel">Revenue, millions of dollars</div>
+    <div class="bar2" style="left:0.6in;height:2.6in"><span>9.8</span></div>
+    <div class="bar2 b" style="left:1.75in;height:2.85in"><span>10.8</span></div>
+    <div class="bar2" style="left:3.6in;height:1.55in"><span>5.9</span></div>
+    <div class="bar2 b" style="left:4.75in;height:2.0in"><span>7.6</span></div>
+    <div class="bar2" style="left:6.6in;height:0.55in"><span>2.1</span></div>
+    <div class="bar2 b" style="left:7.75in;height:0.4in"><span>1.5</span></div>
+    <div class="cat" style="left:0.55in">Stores</div>
+    <div class="cat" style="left:3.55in">Online</div>
+    <div class="cat" style="left:6.55in">Wholesale</div>
+  </div>
+  <div class="legend"><i style="background:#2f6fb3"></i>Q3 2025<i style="background:#e0663a"></i>Q3 2026</div>
+  <div class="source">Source: finance ledger, 30 September 2026</div>
+  <div class="num">5</div>
+</section>
+
+<section class="slide">
+  <h1>Store performance</h1>
+  <table>
+    <tr><th>Store</th><th>Region</th><th class="n">Sales ($K)</th><th class="n">vs plan</th></tr>
+    <tr><td>Harbour Street</td><td>South</td><td class="n">2,140</td><td class="n">+8%</td></tr>
+    <tr><td>Mill Lane</td><td>North-west</td><td class="n">1,385</td><td class="n">−4%</td></tr>
+    <tr><td>Riverside</td><td>East</td><td class="n">1,920</td><td class="n">+2%</td></tr>
+    <tr><td>Castle Gate</td><td>North</td><td class="n">1,064</td><td class="n">+11%</td></tr>
+    <tr><td>Old Market</td><td>West</td><td class="n">1,752</td><td class="n">+5%</td></tr>
+  </table>
+  <div class="num">6</div>
+</section>
+
+<section class="slide">
+  <h1>Customer voice</h1>
+  <div class="cards">
+    <div class="card"><p class="big">42%</p><p class="lbl">of buyers came back within 90 days</p></div>
+    <div class="card"><p class="big">1.8M</p><p class="lbl">visits to the new trail guides</p></div>
+    <div class="card"><p class="big">4.6 / 5</p><p class="lbl">average review score</p></div>
+  </div>
+  <p class="quote">“The jacket kept me dry on a three-day hike in the rain. I have already ordered one for my partner.”</p>
+  <p class="who">Verified buyer, September review. More at <a href="https://northwind.example/reviews">northwind.example/reviews</a></p>
+  <div class="num">7</div>
+</section>
+
+<section class="slide">
+  <h1>Field test: the Ridge jacket</h1>
+  <div class="photo">
+    <img src="../fixtures/photo.jpg" alt="">
+    <p class="cap"><b>Tested in the wild</b>Our gear team wore the new jacket for 200 km of trail across three national parks before it went on sale.</p>
+  </div>
+  <div class="num">8</div>
+</section>
+
+<section class="slide end">
+  <h1>Thank you</h1>
+  <p>Questions to the strategy team: strategy@northwind.example</p>
+</section>
+
+</body></html>

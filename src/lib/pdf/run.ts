@@ -344,7 +344,7 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
     }
     case "pdf-to-ppt": {
       const { pdfToPptx } = await import("./export");
-      return each(pdfFiles(ctx), ctx, (s, _i, r) => pdfToPptx(s, { notes: bool(o, "notes", true) }, r));
+      return each(pdfFiles(ctx), ctx, (s, _i, r) => pdfToPptx(s, { mode: str(o, "mode", "editable") as "editable", notes: bool(o, "notes", true) }, r));
     }
     case "pdf-to-jpg": {
       const { pdfToImages } = await import("./raster");

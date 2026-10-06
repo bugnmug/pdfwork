@@ -126,7 +126,9 @@ async function buildPdfWorker() {
   );
   // 3. Text colour: track the fill colour and report it on each item, starting a new
   //    item where the colour changes. Colours in spaces that can't be read without
-  //    rendering (spot colours, patterns) are reported as "?".
+  //    rendering (spot colours, patterns) are reported as "?". The text rendering mode
+  //    (filled, outlined, invisible like the OCR layer of a scan, or a clipping path) is
+  //    reported the same way.
   patch(
     "fill colour helpers",
     "class TextState {\n",
@@ -169,6 +171,10 @@ class TextState {
     `          case OPS.setTextRise:
             textState.textRise = args[0];
             break;
+          case OPS.setTextRenderingMode:
+            if ((args[0] | 0) !== (textState.renderMode ?? 0)) flushTextContentItem();
+            textState.renderMode = args[0] | 0;
+            break;
           case OPS.setFillColorSpace:
           case OPS.setFillGray:
           case OPS.setFillRGBColor:
@@ -198,12 +204,12 @@ class TextState {
   patch(
     "item colour",
     "      textContentItem.fontName = loadedName;\n      const trm = textContentItem.transform = getCurrentTextTransform();\n",
-    "      textContentItem.fontName = loadedName;\n      textContentItem.color = textState.fillColor ?? \"#000000\";\n      const trm = textContentItem.transform = getCurrentTextTransform();\n",
+    "      textContentItem.fontName = loadedName;\n      textContentItem.color = textState.fillColor ?? \"#000000\";\n      textContentItem.mode = textState.renderMode ?? 0;\n      const trm = textContentItem.transform = getCurrentTextTransform();\n",
   );
   patch(
     "item colour out",
     "        fontName: textChunk.fontName,\n        hasEOL: textChunk.hasEOL\n      };\n    }\n    async function handleSetFont",
-    "        fontName: textChunk.fontName,\n        color: textChunk.color,\n        hasEOL: textChunk.hasEOL\n      };\n    }\n    async function handleSetFont",
+    "        fontName: textChunk.fontName,\n        color: textChunk.color,\n        mode: textChunk.mode,\n        hasEOL: textChunk.hasEOL\n      };\n    }\n    async function handleSetFont",
   );
   mkdirSync(dirname(dest), { recursive: true });
   const tmp = dest.replace(/\.mjs$/, ".patched.mjs");

@@ -52,6 +52,8 @@ const shape = (t) => `${t.rows.length}x${Math.max(...t.rows.map((r) => r.length)
 /** A check: "label" when it holds, "✗ label" when it doesn't. */
 const expect = (ok, label) => (ok ? label : `✗ ${label}`);
 const imgCount = (h, p) => Math.max(0, h.sh("pdfimages", ["-list", p]).out.trim().split("\n").length - 2);
+/** A .pptx as structure (see pptx-dump.py); with the original PDF, also how far its words moved when rendered. */
+const pptxDump = (h, path, pdf) => JSON.parse(h.sh("python3", [new URL("./pptx-dump.py", import.meta.url).pathname, path, ...(pdf ? [pdf] : [])], { timeout: 240000 }).out);
 
 export const CASES = [
   { id: "merge", slug: "merge-pdf", files: ["text.pdf", "cmp-a.pdf"], check: (s, h) => {
@@ -471,11 +473,90 @@ print('cells' if found else 'flat')`);
       const txt = readFileSync(first(s, ".csv").path, "utf8");
       return ok([/Consulting hours,12,1500\.00,18000\.00/.test(txt) ? "columns detected" : "✗ " + txt.split("\n").find((l) => l.includes("Consulting"))]);
   } },
+  // PDF to PowerPoint: each page a slide, its text as editable text boxes over the page drawn without its text.
   { id: "pdf-to-ppt", slug: "pdf-to-ppt", files: ["text.pdf"], check: (s, h) => {
       const p = first(s, ".pptx");
-      const v = py(h, `import pptx\ntry:\n  pr=pptx.Presentation(${JSON.stringify(p.path)});print(len(pr.slides), sum(1 for sl in pr.slides if sl.has_notes_slide and sl.notes_slide.notes_text_frame.text.strip()))\nexcept Exception as e: print('ERR',e)`);
+      const d = pptxDump(h, p.path);
+      const texts = d.slides.flatMap((sl) => sl.texts.map((t) => t.text)).join("\n");
       const o = h.officeText(p.path);
-      return ok([v.startsWith("4 ") ? `python-pptx opens: ${v}` : `✗ python-pptx: ${v.slice(0, 120)}`, o.ok ? "LibreOffice opens" : "✗ " + o.note]);
+      return ok([
+        expect(d.slides.length === 4, `${d.slides.length} slides`),
+        expect(Math.round(d.width) === 595 && Math.round(d.height) === 842, `slide ${Math.round(d.width)} x ${Math.round(d.height)} pt, as the first page`),
+        expect(has(texts, "Quarterly Operations Report") && has(texts, "Customer retention improved to 94 percent"), "text is editable on the slides"),
+        expect(d.slides[0].texts.some((t) => t.paras.some((q) => q.bullet && has(q.text, "Average response time"))), "hyphen list items are bullets"),
+        expect(d.slides.reduce((n, sl) => n + sl.pictures.length, 0) >= 2, "pictures stand on their own"),
+        expect(!d.slides.some((sl) => sl.notes), "no speaker notes"),
+        o.ok ? "LibreOffice opens" : "✗ " + o.note,
+      ]);
+  } },
+  { id: "pdf-to-ppt-deck", slug: "pdf-to-ppt", files: ["deck.pdf"], check: (s, h) => {
+      const p = first(s, ".pptx");
+      const d = pptxDump(h, p.path, h.join(h.FX, "deck.pdf"));
+      const sl = d.slides;
+      const notes = [expect(sl.length === 9 && Math.round(d.width) === 960 && Math.round(d.height) === 540, `${sl.length} slides at ${Math.round(d.width)} x ${Math.round(d.height)} pt`)];
+      const box = (i, re) => sl[i]?.texts.find((t) => re.test(t.text));
+      const title = box(0, /Northwind Outdoor/);
+      const r0 = title?.paras[0].runs[0] ?? {};
+      notes.push(expect(r0.size === 46 && r0.bold && r0.color === "FFFFFF", `title 46 pt bold white (${r0.size} ${r0.bold} ${r0.color})`));
+      notes.push(expect(!!sl[0].background?.image, "dark title slide keeps its graphics as the background"));
+      const label = box(0, /QUARTERLY/);
+      notes.push(expect((label?.paras[0].runs[0].spc ?? 0) > 1, "letter-spaced label keeps its spacing"));
+      const agenda = box(1, /Where we landed/);
+      notes.push(expect(agenda?.paras.length === 5 && agenda.paras.every((q) => q.bullet === "arabicPeriod" && q.bulletColor === "E0663A"), "agenda is a numbered list in orange"));
+      const points = sl[2].texts.flatMap((t) => t.paras).filter((q) => q.bullet);
+      notes.push(expect(points.filter((q) => q.bullet === "\u2022").length === 3 && points.filter((q) => q.bullet === "\u25E6").length === 2, `bullets drawn as shapes come back as bullets, nested ones too (${points.map((q) => q.bullet).join("")})`));
+      notes.push(expect(points.some((q) => /Online orders grew faster than stores for the third quarter running, and now make up 41% of sales/.test(q.text)), "a wrapped item is one paragraph"));
+      notes.push(expect(!sl[2].background, "no bullets or text left on the slide's background"));
+      const twoCols = sl[3].texts.filter((t) => /The autumn range|Stock ran short/.test(t.text));
+      notes.push(expect(twoCols.length === 2 && twoCols.every((t) => t.wrap), "two columns of text, two wrapping boxes"));
+      const turned = sl[4].texts.find((t) => /Revenue, millions of dollars/.test(t.text));
+      notes.push(expect(turned?.rot === 270, `turned axis title stays turned (${turned?.rot})`));
+      const fig = sl[5].texts.find((t) => t.text === "2,140");
+      notes.push(expect(fig && !fig.wrap && fig.paras[0].align === "r", "figures in the table stay flush right"));
+      const link = sl[6].texts.flatMap((t) => t.paras.flatMap((q) => q.runs)).find((r) => r.link);
+      notes.push(expect(link?.link === "https://northwind.example/reviews" && link.underline && link.text === "northwind.example/reviews", "link kept, underlined, on its own words"));
+      const pl = d.placement;
+      if (!pl) notes.push("✗ LibreOffice could not render the slides");
+      else {
+        const words = pl.reduce((n, x) => n + x.words, 0);
+        const matched = pl.reduce((n, x) => n + x.matched, 0);
+        const worst = Math.max(...pl.map((x) => x.dy50 ?? 0));
+        notes.push(expect(matched >= words * 0.8 && worst <= 0.5, `${matched}/${words} words found again, baselines within ${worst} pt (median, worst slide)`));
+      }
+      return ok(notes);
+  } },
+  { id: "pdf-to-ppt-office", slug: "pdf-to-ppt", files: ["office-deck.pdf"], check: (s, h) => {
+      const p = first(s, ".pptx");
+      const d = pptxDump(h, p.path, h.join(h.FX, "office-deck.pdf"));
+      const sl = d.slides;
+      const notes = [expect(sl.length === 7, `${sl.length} slides`)];
+      const items = sl[1].texts.flatMap((t) => t.paras).filter((q) => q.bullet);
+      notes.push(expect(items.length === 5 && items.filter((q) => q.bullet === "\u2013").length === 2, `master bullets at two levels (${items.map((q) => q.bullet).join("")})`));
+      const cols = sl[2].texts.filter((t) => t.paras.some((q) => q.bullet));
+      notes.push(expect(cols.length === 2 && cols.every((t) => t.paras.length === 2), "two columns of bullets stay apart"));
+      notes.push(expect(sl[6].pictures.length === 1, "the photo is a picture of its own"));
+      const pl = d.placement;
+      if (!pl) notes.push("✗ LibreOffice could not render the slides");
+      else {
+        const words = pl.reduce((n, x) => n + x.words, 0);
+        const matched = pl.reduce((n, x) => n + x.matched, 0);
+        const dy = Math.max(...pl.map((x) => x.dy90 ?? 0));
+        const dx = Math.max(...pl.map((x) => x.dx90 ?? 0));
+        notes.push(expect(matched === words && dy <= 0.5 && dx <= 1.5, `${matched}/${words} words where they were: within ${dy} pt down and ${dx} pt across (90%, worst slide)`));
+      }
+      return ok(notes);
+  } },
+  { id: "pdf-to-ppt-exact", slug: "pdf-to-ppt", files: ["deck.pdf"], options: { mode: "exact" }, check: (s, h) => {
+      const d = pptxDump(h, first(s, ".pptx").path);
+      return ok([
+        expect(d.slides.length === 9 && d.slides.every((sl) => sl.pictures.length === 1 && !sl.texts.length), "each slide a picture of its page"),
+        expect(d.slides.filter((sl) => sl.notes).length === 9, "page text in speaker notes"),
+      ]);
+  } },
+  { id: "pdf-to-ppt-scan", slug: "pdf-to-ppt", files: ["scan.pdf"], check: (s, h) => {
+      const p = first(s, ".pptx");
+      const d = pptxDump(h, p.path);
+      return ok([expect(d.slides.length === 1 && !d.slides[0].texts.length && !!d.slides[0].background?.image, "a scan comes as a picture"), expect(/no text to edit/.test(p.note ?? ""), `says so: ${p.note}`)]);
   } },
   { id: "pdf-to-jpg", slug: "pdf-to-jpg", files: ["text.pdf"], options: { dpi: "72" }, check: (s) => ok([all(s, ".jpg").length === 4 ? "4 jpgs" : `✗ ${all(s, ".jpg").length}`, first(s, ".zip") ? "zip" : "✗ zip"]) },
   // Background tab: no animation frames are delivered, so rendering must not wait for them.
