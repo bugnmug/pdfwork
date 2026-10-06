@@ -58,7 +58,7 @@ async function canvasToBytesAny(canvas: HTMLCanvasElement, mime: string, quality
 
 export type ImagesToPdfOpts = {
   /** "fit" = page matches each image; otherwise a paper size. */
-  pageSize?: "fit" | "A4" | "Letter" | "Legal" | "A3" | "A5";
+  pageSize?: "fit" | "A4" | "A3" | "A5" | "Letter" | "Legal";
   orientation?: "auto" | "portrait" | "landscape";
   marginMm?: number;
   /** Combine all into one PDF (default) or one PDF per image. */
@@ -112,7 +112,7 @@ export const invertPixels: PixelFn = (d) => {
   }
 };
 
-/** Invert lightness but keep hues (dark mode that does not turn photos into negatives). */
+/** Invert lightness but keep hues (night mode that keeps photos looking natural). */
 export const darkModePixels: PixelFn = (d) => {
   for (let p = 0; p < d.length; p += 4) {
     const r = d[p];

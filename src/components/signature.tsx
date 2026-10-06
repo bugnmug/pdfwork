@@ -11,7 +11,7 @@ export type Signature = { id: string; src: string; w: number; h: number };
 const KEY = "saved-signatures";
 const INKS = [
   { value: "#111827", label: "Black" },
-  { value: "#1d3a8a", label: "Blue" },
+  { value: "#1e40af", label: "Blue" },
   { value: "#7a1f1f", label: "Red" },
 ];
 const FONTS = [
@@ -180,8 +180,9 @@ function renderTyped(name: string, family: string, ink: string, k: number): HTML
 
 /** Turns a photo of a signature on paper into ink on a transparent background. */
 function removeBackground(img: HTMLImageElement, threshold: number, recolor: string | null): HTMLCanvasElement {
-  const max = 1600;
-  const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  // Plenty for pen strokes, and quick to process on phones.
+  const longSide = Math.max(img.naturalWidth, img.naturalHeight);
+  const s = longSide > 1800 ? 1800 / longSide : 1;
   const c = document.createElement("canvas");
   c.width = Math.round(img.naturalWidth * s);
   c.height = Math.round(img.naturalHeight * s);
@@ -247,7 +248,7 @@ function UploadSig({ ink, onChange }: { ink: string; onChange: (c: HTMLCanvasEle
         <button type="button" onClick={picker.open} className="grid h-48 place-items-center rounded-md border-2 border-dashed border-line text-sm text-ink-2 hover:border-carbon hover:text-carbon">
           <span className="grid justify-items-center gap-2">
             <ImagePlus className="size-6" />
-            Choose a photo or scan of your signature
+            Pick a photo of a signature you wrote by hand
           </span>
         </button>
       )}

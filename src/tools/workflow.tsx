@@ -16,7 +16,7 @@ import { cn, formatBytes } from "@/lib/utils";
 import { useThrottledProgress } from "./workspace";
 
 /** Tools that take one PDF and give back one PDF, so they can be chained. */
-const STEPS = ["rotate-pdf", "remove-pages", "extract-pages", "repair-pdf", "ocr-pdf", "crop-pdf", "resize-pdf", "n-up", "flip-pdf", "split-in-half", "page-numbers", "header-footer", "watermark", "thumbmark", "grayscale-pdf", "invert-pdf", "flatten-pdf", "sanitize-pdf", "compress-pdf", "pdf-to-pdfa", "encrypt-pdf"];
+const STEPS = ["rotate-pdf", "remove-pages", "extract-pages", "repair-pdf", "ocr-pdf", "crop-pdf", "resize-pdf", "n-up", "flip-pdf", "split-in-half", "page-numbers", "header-footer", "watermark", "stamp-image", "grayscale-pdf", "invert-pdf", "flatten-pdf", "sanitize-pdf", "compress-pdf", "pdf-to-pdfa", "encrypt-pdf"];
 
 type Step = { id: string; slug: string; values: Values };
 type Saved = { name: string; steps: { slug: string; values: Values }[] };

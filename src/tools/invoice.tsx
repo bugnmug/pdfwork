@@ -12,7 +12,7 @@ import { dataUrlToImage, ImageSlot, L, nextNumber, NumInput, RemoveRow, Section,
 const RATES = [0, 0.25, 3, 5, 12, 18, 28, 40];
 
 type Seller = Invoice["seller"] & { logo?: string; signature?: string; bank: NonNullable<Invoice["bank"]>; upi: string; terms: string; accent: string };
-const SELLER: Seller = { name: "", address: "", gstin: "", state: "", phone: "", email: "", pan: "", bank: { name: "", account: "", ifsc: "", branch: "", holder: "" }, upi: "", terms: "Payment due within 15 days.\nGoods once sold will not be taken back.", accent: "#1f3a5f" };
+const SELLER: Seller = { name: "", address: "", gstin: "", state: "", phone: "", email: "", pan: "", bank: { name: "", account: "", ifsc: "", branch: "", holder: "" }, upi: "", terms: "Payment due within 15 days.\nPlease quote the invoice number with your payment.", accent: "#1f3a5f" };
 const ITEM: InvoiceItem = { desc: "", hsn: "", qty: 1, unit: "Nos", rate: 0, discount: 0, gst: 18 };
 type Draft = { number: string; date: string; dueDate: string; buyer: Invoice["buyer"]; shipTo: string; placeOfSupply: string; reverseCharge: boolean; items: InvoiceItem[]; notes: string; copy: string };
 const DRAFT: Draft = { number: "INV-0001", date: "", dueDate: "", buyer: { name: "", address: "", gstin: "", state: "", phone: "" }, shipTo: "", placeOfSupply: "", reverseCharge: false, items: [{ ...ITEM }], notes: "", copy: "Original for recipient" };
@@ -145,7 +145,7 @@ export default function InvoiceTool({ tool }: { tool: Tool }) {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <ImageSlot label="Logo" value={seller.logo} onChange={(v) => setS({ logo: v })} />
-                <ImageSlot label="Signature or stamp" value={seller.signature} onChange={(v) => setS({ signature: v })} hint="A PNG with a transparent background looks best." />
+                <ImageSlot label="Signature or stamp" value={seller.signature} onChange={(v) => setS({ signature: v })} hint="Tip: a PNG without a background blends in cleanly." />
               </div>
               <p className="text-xs text-ink-3">Saved in this browser only, so you don&apos;t have to type it again.</p>
             </div>
@@ -342,7 +342,7 @@ export default function InvoiceTool({ tool }: { tool: Tool }) {
             </>
           ) : null}
         </Panel>
-        <p className="px-1 text-xs text-ink-3">Tax type is decided by comparing your state with the place of supply. Check rates for your goods or services before issuing.</p>
+        <p className="px-1 text-xs text-ink-3">CGST/SGST or IGST is chosen by checking whether your state matches the place of supply. Check rates for your goods or services before issuing.</p>
       </aside>
     </div>
   );

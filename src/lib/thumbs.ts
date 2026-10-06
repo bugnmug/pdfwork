@@ -54,7 +54,7 @@ export function fileInfo(file: File, password = "", width = 220): Promise<FileIn
         const page = await opened.pdf.getPage(1);
         const vp = page.getViewport({ scale: 1 });
         const dpr = Math.min(2, window.devicePixelRatio || 1);
-        const canvas = await renderPage(page, (width * dpr) / vp.width, { maxPixels: 1_200_000 });
+        const canvas = await renderPage(page, (width * dpr) / vp.width, { pixelBudget: 1_200_000 });
         page.cleanup();
         return { url: await canvasUrl(canvas), pages: opened.pageCount, w: vp.width, h: vp.height };
       } catch {

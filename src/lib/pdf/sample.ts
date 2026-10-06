@@ -24,11 +24,11 @@ export async function makeSamplePdf(): Promise<Uint8Array> {
     }
     y -= 8;
   };
-  await para("Use this file to try any tool: merge, split, compress, convert, edit, sign, redact, OCR, or chat with it.");
+  await para("Try any tool on this file: compress it, sign it, split it, redact it, chat with it, and more.");
   await para("Overview", 15, { bold: true });
   await para("This quarter the team shipped three releases, signed two enterprise customers and cut average response time from nine hours to four. Revenue grew 18% to ₹2,45,00,000 while costs stayed flat.");
   await para("Contact details (fake, for the privacy scanner)", 15, { bold: true });
-  await para("Email: ada.lovelace@example.com · Phone: +91 98765 43210");
+  await para("Email: ada.lovelace@example.com · Phone: +91 81234 50987");
   await para("PAN: ABCPE1234F · GSTIN: 27ABCPE1234F1Z5 · IFSC: HDFC0001234");
   await para("Card on file: 4111 1111 1111 1111 · UPI: ada@okhdfcbank");
   await para("हिंदी में भी: यह दस्तावेज़ आपके डिवाइस पर ही रहता है।", 12);
@@ -52,7 +52,7 @@ export async function makeSamplePdf(): Promise<Uint8Array> {
   await fonts.draw(page2, "Amounts in Indian rupees (₹).", { x: 48, y: H - 250, size: 10, color: muted });
   const page3 = doc.addPage([W, H]);
   await fonts.draw(page3, "Appendix", { x: 48, y: H - 80, size: 18, style: { bold: true }, color: accent });
-  await fonts.draw(page3, "Rotate me, drop me, watermark me. I am only bytes in your browser's memory.", { x: 48, y: H - 110, size: 11, color: ink });
+  await fonts.draw(page3, "Rotate me, drop me, watermark me. I exist only inside this browser tab.", { x: 48, y: H - 110, size: 11, color: ink });
   for (const [i, p] of [page1, page2, page3].entries()) {
     const label = `Page ${i + 1} of 3`;
     const w = await fonts.width(label, 9);

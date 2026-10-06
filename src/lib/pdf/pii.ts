@@ -76,6 +76,13 @@ function verhoeff(num: string): boolean {
   return c === 0;
 }
 
+// Birth-date labels as printed on IDs and forms, including the Hindi one on Aadhaar cards
+// ("जन्म तिथि/DOB"). The value may follow a format hint such as "(DD/MM/YYYY)".
+const DOB_LABEL = String.raw`(?:\bdate\s+of\s+birth|\bbirth\s*date|\bd\W{0,2}o\W{0,2}b\b\.?|\bborn(?:\s+on)?|जन्म\s*(?:तिथि|तारीख))`;
+// 01/02/1990, 1-2-90, 15th Aug 1990, August 15, 1990, 1990-02-01
+const MONTH = /^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$/i;
+const DOB_VALUE = String.raw`(\d{1,2}(?:st|nd|rd|th)?[\s./-](?:\d{1,2}|[a-z]{3,9}\.?)[\s,./-]{1,2}\d{2,4}|[a-z]{3,9}\.?\s\d{1,2}(?:st|nd|rd|th)?,?\s\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})`;
+
 const RULES: Rule[] = [
   { kind: "email", re: /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/gi },
   { kind: "upi", re: /\b[a-z0-9._-]{2,}@(?:ok)?(?:sbi|icici|hdfcbank|axis|axl|ybl|ibl|paytm|upi|apl|okaxis|okhdfcbank|okicici|oksbi|kotak|barodampay|idfcbank|federal|indus|aubank|jupiteraxis|fbl|yesbank|pnb|unionbank|cnrb|boi|freecharge|airtel|jio|slc|timecosmos|waaxis|wahdfcbank|waicici|wasbi)\b/gi },
@@ -97,7 +104,14 @@ const RULES: Rule[] = [
   { kind: "gstin", re: /\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b/g },
   { kind: "pan", re: /\b[A-Z]{5}\d{4}[A-Z]\b/g, check: (m) => (/^[A-Z]{3}[ABCFGHLJPTK]/.test(m) ? "high" : "medium") },
   { kind: "ifsc", re: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g },
-  { kind: "passport", re: /\b(?:passport(?:\s*(?:no\.?|number|#))?\s*[:-]?\s*)([A-PR-WY][1-9]\d\s?\d{4}[1-9])\b/gi, group: 1 },
+  {
+    // Only numbers labelled as a passport, so stray codes aren't caught. India's format
+    // (one letter, seven digits) is certain; other countries' formats are flagged to check.
+    kind: "passport",
+    re: /\bpassport\s*(?:(?:no|num(?:ber)?)\b\.?|#)?\s*[:.-]?\s*([A-Z]{1,2}\d{6,8}|\d{9})\b/gi,
+    group: 1,
+    check: (m) => (/^[A-Z]\d{7}$/i.test(m) ? "high" : "medium"),
+  },
   { kind: "voterid", re: /\b[A-Z]{3}\d{7}\b/g },
   { kind: "ssn", re: /\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b/g },
   { kind: "iban", re: /\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b/g, check: (m) => (ibanValid(m) ? "high" : null) },
@@ -114,8 +128,13 @@ const RULES: Rule[] = [
   { kind: "ip", re: /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g },
   {
     kind: "dob",
-    re: /\b(?:d\.?o\.?b\.?|date of birth|born on|birth date)\s*[:-]?\s*(\d{1,2}[/.\- ](?:\d{1,2}|[A-Za-z]{3,9})[/.\- ]\d{2,4})/gi,
+    re: new RegExp(DOB_LABEL + String.raw`(?:\s*\([^)]{0,14}\))?\s*[:/-]?\s*` + DOB_VALUE, "gi"),
     group: 1,
+    // A written month must really be a month ("12 March 1990", not "12 Marks 90").
+    check: (m) => {
+      const word = /[a-z]{3,}/i.exec(m)?.[0];
+      return !word || MONTH.test(word) ? "high" : null;
+    },
   },
 ];
 

@@ -164,8 +164,8 @@ export default function FillForm({ tool }: { tool: Tool }) {
           </Panel>
         ) : fields && !fillable.length ? (
           <Panel className="grid justify-items-start gap-3 p-6">
-            <p className="font-semibold">This PDF has no fillable fields</p>
-            <p className="text-sm text-ink-2">It may be a scanned or flat form. You can still type on it: open it in the editor and place text where the answers go.</p>
+            <p className="font-semibold">There are no form fields in this PDF</p>
+            <p className="text-sm text-ink-2">It&apos;s probably a scan or a flat form. You can still fill it in with the editor by adding text boxes over the blanks.</p>
             <Button
               variant="primary"
               onClick={() => {
@@ -206,7 +206,7 @@ export default function FillForm({ tool }: { tool: Tool }) {
               <p className="text-xs text-ink-3">{fillable.length} fillable field{fillable.length === 1 ? "" : "s"}</p>
             </div>
           </div>
-          <Switch checked={flatten} onChange={setFlatten} label="Flatten (lock the answers so they can't be edited)" />
+          <Switch checked={flatten} onChange={setFlatten} label="Flatten (make the answers permanent)" />
           {error && fields ? <Notice tone="danger">{error}</Notice> : null}
           <Button variant="primary" size="lg" onClick={save} busy={saving} disabled={saving || !fillable.length}>
             {tool.cta}

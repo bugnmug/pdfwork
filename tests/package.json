@@ -1,5 +1,5 @@
 {
-  "name": "pdfwork-tests",
+  "name": "doyourpdf-tests",
   "private": true,
   "type": "module",
   "description": "Browser tests for the PDF tools. Kept separate from the app so deploys don't install them.",

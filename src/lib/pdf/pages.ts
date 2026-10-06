@@ -32,7 +32,7 @@ export async function open(src: Src) {
 }
 
 export async function mergePdfs(srcs: Src[], opts: { bookmarks?: boolean; keepOutlines?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
-  if (srcs.length < 2) throw new Error("Add at least two PDFs to merge.");
+  if (srcs.length < 2) throw new Error("Merging needs two or more PDFs.");
   const out = await newDoc();
   const outline: OutlineEntry[] = [];
   for (let i = 0; i < srcs.length; i++) {
@@ -59,7 +59,7 @@ export async function mergePdfs(srcs: Src[], opts: { bookmarks?: boolean; keepOu
 
 /** Interleave pages: A1, B1, A2, B2… Optionally reverse B (for back sides scanned in reverse). */
 export async function mixPdfs(srcs: Src[], opts: { reverseSecond?: boolean; chunk?: number } = {}): Promise<OutFile> {
-  if (srcs.length < 2) throw new Error("Add at least two PDFs to interleave.");
+  if (srcs.length < 2) throw new Error("Interleaving needs two or more PDFs.");
   const docs = await Promise.all(srcs.map(open));
   const orders = docs.map((d, i) => {
     const idx = d.getPageIndices();
@@ -115,7 +115,7 @@ export async function splitPdf(
     for (let i = 0; i < n; i += k) groups.push(Array.from({ length: Math.min(k, n - i) }, (_, j) => i + j));
   } else {
     groups = parseRangeGroups(opts.ranges ?? "", n);
-    if (!groups.length) throw new Error(`Enter page ranges like 1-3, 5, 8-${n}. This PDF has ${n} pages.`);
+    if (!groups.length) throw new Error(`List pages as numbers and ranges separated by commas (this PDF has ${n} page${n === 1 ? "" : "s"}).`);
     if (opts.merge) groups = [groups.flat()];
   }
   return writeParts(doc, groups, src.name);
@@ -166,7 +166,7 @@ export async function splitByText(src: Src, query: string, opts: { regex?: boole
     const text = p.items.map((it) => it.str).join(" ");
     if (i > 0 && re.test(text)) starts.push(i);
   });
-  if (starts.length === 1) throw new Error(`“${q}” was not found after the first page, so there is nothing to split. Scanned PDFs need OCR first.`);
+  if (starts.length === 1) throw new Error(`“${q}” doesn't appear after the first page, so the file can't be split on it. For a scan, open it in OCR: Searchable PDF first.`);
   const groups = starts.map((a, i) => Array.from({ length: (starts[i + 1] ?? doc.getPageCount()) - a }, (_, k) => a + k));
   return writeParts(doc, groups, src.name);
 }
@@ -253,7 +253,7 @@ export async function splitBySize(src: Src, maxMb: number, onProgress?: Progress
   if (current.length) groups.push(current);
   const parts = await writeParts(doc, groups, src.name);
   const big = parts.filter((p) => p.mime === "application/pdf" && p.bytes.byteLength > cap);
-  if (big.length) big.forEach((p) => (p.note = `${p.note} · a single page is larger than the limit`));
+  if (big.length) big.forEach((p) => (p.note = `${p.note} · one page alone is over the size limit`));
   return parts;
 }
 
@@ -421,7 +421,7 @@ export async function autoCrop(src: Src, marginMm = 5, onProgress?: ProgressFn):
         onProgress?.(i / n, `Finding content on page ${i}`);
         const page = await pdf.getPage(i);
         const vp = page.getViewport({ scale: 1 });
-        const scale = Math.min(2, 900 / Math.max(vp.width, vp.height));
+        const scale = Math.min(1.5, 1100 / Math.max(vp.width, vp.height));
         const c = await renderPage(page, scale, { readback: true });
         page.cleanup();
         res.push(inkBounds(c, scale));

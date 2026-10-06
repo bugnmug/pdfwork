@@ -70,7 +70,7 @@ export default function FingerprintTool({ tool }: { tool: Tool }) {
   }, [items]);
 
   const want = verify.replace(/[\s:-]/g, "").toLowerCase();
-  const matchOf = (fp?: Fingerprint) => !!want && !!fp && [fp.sha256, fp.sha1, fp.md5].includes(want);
+  const matchOf = (fp?: Fingerprint) => !!want && !!fp && [fp.sha256, fp.sha512, fp.sha1, fp.md5].includes(want);
   const anyMatch = items.some((i) => matchOf(i.fp));
 
   const makeReport = async () => {
@@ -114,8 +114,9 @@ export default function FingerprintTool({ tool }: { tool: Tool }) {
               <>
                 <div className="grid gap-2">
                   <HashRow label="SHA-256" value={it.fp.sha256} match={want === it.fp.sha256} />
-                  <HashRow label="SHA-1" value={it.fp.sha1} match={want === it.fp.sha1} />
+                  <HashRow label="SHA-512" value={it.fp.sha512} match={want === it.fp.sha512} />
                   <HashRow label="MD5" value={it.fp.md5} match={want === it.fp.md5} />
+                  <HashRow label="SHA-1" value={it.fp.sha1} match={want === it.fp.sha1} />
                 </div>
                 {it.fp.pdf ? (
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px] sm:grid-cols-3">
@@ -163,7 +164,7 @@ export default function FingerprintTool({ tool }: { tool: Tool }) {
           <label htmlFor="verify-hash" className="text-[13px] font-medium text-ink-2">
             Check against a hash you were given
           </label>
-          <Input id="verify-hash" value={verify} onChange={(e) => setVerify(e.target.value)} placeholder="Paste SHA-256, SHA-1 or MD5" spellCheck={false} className="font-mono text-[13px]" />
+          <Input id="verify-hash" value={verify} onChange={(e) => setVerify(e.target.value)} placeholder="Paste any SHA-256, SHA-512, MD5 or SHA-1 value" spellCheck={false} className="font-mono text-[13px]" />
           {want ? (
             anyMatch ? (
               <p className="flex items-center gap-1.5 text-sm font-medium text-ok">

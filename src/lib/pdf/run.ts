@@ -234,12 +234,12 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
       }
       return out;
     }
-    case "thumbmark": {
+    case "stamp-image": {
       const { stampImage } = await import("./stamp");
       const image = await imageOpt(o, "image");
       const imgFile = ctx.files.find(isImage);
       const img = image ?? (imgFile ? { bytes: await bytesOf(imgFile), mime: imgFile.type } : undefined);
-      if (!img) throw new Error("Choose the image to stamp (a PNG with a transparent background works best).");
+      if (!img) throw new Error("Choose the image to place. A PNG without a background blends in cleanly.");
       return each(pdfFiles(ctx), ctx, (s) => stampImage(s, { image: img, where: str(o, "where", "last") as "last", pages: str(o, "pages", "all"), position: str(o, "position", "bottom-right") as "bottom-right", widthMm: num(o, "widthMm", 30), caption: str(o, "caption") }));
     }
     case "flatten-pdf": {
@@ -256,8 +256,8 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
       const { textToHandwriting } = await import("./handwriting");
       const s = await srcOf(pdfFiles(ctx)[0], ctx);
       const text = (await extractPlainText(s.bytes, s.password)).replace(/\f/g, "");
-      if (!text.trim()) throw new Error("This PDF has no text layer. Run OCR first.");
-      const out = await textToHandwriting(text, { font: str(o, "font", "caveat") as "caveat", paper: str(o, "paper", "ruled") as "ruled", ink: str(o, "ink", "#1b3a8a"), size: num(o, "size", 17) });
+      if (!text.trim()) throw new Error("This looks like a scan, so there's no text to work with. Open it in OCR: Searchable PDF first.");
+      const out = await textToHandwriting(text, { font: str(o, "font", "caveat") as "caveat", paper: str(o, "paper", "ruled") as "ruled", ink: str(o, "ink", "#1e40af"), size: num(o, "size", 17) });
       out.filename = s.name.replace(/\.pdf$/i, "") + "-handwritten.pdf";
       return [out];
     }
@@ -324,7 +324,7 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
     }
     case "text-to-handwriting": {
       const { textToHandwriting } = await import("./handwriting");
-      return [await textToHandwriting(str(o, "body"), { heading: str(o, "heading"), font: str(o, "font", "caveat") as "caveat", paper: str(o, "paper", "ruled") as "ruled", ink: str(o, "ink", "#1b3a8a"), size: num(o, "size", 17), wobble: num(o, "wobble", 1) })];
+      return [await textToHandwriting(str(o, "body"), { heading: str(o, "heading"), font: str(o, "font", "caveat") as "caveat", paper: str(o, "paper", "ruled") as "ruled", ink: str(o, "ink", "#1e40af"), size: num(o, "size", 17), wobble: num(o, "wobble", 1) })];
     }
     case "audio-to-pdf": {
       const { textToPdf } = await import("./office");

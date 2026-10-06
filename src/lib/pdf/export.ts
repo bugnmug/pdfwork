@@ -13,7 +13,7 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 async function readStructured(src: Src, onProgress?: ProgressFn) {
   const pages = await extractPages(src.bytes, { password: src.password, styles: true, onProgress: (f, l) => onProgress?.(f * 0.5, l) });
   const chars = pages.reduce((s, p) => s + p.items.reduce((a, i) => a + i.str.trim().length, 0), 0);
-  if (chars < 20) throw new Error("This PDF has no text layer (it is probably scanned). Run Searchable PDF (OCR) first, then convert.");
+  if (chars < 20) throw new Error("This looks like a scan, so there's no text to convert. Open it in OCR: Searchable PDF first.");
   return { pages, blocks: analyze(pages) };
 }
 
@@ -182,7 +182,7 @@ export async function pdfToHtml(src: Src, o: { mode?: "reflow" | "exact"; images
   return { filename: `${title}.html`, bytes: new TextEncoder().encode(html), mime: "text/html", note: "Reflowed, readable on phones" };
 }
 
-/** Looks exactly like the PDF: page images with an invisible, selectable text layer on top. */
+/** Matches the PDF's appearance: each page is an image, overlaid with invisible text you can select. */
 async function pdfToHtmlExact(src: Src, onProgress?: ProgressFn): Promise<OutFile> {
   const pages = await extractPages(src.bytes, { password: src.password });
   const parts: string[] = [];

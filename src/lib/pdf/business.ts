@@ -383,7 +383,7 @@ export async function gstInvoicePdf(inv: Invoice): Promise<OutFile> {
     }
   }
   await txt(p, "Authorised Signatory", sigX, bottomTop + 58, 8, {}, muted, "right", 120);
-  await txt(p, "This is a computer-generated invoice.", M, H - M + 6, 7, { italic: true }, muted);
+  await txt(p, "Computer-generated invoice.", M, H - M + 6, 7, { italic: true }, muted);
   doc.setTitle(`Invoice ${inv.number}`);
   doc.setAuthor(inv.seller.name);
   return pdfOut(`invoice-${safeFileName(inv.number || "draft")}.pdf`, await saveDoc(doc), `Total ${inr(t.total, true)}`);

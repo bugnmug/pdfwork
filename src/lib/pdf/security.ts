@@ -159,6 +159,7 @@ export type Fingerprint = {
   name: string;
   bytes: number;
   sha256: string;
+  sha512: string;
   sha1: string;
   md5: string;
   pdf?: {
@@ -181,8 +182,8 @@ export type Fingerprint = {
 export async function fingerprint(bytes: Uint8Array, name: string): Promise<Fingerprint> {
   const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
   const buf = bytes.slice().buffer;
-  const [s256, s1] = await Promise.all([crypto.subtle.digest("SHA-256", buf), crypto.subtle.digest("SHA-1", buf)]);
-  const fp: Fingerprint = { name, bytes: bytes.byteLength, sha256: hex(s256), sha1: hex(s1), md5: md5Hex(bytes) };
+  const [s256, s512, s1] = await Promise.all(["SHA-256", "SHA-512", "SHA-1"].map((alg) => crypto.subtle.digest(alg, buf)));
+  const fp: Fingerprint = { name, bytes: bytes.byteLength, sha256: hex(s256), sha512: hex(s512), sha1: hex(s1), md5: md5Hex(bytes) };
   const head = new TextDecoder("latin1").decode(bytes.subarray(0, 1024));
   const ver = head.match(/%PDF-(\d\.\d)/)?.[1];
   if (ver) {
@@ -242,8 +243,9 @@ export function fingerprintReport(fp: Fingerprint): string {
     `File:     ${fp.name}`,
     `Size:     ${fp.bytes.toLocaleString()} bytes`,
     `SHA-256:  ${fp.sha256}`,
-    `SHA-1:    ${fp.sha1}`,
-    `MD5:      ${fp.md5}`,
+    `SHA-512:  ${fp.sha512}`,
+    `MD5:      ${fp.md5} (legacy)`,
+    `SHA-1:    ${fp.sha1} (legacy)`,
   ];
   if (fp.pdf) {
     const p = fp.pdf;
@@ -264,7 +266,7 @@ export function fingerprintReport(fp: Fingerprint): string {
       `Form fields: ${p.forms}`,
     );
   }
-  lines.push("", "Any change to the file, even one byte, produces a completely different SHA-256.");
+  lines.push("", "Change one byte of the file and every value above changes completely.");
   return lines.join("\n");
 }
 

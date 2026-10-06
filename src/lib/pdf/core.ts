@@ -36,8 +36,8 @@ export class PasswordError extends Error {
   ) {
     super(
       wrong
-        ? `The password for “${fileName}” is not correct.`
-        : `“${fileName}” is password-protected. Enter its password to continue.`,
+        ? `That isn't the password for “${fileName}”.`
+        : `“${fileName}” is locked. It needs its password before it can be opened.`,
     );
     this.name = "PasswordError";
   }
@@ -61,7 +61,7 @@ export async function loadPdf(bytes: Uint8Array, opts: LoadOpts = {}): Promise<P
   try {
     probe = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
   } catch (e) {
-    throw new Error(`Could not read “${name}”. It may be damaged or not a PDF. Try the Repair tool. (${errText(e)})`);
+    throw new Error(`“${name}” couldn't be opened as a PDF. If it is one, the Repair tool can often fix it. (${errText(e)})`);
   }
   if (!probe.isEncrypted) return probe;
   const attempts = opts.password ? [opts.password, ""] : [""];

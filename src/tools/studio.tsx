@@ -1,7 +1,7 @@
 /**
  * The page editor behind Edit PDF, Edit PDF Text, Sign PDF and Redact PDF.
  * Pages are rendered with PDF.js; everything you add lives in an overlay as
- * plain objects (in PDF points) until you save, when they are written into the
+ * plain objects (in PDF points) until you save, when they are baked into the
  * file by lib/pdf/edit (or burned in by lib/pdf/redact).
  */
 import {
@@ -53,7 +53,7 @@ type Size = { w: number; h: number };
 
 const MODES: Record<Mode, { label: string; icon: LucideIcon; key: string; hint: string }> = {
   select: { label: "Select", icon: MousePointer2, key: "v", hint: "Click an item to move, resize or delete it." },
-  text: { label: "Text", icon: Type, key: "t", hint: "Click where the text should go, then type." },
+  text: { label: "Text", icon: Type, key: "t", hint: "Click on the page to start a text box, then type." },
   "edit-text": { label: "Edit text", icon: TextCursor, key: "e", hint: "Click any line of existing text to rewrite it." },
   draw: { label: "Draw", icon: PenLine, key: "d", hint: "Draw freehand with the mouse, a finger or a pen." },
   highlight: { label: "Highlight", icon: Highlighter, key: "h", hint: "Drag across text to highlight it." },
@@ -71,7 +71,7 @@ const TOOLSETS: Record<string, Mode[]> = {
   "sign-pdf": ["select", "text", "draw"],
   "redact-pdf": ["select", "redact"],
 };
-const START_MODE: Record<string, Mode> = { "edit-pdf": "select", "edit-text": "edit-text", "sign-pdf": "select", "redact-pdf": "redact" };
+const START_MODE: Record<string, Mode> = { "sign-pdf": "select", "redact-pdf": "redact", "edit-pdf": "select", "edit-text": "edit-text" };
 
 const COLORS = ["#111827", "#1d4ed8", "#b91c1c", "#15803d", "#7c3aed", "#ea580c", "#ffffff"];
 const HIGHLIGHTS = ["#fde047", "#86efac", "#f9a8d4", "#93c5fd", "#fdba74"];
@@ -261,7 +261,7 @@ function usePageCanvas(pdf: PDFDocumentProxy, index: number, cssWidth: number, v
         const { renderPage } = await import("@/lib/pdf/pdfjs");
         const page = await pdf.getPage(index + 1);
         const vp = page.getViewport({ scale: 1 });
-        const src = await renderPage(page, target / vp.width, { maxPixels: 14_000_000 });
+        const src = await renderPage(page, target / vp.width, { pixelBudget: 14_000_000 });
         page.cleanup();
         const c = canvasRef.current;
         if (cancelled || !c) return;
@@ -475,7 +475,7 @@ const StudioPage = memo(function StudioPage({ pdf, index, size, k, mode, objects
     if (mode === "edit-text") {
       const i = segAt(p);
       if (i < 0) {
-        toast.message(segs && !segs.length ? "This page has no editable text. Scanned pages need OCR first, or use Text and Whiteout." : "Click directly on a line of text.");
+        toast.message(segs && !segs.length ? "No editable text on this page. For a scan, open it in OCR: Searchable PDF first, or cover and retype with Whiteout and Text." : "Click directly on a line of text.");
         return;
       }
       const s = segs![i];
@@ -733,7 +733,7 @@ async function fileToDataUrl(f: File): Promise<{ src: string; w: number; h: numb
     const img = await new Promise<HTMLImageElement>((res, rej) => {
       const i = new Image();
       i.onload = () => res(i);
-      i.onerror = () => rej(new Error("That image could not be opened."));
+      i.onerror = () => rej(new Error("Couldn't read that image. Try a PNG or JPG."));
       i.src = url;
     });
     const max = 2400;
@@ -1062,7 +1062,7 @@ export default function Studio({ tool }: { tool: Tool }) {
           }
         }
       }
-      if (!textPages) toast.error("This PDF has no text layer, so it can't be searched. Run OCR first, or draw boxes by hand.");
+      if (!textPages) toast.error("This looks like a scan, so there's no text to search. Open it in OCR: Searchable PDF first, or draw the boxes yourself.");
       else if (!added.length) toast.message(`No matches for “${query}”.`);
       else {
         commit([...objRef.current, ...added]);
@@ -1098,7 +1098,7 @@ export default function Studio({ tool }: { tool: Tool }) {
       }
       setResults([out]);
     } catch (e) {
-      if (isPasswordError(e)) setError("This PDF needs its password again. Reopen the file.");
+      if (isPasswordError(e)) setError("The password for this PDF is needed again. Open the file once more.");
       else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);

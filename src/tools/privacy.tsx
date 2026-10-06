@@ -176,7 +176,7 @@ export default function Privacy({ tool }: { tool: Tool }) {
         ) : findings ? (
           <>
             {meta && meta.textPages === 0 ? (
-              <Notice tone="warn">This PDF has no text layer (it looks scanned), so personal data can&apos;t be detected. Run OCR first, then scan again.</Notice>
+              <Notice tone="warn">This looks like a scan, so personal details can&apos;t be spotted yet. Open it in OCR: Searchable PDF first, then check it again.</Notice>
             ) : (
               <Panel className={cn("flex items-start gap-3 p-4", findings.length ? "border-warn/40 bg-warn-soft/40" : "border-ok/40 bg-ok-soft/40")}>
                 {findings.length ? <ShieldAlert className="mt-0.5 size-5 shrink-0 text-warn" /> : <ShieldCheck className="mt-0.5 size-5 shrink-0 text-ok" />}
@@ -321,7 +321,7 @@ export default function Privacy({ tool }: { tool: Tool }) {
               {tool.cta} ({checked.size})
             </Button>
           )}
-          <p className="text-xs text-ink-3">Detection runs on this device. Redaction burns the boxes into the page and deletes the text underneath; the rest of the page stays searchable.</p>
+          <p className="text-xs text-ink-3">Scanning happens on this device. Redacting paints the boxes into the page and deletes whatever text was under them; everything else stays searchable.</p>
         </Panel>
       </aside>
       {dialog}

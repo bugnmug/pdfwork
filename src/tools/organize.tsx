@@ -330,7 +330,7 @@ export default function Organize({ tool }: { tool: Tool }) {
         <Button variant="ghost" size="sm" onClick={insertBlank} title={sel.length ? "Insert a blank page after the selection" : "Add a blank page at the end"}>
           <Plus /> <span className="hidden sm:inline">Blank page</span>
         </Button>
-        <Button variant="ghost" size="sm" onClick={extraPicker.open} title="Add pages from another PDF">
+        <Button variant="ghost" size="sm" onClick={extraPicker.open} title="Insert pages from a second file">
           <FilePlus2 /> <span className="hidden sm:inline">Add PDF</span>
         </Button>
         <Button variant="ghost" size="sm" onClick={() => history.length && (setCards(history[history.length - 1]), setHistory((h) => h.slice(0, -1)))} disabled={!history.length} title="Undo">

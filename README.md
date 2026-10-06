@@ -1,8 +1,8 @@
-# SpitePDF
+# DoYourPDF
 
 Every PDF tool. None of the uploading.
 
-SpitePDF is a free suite of 75 PDF tools that run entirely in the browser. Files are opened, processed and saved on the user's own device; nothing is uploaded. A live meter in the header counts every byte the page sends to any server, so the claim can be checked rather than trusted.
+DoYourPDF is a free suite of 75 PDF tools that run entirely in the browser. Files are opened, processed and saved on the user's own device; nothing is uploaded. A live meter in the header counts every byte the page sends to any server, so the claim can be checked rather than trusted.
 
 ## What's included
 
@@ -10,10 +10,10 @@ SpitePDF is a free suite of 75 PDF tools that run entirely in the browser. Files
 | --- | --- |
 | Organize | Merge, split (ranges, every N pages, each page), remove and extract pages, organize pages visually (drag, rotate, duplicate, blank pages, pages from other PDFs), rotate, alternate and mix, split by text, by bookmarks, by file size, split spreads in half, pages per sheet (N-up), crop (margins or automatic), resize to paper, flip, PDF to ZIP of pages |
 | Optimize | Compress (DPI-aware image recompression, duplicate removal, extreme mode), repair, OCR to searchable PDF (English and Hindi), grayscale, PDF/A |
-| Edit and sign | Full page editor (text, edit existing text, freehand, highlight, whiteout, shapes, arrows, images), sign (draw, type or upload with background removal; saved signatures), fill forms, watermark (text or image, tiled), page numbers, headers and footers, Bates numbering, stamps and seals, flatten, dark mode, metadata, PDF to handwriting |
+| Edit and sign | Full page editor (text, edit existing text, freehand, highlight, whiteout, shapes, arrows, images), sign (draw, type or upload with background removal; saved signatures), fill forms, watermark (text or image, tiled), headers, footers and page numbers, Bates numbering, stamps and seals, flatten, dark mode, metadata, PDF to handwriting |
 | To PDF | Images, Word (.docx), Excel, PowerPoint (.pptx, with layout, shapes, pictures, tables and charts), HTML, Markdown, CSV, text, EPUB, camera scanner (edge detection, perspective correction, clean-up filters, optional OCR), text to handwriting, drawing pad, dictation |
 | From PDF | Word (editable or exact look), Excel and CSV (column detection), PowerPoint, JPG/PNG/WebP, extract images at original quality, text, HTML, Markdown, EPUB, read aloud |
-| Security | Password protection (AES-256 with permissions), unlock, true redaction (manual boxes and search), automatic PII redaction (Aadhaar with Verhoeff check, PAN, GSTIN, IFSC, UPI, cards with Luhn, IBAN, phone, email and more), privacy risk scanner, hidden-data removal, file fingerprints (SHA-256, SHA-1, MD5) with verification |
+| Security | Password protection (AES-256 with permissions), unlock, true redaction (manual boxes and search), automatic PII redaction (Aadhaar with Verhoeff check, PAN, GSTIN, IFSC, UPI, cards with Luhn, IBAN, phone, email and more), privacy risk scanner, hidden-data removal, file fingerprints (SHA-256, SHA-512, MD5 and SHA-1) with verification |
 | AI and analysis | Chat with PDF and summaries with page references (on-device by default; optional server AI), compare two PDFs (word diff, visual diff, report) |
 | Business | GST invoice (CGST/SGST or IGST from state codes, HSN summary, amount in words, UPI QR), thermal POS receipts, GST filing working paper (B2B/B2C by rate, CSV import and export), resume builder with live preview |
 | Share and automate | P2P file share (WebRTC, optional end-to-end password encryption), collaborative whiteboard (live, multi-page, PDF import, PDF/PNG export), batch workflows (chain tools, save presets) |
@@ -110,7 +110,7 @@ To add a tool that takes files and options, add an entry to `TOOLS` in `catalog.
 - Legacy `.doc`, `.xls` and `.ppt` binaries are not converted (Excel's `.xls` is supported); complex Word layouts such as text boxes and multi-column sections are simplified.
 - Chinese, Japanese and Korean glyphs are not bundled for generated text, to keep downloads small. Existing CJK text in PDFs is unaffected.
 - OCR ships English and Hindi data. More languages can be added in `scripts/copy-assets.mjs` and `src/lib/pdf/ocr.ts`.
-- P2P share and the whiteboard need both devices online at the same time and rely on a broker and, when a direct route isn't possible, a TURN relay (the relay only sees encrypted traffic).
+- P2P share and the whiteboard need both devices connected at once and rely on a broker and, when a direct route isn't possible, a TURN relay (the relay only sees encrypted traffic).
 - Spreadsheet parsing uses SheetJS 0.18.5 from npm, which has published advisories for crafted files. Parsing happens in the user's own browser on files they chose; the SheetJS CDN build (0.20.x) can be swapped in to remove the advisories.
 
 ## Credits and licences

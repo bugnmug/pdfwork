@@ -68,7 +68,7 @@ p1.insert_text((56, 104), "Prepared for the board, Q3 2026", fontsize=12, fontna
 body = (
     "This report summarises operations for the quarter. Revenue grew steadily while costs stayed flat. "
     "The team shipped three major releases and closed forty-two support escalations. "
-    "Contact the finance lead at priya.sharma@example.com or call +91 98765 43210 for questions. "
+    "Contact the finance lead at priya.sharma@example.com or call +91 81234 50987 for questions. "
     "Vendor PAN ABCDE1234F and GSTIN 27ABCDE1234F1Z5 are on file. Card on record 4111 1111 1111 1111. "
     "Aadhaar reference 2345 6789 0123 was verified by the auditor."
 )

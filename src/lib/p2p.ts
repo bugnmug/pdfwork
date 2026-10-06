@@ -9,7 +9,7 @@
  */
 import type { DataConnection, Peer as PeerT, PeerOptions } from "peerjs";
 
-export const NAMESPACE = "spitepdf-v1-";
+export const NAMESPACE = "doyourpdf-v1-";
 const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 
 export function makeCode(len = 6): string {
@@ -91,7 +91,7 @@ export function friendly(e: unknown): Error {
     case "server-error":
     case "socket-error":
     case "socket-closed":
-      return new Error("Couldn't reach the connection service. Check your internet connection and try again.");
+      return new Error("Couldn't reach the connection service. Make sure you're online, then retry.");
     case "browser-incompatible":
       return new Error("This browser doesn't support direct connections (WebRTC).");
     case "peer-unavailable":
@@ -101,20 +101,33 @@ export function friendly(e: unknown): Error {
   }
 }
 
+/**
+ * Bytes of file data per message. Encryption adds 28 bytes (IV and tag), and a
+ * peer that doesn't announce its message limit gets a default of 64 KiB
+ * (RFC 8841), so 60 KiB leaves room on every browser.
+ */
+export const CHUNK = 60 * 1024;
+
 /** Wait until the data channel has room, so large files don't pile up in memory. */
 export async function drain(conn: DataConnection, max = 2 * 1024 * 1024) {
   const dc = (conn as unknown as { dataChannel?: RTCDataChannel }).dataChannel;
-  const buffered = () => (dc?.bufferedAmount ?? 0) + ((conn as unknown as { bufferSize?: number }).bufferSize ?? 0) * 65536;
-  while (conn.open && buffered() > max) await new Promise((r) => setTimeout(r, 15));
+  // PeerJS keeps its own queue when the channel is busy; it counts messages, not bytes.
+  const queued = () => ((conn as unknown as { bufferSize?: number }).bufferSize ?? 0) * CHUNK;
+  while (conn.open && (dc?.bufferedAmount ?? 0) + queued() > max) await new Promise((r) => setTimeout(r, 15));
 }
 
 /* ------------------------------------------------------ password crypto */
 
 const enc = new TextEncoder();
 
-export async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+/** PBKDF2-SHA256 work factor, per OWASP's current guidance. Sent in the handshake so both sides agree. */
+export const KDF_ITERATIONS = 600_000;
+
+export async function deriveKey(password: string, salt: Uint8Array, iterations = KDF_ITERATIONS): Promise<CryptoKey> {
+  // A peer can't talk us into a weak (or absurdly slow) setting.
+  const rounds = Math.min(Math.max(Math.round(iterations) || KDF_ITERATIONS, 100_000), 5_000_000);
   const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: salt as BufferSource, iterations: 200_000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt: salt as BufferSource, iterations: rounds }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 }
 
 export async function seal(key: CryptoKey, data: ArrayBuffer | Uint8Array): Promise<ArrayBuffer> {
@@ -133,4 +146,4 @@ export async function open(key: CryptoKey, data: ArrayBuffer): Promise<ArrayBuff
 
 export const b64 = (u: Uint8Array | ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(u)));
 export const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-export const CHECK = "spitepdf-password-check";
+export const CHECK = "doyourpdf-password-check";

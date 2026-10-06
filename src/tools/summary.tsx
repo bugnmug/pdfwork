@@ -112,7 +112,7 @@ export default function Summary({ tool }: { tool: Tool }) {
             {summary.stats.pages} pages · {summary.stats.words.toLocaleString()} words · about {summary.stats.minutes} min to read
           </p>
         </header>
-        {noText ? <Notice tone="warn">This PDF has no text layer (it looks scanned). Run OCR first to make it readable, then summarise it.</Notice> : null}
+        {noText ? <Notice tone="warn">This looks like a scan, so there&apos;s no text to summarise yet. Open it in OCR: Searchable PDF first.</Notice> : null}
         {aiText ? (
           <section className="grid gap-2 rounded-lg border border-carbon/20 bg-carbon-soft/50 p-4">
             <p className="flex items-center gap-1.5 text-sm font-semibold text-carbon">

@@ -1,7 +1,7 @@
 /**
  * Handwriting pages as real vector text (crisp at any zoom, selectable, tiny
  * files): ruled/plain/grid paper, ink colours, and small per-word wobble in
- * angle, size and baseline so it reads like a hand rather than a font.
+ * angle, size and baseline, which keeps it from looking typeset.
  * Caveat for Latin, Kalam for Hindi (Devanagari) text.
  */
 import { degrees, hexToRgb, newDoc, pdfOut, saveDoc, type OutFile } from "./core";
@@ -41,7 +41,7 @@ export async function handwritingPdf(text: string, o: HandOpts = {}): Promise<Ui
   const left = o.margin === false ? 48 : 78;
   const right = W - 44;
   const top = 86;
-  const ink = hexToRgb(o.ink || "#1b3a8a");
+  const ink = hexToRgb(o.ink || "#1e40af");
   const wob = o.wobble ?? 1;
   const rand = rng(text.length * 7919 + 17);
   const keyFor = (word: string) => {
@@ -125,6 +125,6 @@ export async function handwritingPdf(text: string, o: HandOpts = {}): Promise<Ui
 }
 
 export async function textToHandwriting(text: string, o: HandOpts = {}): Promise<OutFile> {
-  if (!text.trim()) throw new Error("Type or paste the text to write out.");
+  if (!text.trim()) throw new Error("Add some text first; the box is empty.");
   return pdfOut("handwritten.pdf", await handwritingPdf(text, o));
 }

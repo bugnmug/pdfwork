@@ -42,7 +42,7 @@ export function extOf(name: string): string {
   return m ? m[1].toUpperCase() : "FILE";
 }
 
-const PDF_NEXT = ["compress-pdf", "merge-pdf", "organize-pages", "edit-pdf", "sign-pdf", "page-numbers", "watermark", "encrypt-pdf", "ocr-pdf", "split-pdf", "pdf-to-word", "pdf-to-jpg", "redact-pdf", "rotate-pdf"];
+const PDF_NEXT = ["compress-pdf", "merge-pdf", "organize-pages", "edit-pdf", "sign-pdf", "page-numbers", "watermark", "encrypt-pdf", "ocr-pdf", "split-pdf", "pdf-to-word", "redact-pdf", "pdf-to-jpg", "rotate-pdf"];
 
 /** Tools that make sense to run next on a result. */
 export function nextTools(o: { filename: string; mime: string }, current?: string): Tool[] {
@@ -58,7 +58,7 @@ export function suggestFor(files: File[]): Tool[] {
   const s: string[] = [];
   if (kinds.has("pdf")) {
     if (pdfs > 1) s.push("merge-pdf", "compress-pdf", "mix-pdf", "compare-pdfs", "bates");
-    s.push("compress-pdf", "edit-pdf", "sign-pdf", "organize-pages", "split-pdf", "pdf-to-word", "pdf-to-jpg", "ocr-pdf", "encrypt-pdf", "chat-pdf", "summarize", "watermark", "page-numbers", "redact-pdf", "pdf-to-excel");
+    s.push("compress-pdf", "edit-pdf", "sign-pdf", "organize-pages", "split-pdf", "ocr-pdf", "pdf-to-word", "chat-pdf", "encrypt-pdf", "pdf-to-jpg", "summarize", "watermark", "page-numbers", "redact-pdf", "pdf-to-excel");
   }
   if (kinds.has("image")) s.push("images-to-pdf", "ocr-pdf");
   if (kinds.has("word")) s.push("word-to-pdf");
@@ -68,7 +68,7 @@ export function suggestFor(files: File[]): Tool[] {
   if (kinds.has("markdown")) s.push("markdown-to-pdf");
   if (kinds.has("csv")) s.push("csv-to-pdf");
   if (kinds.has("epub")) s.push("ebook-to-pdf");
-  if (kinds.has("text")) s.push("create-pdf", "markdown-to-pdf");
+  if (kinds.has("text")) s.push("markdown-to-pdf", "create-pdf");
   s.push("fingerprint", "p2p-share");
   return [...new Set(s)].map((x) => TOOL_BY_SLUG[x]).filter(Boolean);
 }

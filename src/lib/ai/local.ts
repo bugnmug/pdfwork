@@ -1,5 +1,5 @@
 /**
- * Document understanding that runs entirely in the browser: extractive
+ * On-device document understanding: extractive
  * summaries, keywords, facts (dates, amounts, emails), and question answering
  * by passage retrieval (BM25) with page references. No key, no upload.
  */
@@ -67,6 +67,16 @@ export function sentences(text: string): string[] {
 
 export type PageDoc = { page: number; text: string }[];
 
+// Month names written out or shortened ("Sept", "Sep.", "September").
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const MON = `(?:${MONTHS.map((m) => (m === "september" ? "sept?(?:ember)?" : m.slice(0, 3) + (m.length > 3 ? `(?:${m.slice(3)})?` : ""))).join("|")})\\.?`;
+const ORD = "(?:st|nd|rd|th)?";
+/** 12/03/2024, 2024-03-12, 12th March 2024, March 12, 2024, Q3 2024, Q3 FY24. */
+const DATE_FACT = new RegExp(
+  String.raw`\b(?:\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})|\d{4}-\d{2}-\d{2}|\d{1,2}${ORD}\s+${MON},?\s+\d{4}|${MON}\s+\d{1,2}${ORD},?\s+\d{4}|Q[1-4]\s+(?:FY\s?)?\d{2,4})\b`,
+  "gi",
+);
+
 export type Summary = {
   points: { text: string; page: number }[];
   keywords: string[];
@@ -132,7 +142,7 @@ export function summarize(pages: PageDoc, headings: string[] = [], max?: number)
   const full = pages.map((p) => p.text).join("\n");
   const uniq = (re: RegExp, limit = 8) => [...new Set(full.match(re) ?? [])].slice(0, limit);
   const facts = [
-    { label: "Dates", values: uniq(/\b(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|Q[1-4]\s+\d{4})\b/gi) },
+    { label: "Dates", values: uniq(DATE_FACT) },
     { label: "Amounts", values: uniq(/(?:₹|\bRs\.?|\bINR|\$|\bUSD|€|£)\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:crore|lakh|million|billion|k|cr|L)\b)?|\b\d[\d,]*(?:\.\d+)?\s?(?:crore|lakh|million|billion)\b/gi) },
     { label: "Percentages", values: uniq(/\b\d+(?:\.\d+)?\s?%/g) },
     { label: "Emails", values: uniq(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) },

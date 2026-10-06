@@ -6,7 +6,7 @@ import { paperSize } from "./core";
 
 export async function wordToPdf(bytes: Uint8Array, name: string, o: { paper?: string; pageNumbers?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
   if (bytes[0] === 0xd0 && bytes[1] === 0xcf) {
-    throw new Error("This is an old .doc file (Word 97–2003). Open it in Word, Google Docs or LibreOffice and save as .docx, then convert.");
+    throw new Error("This is an old .doc file (Word 97–2003). Open it in a word processor (Word, LibreOffice, Google Docs), save it as .docx, then convert that.");
   }
   onProgress?.(0.1, "Reading the Word file");
   const mammoth = await import("mammoth");

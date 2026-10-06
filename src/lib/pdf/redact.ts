@@ -1,10 +1,10 @@
 /**
- * Real redaction. A black rectangle drawn over text leaves the text in the
- * file (anyone can copy it out). Here every page that has a redaction is
+ * Real redaction. Covering words with a filled box only hides them on screen;
+ * the characters remain in the file's content and can still be copied. Here every page that has a redaction is
  * re-created from a rendered image with the boxes burned in, so the original
  * glyphs, vectors and images under the boxes are gone. The page's remaining
  * text is then laid back on top as an invisible layer, minus the redacted
- * characters, so the rest of the page stays searchable and copyable.
+ * characters, so everything outside the boxes can still be searched and copied.
  */
 import {
   appendPages,
@@ -342,7 +342,7 @@ export async function scanDocument(src: Src, opts: FindOpts, onProgress?: Progre
 
 export async function autoRedact(src: Src, opts: FindOpts & RedactOpts, onProgress?: ProgressFn): Promise<OutFile[]> {
   const { findings, textPages, pages } = await scanDocument(src, opts, (f, l) => onProgress?.(f * 0.3, l));
-  if (!textPages) throw new Error("This PDF has no text layer (it is probably a scan). Run Searchable PDF (OCR) first, then redact.");
+  if (!textPages) throw new Error("This looks like a scan, so there's no text to search. Open it in OCR: Searchable PDF first, then redact.");
   if (!findings.length) throw new Error("Nothing matched, so nothing was redacted. Add custom words or patterns if you expected matches.");
   const boxes = findings.flatMap((f) => f.boxes);
   const pdf = await redactBoxes(src, boxes, opts, (f, l) => onProgress?.(0.3 + f * 0.7, l));

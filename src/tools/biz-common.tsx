@@ -66,7 +66,7 @@ export async function imageToDataUrl(f: File, max = 600): Promise<string> {
     const img = await new Promise<HTMLImageElement>((res, rej) => {
       const i = new Image();
       i.onload = () => res(i);
-      i.onerror = () => rej(new Error("That image could not be opened."));
+      i.onerror = () => rej(new Error("Couldn't read that image. Try a PNG or JPG."));
       i.src = url;
     });
     const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));

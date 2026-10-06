@@ -199,18 +199,19 @@ export async function batesNumber(srcs: Src[], o: BatesOpts): Promise<OutFile[]>
     const first = counter;
     for (const page of doc.getPages()) {
       const f = pageFrame(page);
-      const label = `${o.prefix ?? ""}${String(counter).padStart(o.digits ?? 6, "0")}${o.suffix ?? ""}`;
-      const size = o.size ?? 9;
+      const label = `${o.prefix ?? ""}${String(counter).padStart(o.digits ?? 7, "0")}${o.suffix ?? ""}`;
+      const size = o.size ?? 10;
       const w = await fonts.width(label, size, { bold: true });
       const a = anchorPoint(f, o.position ?? "bottom-right", w, size * 0.72, (o.margin ?? 8) * MM);
       const p = place(f, a.u, a.v);
-      // White backing so the number stays legible on busy scans.
-      page.drawRectangle({ ...place(f, a.u - 2, a.v - 2), width: w + 4, height: size + 2, color: hexToRgb("#ffffff"), opacity: 0.85, rotate: degrees(p.rotate) });
+      // Drawn as a small label, like an exhibit sticker, so it reads on any background.
+      const pad = size * 0.35;
+      page.drawRectangle({ ...place(f, a.u - pad, a.v - pad), width: w + pad * 2, height: size * 0.72 + pad * 2, color: hexToRgb("#ffffff"), borderColor: hexToRgb("#8a8f98"), borderWidth: 0.5, rotate: degrees(p.rotate) });
       await fonts.draw(page, label, { x: p.x, y: p.y, size, style: { bold: true }, color: hexToRgb(o.color || "#000000"), rotate: p.rotate });
       counter++;
     }
     const last = counter - 1;
-    out.push(pdfOut(`${stem(src.name)}-bates.pdf`, await saveDoc(doc), `${o.prefix ?? ""}${String(first).padStart(o.digits ?? 6, "0")} to ${o.prefix ?? ""}${String(last).padStart(o.digits ?? 6, "0")}`));
+    out.push(pdfOut(`${stem(src.name)}-bates.pdf`, await saveDoc(doc), `${o.prefix ?? ""}${String(first).padStart(o.digits ?? 7, "0")} to ${o.prefix ?? ""}${String(last).padStart(o.digits ?? 7, "0")}`));
   }
   return out;
 }

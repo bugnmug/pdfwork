@@ -174,7 +174,7 @@ export function SiteFooter() {
               <LogoMark />
               <Wordmark />
             </Link>
-            <p className="mt-3 text-sm text-ink-2">{BRAND.tagline} Every tool runs in your browser: no uploads, no account, no watermark, no page limits.</p>
+            <p className="mt-3 text-sm text-ink-2">{BRAND.tagline} Each tool works on your own device. Files aren't uploaded or stamped, and there's no account to create.</p>
           </div>
           <nav aria-label="Site" className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <Link to="/" hash="tools" className="text-ink-2 hover:text-ink">

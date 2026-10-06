@@ -1,7 +1,7 @@
 /**
  * Freehand drawing pages → vector PDF. Pen strokes are turned into filled
  * outlines whose width follows pressure (or speed, for a mouse), so the PDF
- * looks like the screen and stays sharp at any zoom.
+ * looks like the screen and remains crisp when zoomed in.
  */
 import { BlendMode, LineCapStyle } from "@cantoo/pdf-lib";
 import { hexToRgb, newDoc, pdfOut, saveDoc, type OutFile } from "./core";

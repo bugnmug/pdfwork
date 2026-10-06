@@ -197,7 +197,7 @@ export default function AudioIn({ tool }: { tool: Tool }) {
           {interim ? <p className="pointer-events-none absolute right-3 bottom-3 left-3 truncate rounded bg-paper/90 px-2 py-1 text-sm text-ink-3 italic">{interim}</p> : null}
         </div>
         <p className="text-xs text-ink-3 tabular">
-          {words} word{words === 1 ? "" : "s"} · kept in this browser until you clear it
+          {words} word{words === 1 ? "" : "s"} · saved in this browser, clear it any time
         </p>
       </Panel>
       <aside className="grid content-start gap-3 lg:sticky lg:top-20">

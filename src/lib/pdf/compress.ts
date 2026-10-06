@@ -45,7 +45,7 @@ export async function compressPdf(src: Src, o: CompressOpts, onProgress?: Progre
   let note: string;
   if (bytes.byteLength >= before) {
     bytes = src.bytes;
-    note = "Already well compressed. Returned unchanged; try a stronger level.";
+    note = "This level found nothing to save, so the original is returned. Strong or Extreme may still shrink it.";
   } else {
     const pct = Math.round((1 - bytes.byteLength / before) * 100);
     note = `${pct}% smaller${recoded ? ` · ${recoded} image${recoded === 1 ? "" : "s"} optimised` : ""}${merged ? ` · ${merged} duplicate${merged === 1 ? "" : "s"} merged` : ""}`;

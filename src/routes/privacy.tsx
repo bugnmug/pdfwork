@@ -28,7 +28,7 @@ function PrivacyPage() {
     <Page className="max-w-4xl pt-10 pb-6 sm:pt-14">
       <h1 className="text-4xl font-bold tracking-tight">How privacy works</h1>
       <p className="mt-4 max-w-2xl text-lg text-ink-2">
-        {BRAND.name} is a set of tools that run inside your browser. Your documents are never uploaded, so there is nothing for us to store, scan, leak or delete.
+        {BRAND.name} is a set of tools that run inside your browser. Files are opened, edited and saved right on your computer or phone, so we have nothing to store, scan, leak or delete.
       </p>
       <p className="mt-4 text-ink-2">
         Right now: <MeterInline />
@@ -46,10 +46,10 @@ function PrivacyPage() {
             <b>Optional AI answers.</b> If the site owner has enabled an AI service, Chat with PDF and the Summarizer offer AI answers. Only your question and the few passages needed to answer it are sent, never the file, and only when you choose AI mode. The local mode sends nothing.
           </p>
           <p>
-            <b>Optional audio.</b> Transcribing a recording or downloading an MP3 of a PDF sends that audio or text to the speech service, when enabled. Live dictation uses your browser&apos;s built-in speech recognition, which may use your browser vendor&apos;s service.
+            <b>Optional audio.</b> Transcribing a recording or downloading an MP3 of a PDF sends that audio or text to the speech service, when enabled. Live dictation relies on the speech recognition that comes with your browser, and some browsers send that audio to their maker&apos;s servers.
           </p>
           <p>
-            <b>P2P Share and the whiteboard.</b> A public connection broker helps two browsers find each other. Your files and drawings then travel directly between the devices over an encrypted WebRTC connection. Add a password and files are also encrypted end to end with AES-256 before they leave your device.
+            <b>P2P Share and the whiteboard.</b> A public connection broker helps two browsers find each other. Your files and drawings then travel directly between the devices through an encrypted WebRTC channel. Add a password and files are also encrypted end to end with AES-256 before they leave your device.
           </p>
         </Section>
         <Section title="What is stored">

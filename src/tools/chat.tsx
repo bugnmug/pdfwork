@@ -11,7 +11,7 @@ import { aiStatusOnce, useDocText, type AiStatus } from "./doc-text";
 
 type Msg = { role: "user"; text: string } | { role: "bot"; text: string; pages: number[]; passages: { text: string; page: number }[]; source: "local" | "ai"; note?: string };
 
-const SUGGESTED = ["What is this document about?", "What are the key dates and deadlines?", "What amounts or prices are mentioned?", "Who are the people or companies involved?"];
+const SUGGESTED = ["Summarise the main points", "Which dates or deadlines come up?", "What amounts or prices appear?", "Which people or organisations are named?"];
 
 function PageChips({ pages }: { pages: number[] }) {
   if (!pages.length) return null;
@@ -118,7 +118,7 @@ export default function Chat({ tool }: { tool: Tool }) {
                   </button>
                 ))}
               </div>
-              {doc.textPages === 0 ? <Notice tone="warn">This PDF has no text layer (it looks scanned), so there&apos;s nothing to search. Run OCR first, then come back.</Notice> : null}
+              {doc.textPages === 0 ? <Notice tone="warn">This looks like a scan, so there&apos;s nothing to search yet. Open it in OCR: Searchable PDF first, then bring the result back here.</Notice> : null}
             </div>
           ) : null}
           {msgs.map((m, i) =>

@@ -792,7 +792,7 @@ export async function pptxToPdf(bytes: Uint8Array, name: string, onProgress?: Pr
   try {
     zip = await JSZip.loadAsync(bytes);
   } catch {
-    throw new Error("This does not look like a .pptx file.");
+    throw new Error("That file isn't a valid .pptx presentation.");
   }
   const pkg = new Package(zip);
   const pres = await pkg.part("ppt/presentation.xml");

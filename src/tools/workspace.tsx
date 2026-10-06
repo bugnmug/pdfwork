@@ -270,7 +270,7 @@ export default function Workspace({ tool }: { tool: Tool }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-ink-2">
             {items.length} file{items.length === 1 ? "" : "s"}
-            {numbered ? <span className="text-ink-3"> · drag or use the arrows to set the order</span> : null}
+            {numbered ? <span className="text-ink-3"> · drag the cards or tap the arrow buttons to reorder</span> : null}
           </p>
           <div className="flex gap-1">
             {numbered ? (

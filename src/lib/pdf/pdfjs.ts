@@ -28,7 +28,7 @@ export type OpenedPdf = { pdf: PDFDocumentProxy; pageCount: number; close: () =>
 
 export class PdfjsPasswordError extends Error {
   constructor(public readonly wrong: boolean) {
-    super(wrong ? "The password is not correct." : "This PDF is password-protected. Enter its password to continue.");
+    super(wrong ? "That isn't the password for this PDF." : "This PDF is locked. It needs its password before it can be opened.");
     this.name = "PasswordError";
   }
 }
@@ -73,15 +73,20 @@ export async function withPdfjs<T>(bytes: Uint8Array, fn: (o: OpenedPdf) => Prom
   }
 }
 
+/** Largest canvas iPhone and iPad Safari will draw (4096 × 4096); bigger ones come out blank. */
+const CANVAS_AREA_LIMIT = 4096 * 4096;
+
 export async function renderPage(
   page: PDFPageProxy,
   scale: number,
-  opts: { background?: string; maxPixels?: number; annotations?: boolean; readback?: boolean } = {},
+  opts: { background?: string; pixelBudget?: number; annotations?: boolean; readback?: boolean } = {},
 ): Promise<HTMLCanvasElement> {
   let s = scale;
   const base = page.getViewport({ scale: 1 });
-  const maxPixels = opts.maxPixels ?? 24_000_000;
-  if (base.width * base.height * s * s > maxPixels) s = Math.sqrt(maxPixels / (base.width * base.height));
+  // Shrink the scale when the page would exceed its pixel budget (never more than the canvas limit).
+  const budget = Math.min(opts.pixelBudget ?? CANVAS_AREA_LIMIT, CANVAS_AREA_LIMIT);
+  const area = base.width * base.height;
+  if (area * s * s > budget) s = Math.sqrt(budget / area);
   const viewport = page.getViewport({ scale: s });
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.floor(viewport.width));
@@ -216,7 +221,7 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
     const VH = viewport.height;
     const X = dir === 0 ? ox : dir === 90 ? oy : dir === 180 ? VW - ox : VH - oy;
     const Y = dir === 0 ? oy : dir === 90 ? VW - ox : dir === 180 ? VH - oy : ox;
-    // Visual bbox from the four corners of the glyph box.
+    // Visual bbox from the corner points of the glyph box.
     const px = -ay;
     const py = ax; // "down" perpendicular in visual space
     const corners = [

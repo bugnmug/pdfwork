@@ -23,7 +23,7 @@ function PdfPreview({ bytes }: { bytes: Uint8Array }) {
         for (let i = 1; i <= Math.min(o.pageCount, MAX_PAGES) && alive; i++) {
           const page = await o.pdf.getPage(i);
           const vp = page.getViewport({ scale: 1 });
-          const canvas = await renderPage(page, width / vp.width, { maxPixels: 4_000_000 });
+          const canvas = await renderPage(page, width / vp.width, { pixelBudget: 3_000_000 });
           page.cleanup();
           const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
           if (!blob || !alive) break;

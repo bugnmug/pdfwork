@@ -48,10 +48,10 @@ export function usePasswordPrompt() {
         <p className="flex items-start gap-2 text-sm text-ink-2">
           <Lock className="mt-0.5 size-4 shrink-0 text-ink-3" />
           <span>
-            <b className="font-medium text-ink">{cur?.name}</b> is protected. Enter its password to open it. The password is used only on this device.
+            <b className="font-medium text-ink">{cur?.name}</b> is locked. Type its password to open it here; the password never leaves this device.
           </span>
         </p>
-        {cur?.wrong ? <Notice tone="danger">That password didn&apos;t work. Check caps lock and try again.</Notice> : null}
+        {cur?.wrong ? <Notice tone="danger">That isn&apos;t the password for this file. Passwords are case-sensitive.</Notice> : null}
         <Input type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Password" aria-label="Password" />
       </form>
     </Dialog>
@@ -59,7 +59,7 @@ export function usePasswordPrompt() {
   return { ask, dialog };
 }
 
-/** Matches both the pdf-lib and PDF.js flavours of "needs a password". */
+/** Recognises the "needs a password" errors thrown by PDF.js as well as by pdf-lib. */
 export function isPasswordError(e: unknown): e is Error & { fileName?: string; wrong: boolean } {
   return e instanceof Error && e.name === "PasswordError";
 }

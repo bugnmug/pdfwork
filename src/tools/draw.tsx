@@ -318,7 +318,7 @@ export default function Draw({ tool }: { tool: Tool }) {
           <Trash2 /> {doc.pages.length === 1 ? "Clear page" : "Delete page"}
         </Button>
       </div>
-      <p className="text-center text-xs text-ink-3">Your drawing is kept in this browser until you clear it. With a stylus, your palm is ignored and pen pressure changes the line width.</p>
+      <p className="text-center text-xs text-ink-3">Your drawing is saved in this browser; clear it whenever you like. With a stylus, your palm is ignored and pen pressure changes the line width.</p>
       <Dialog open={!!results} onClose={() => setResults(null)} title="Saved">
         {results ? <ResultList results={results} tool={tool.slug} onReset={() => setResults(null)} resetLabel="Keep drawing" /> : null}
       </Dialog>

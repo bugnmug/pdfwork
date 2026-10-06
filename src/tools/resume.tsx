@@ -45,7 +45,7 @@ function usePreview(r: Resume) {
         try {
           const page = await o.pdf.getPage(1);
           const vp = page.getViewport({ scale: 1 });
-          const c = await renderPage(page, 900 / vp.width);
+          const c = await renderPage(page, 1000 / vp.width);
           page.cleanup();
           if (my === seq.current) setImg({ url: c.toDataURL("image/png"), pages: o.pageCount });
         } finally {
@@ -226,7 +226,7 @@ export default function ResumeTool({ tool }: { tool: Tool }) {
             {tool.cta}
           </Button>
           {results ? <ResultList results={results} tool={tool.slug} /> : null}
-          <p className="text-xs text-ink-3">Saved in this browser as you type. The PDF has real, selectable text, so applicant tracking systems can read it.</p>
+          <p className="text-xs text-ink-3">Saved in this browser as you type. The PDF keeps real, selectable text, which hiring software (ATS) can parse.</p>
           <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => confirm("Clear the whole resume?") && (setR(EMPTY), setResults(null))}>
             Start from scratch
           </Button>

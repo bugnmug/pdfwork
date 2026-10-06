@@ -30,7 +30,7 @@ function HomeDrop() {
   if (!files.length)
     return (
       <DropZone multiple onFiles={setFiles} label="Choose files" hint="PDF, Word, Excel, PowerPoint, images, EPUB, text…" className="min-h-[17rem] border-line/90 shadow-panel sm:min-h-[22rem]">
-        <p className="text-xs text-ink-3">We&apos;ll suggest what you can do with them.</p>
+        <p className="text-xs text-ink-3">We&apos;ll show the tools that fit them.</p>
       </DropZone>
     );
   const tools = suggestFor(files);
@@ -84,14 +84,14 @@ function Home() {
           <div className="min-w-0">
             <p className="inline-flex items-center gap-2 rounded-full border border-line bg-paper px-3 py-1 text-[13px] text-ink-2">
               <span className="size-1.5 rounded-full bg-ok" aria-hidden />
-              {TOOLS.length} tools · free · no sign-up · no watermark
+              {TOOLS.length} tools · free · private · no watermark
             </p>
             <h1 className="mt-5 text-[2.5rem] leading-[1.04] font-bold tracking-[-0.035em] sm:text-6xl lg:text-[3.5rem] xl:text-[4rem]">
               Every PDF tool.{" "}
               <span className="bg-[linear-gradient(transparent_62%,var(--hl)_62%,var(--hl)_90%,transparent_90%)] box-decoration-clone">None of the uploading.</span>
             </h1>
             <p className="mt-6 max-w-xl text-[17px] leading-relaxed text-ink-2">
-              Merge, compress, convert, edit, sign, OCR and redact, right in your browser. Your documents are processed on this device and never sent anywhere. Don&apos;t take our word for it: the meter keeps count.
+              Compress, combine, sign, edit, convert, OCR and redact without leaving this page. Nothing you open is sent anywhere, and you don&apos;t have to trust us on that: the meter counts every byte that leaves.
             </p>
             <p className="mt-5 text-[15px] text-ink-2">
               <MeterInline />
@@ -154,14 +154,14 @@ function Home() {
         <section className="mt-24 grid grid-cols-[minmax(0,1fr)] gap-8 rounded-xl border border-line bg-paper p-6 sm:p-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
           <div>
             <h2 className="text-2xl font-bold tracking-tight">Counted, not promised</h2>
-            <p className="mt-3 text-ink-2">Most “secure” PDF sites still upload your file and delete it later. {BRAND.name} never receives it.</p>
+            <p className="mt-3 text-ink-2">Plenty of “secure” PDF sites upload your document and promise to delete it afterwards. {BRAND.name} never gets a copy in the first place.</p>
             <Link to="/privacy" className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-carbon hover:underline">
               How privacy works <ChevronRight className="size-4" />
             </Link>
           </div>
           <ul className="grid gap-6 sm:grid-cols-3">
             {[
-              { icon: MonitorSmartphone, title: "Opened by your browser", body: "Files are read by this page on your device, the way a desktop app reads them. There is no upload step to wait for." },
+              { icon: MonitorSmartphone, title: "Opened by your browser", body: "Files are read by this page on your device, the way a desktop app reads them. Files open straight away because nothing has to travel to a server first." },
               { icon: Cpu, title: "Processed on your device", body: "PDF.js, pdf-lib and Tesseract run locally. After a tool's engine has loaded, it keeps working with the internet off." },
               { icon: Gauge, title: "Every byte counted", body: "The meter in the top bar counts everything this page sends. Run any tool and watch it stay at 0 B." },
             ].map((x) => (

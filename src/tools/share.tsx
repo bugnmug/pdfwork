@@ -8,9 +8,9 @@ import { take } from "@/lib/handoff";
 import type { Tool } from "@/lib/tools/catalog";
 import { cn, downloadBlob, formatBytes } from "@/lib/utils";
 
-const CHUNK = 64 * 1024;
 type Meta = { name: string; size: number; type: string };
-type Hello = { t: "hello"; v: 1; files: Meta[]; encrypted: boolean; salt?: string; check?: string };
+/** First message from the sender. `iter` is the PBKDF2 work factor used with `salt`. */
+type Hello = { t: "hello"; v: 2; files: Meta[]; encrypted: boolean; salt?: string; iter?: number; check?: string };
 
 function CopyField({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false);
@@ -52,9 +52,10 @@ function Sender({ initial }: { initial: File[] }) {
 
   const serve = async (conn: DataConnection, key: CryptoKey | null, salt: Uint8Array | null) => {
     const p2p = await import("@/lib/p2p");
-    const hello: Hello = { t: "hello", v: 1, files: files.map((f) => ({ name: f.name, size: f.size, type: f.type })), encrypted: !!key };
+    const hello: Hello = { t: "hello", v: 2, files: files.map((f) => ({ name: f.name, size: f.size, type: f.type })), encrypted: !!key };
     if (key && salt) {
       hello.salt = p2p.b64(salt);
+      hello.iter = p2p.KDF_ITERATIONS;
       hello.check = p2p.b64(await p2p.seal(key, new TextEncoder().encode(p2p.CHECK)));
     }
     conn.send(JSON.stringify(hello));
@@ -69,8 +70,8 @@ function Sender({ initial }: { initial: File[] }) {
         for (let i = 0; i < files.length; i++) {
           conn.send(JSON.stringify({ t: "file", i }));
           const f = files[i];
-          for (let off = 0; off < f.size || (off === 0 && f.size === 0); off += CHUNK) {
-            const buf = await f.slice(off, off + CHUNK).arrayBuffer();
+          for (let off = 0; off < f.size || (off === 0 && f.size === 0); off += p2p.CHUNK) {
+            const buf = await f.slice(off, off + p2p.CHUNK).arrayBuffer();
             await p2p.drain(conn);
             if (!conn.open) throw new Error("The other device disconnected.");
             conn.send(key ? await p2p.seal(key, buf) : buf);
@@ -282,7 +283,7 @@ function Receiver({ initialCode }: { initialCode: string }) {
     if (!hello?.salt || !hello.check) return;
     const p2p = await import("@/lib/p2p");
     try {
-      const k = await p2p.deriveKey(password, p2p.unb64(hello.salt));
+      const k = await p2p.deriveKey(password, p2p.unb64(hello.salt), hello.iter);
       const plain = new TextDecoder().decode(await p2p.open(k, p2p.unb64(hello.check).buffer as ArrayBuffer));
       if (plain !== p2p.CHECK) throw new Error();
       key.current = k;

@@ -125,7 +125,7 @@ export const CASES = [
       const t2 = pdfs[1] ? h.pdfText(pdfs[1].path) : "";
       return ok([...needPdf(s, h, { pdf: pdfs[0], text: ["EXH-000007", "EXH-000010"] }).notes, has(t2, "EXH-000011") ? "continues across files" : "✗ numbering did not continue"]);
   } },
-  { id: "stamp-image", slug: "thumbmark", files: ["text.pdf", "thumb.png"], options: { where: "last", caption: "L.T.I." }, check: (s, h) => ok(needPdf(s, h, { pages: 4, text: ["L.T.I."] }).notes) },
+  { id: "stamp-image", slug: "stamp-image", files: ["text.pdf", "thumb.png"], options: { where: "last", caption: "L.T.I." }, check: (s, h) => ok(needPdf(s, h, { pages: 4, text: ["L.T.I."] }).notes) },
   { id: "flatten", slug: "flatten-pdf", files: ["form.pdf"], check: (s, h) => {
       const r = needPdf(s, h, { pages: 1, text: ["Registration form"] });
       const fields = py(h, `import pymupdf;d=pymupdf.open(${JSON.stringify(r.pdf.path)});print(sum(1 for p in d for w in p.widgets()))`);
@@ -260,7 +260,7 @@ print('cells' if found else 'flat')`);
       return ok([...r.notes, /not encrypted/i.test(h.sh("qpdf", ["--show-encryption", r.pdf.path]).out) ? "restrictions removed" : "✗ still encrypted"]);
   } },
   { id: "auto-redact", slug: "auto-redact", files: ["text.pdf"], check: (s, h) => {
-      const r = needPdf(s, h, { pages: 4, text: ["Quarterly", "finance lead", "Consulting hours"], notText: ["priya.sharma@example.com", "ABCDE1234F", "98765 43210", "4111 1111 1111 1111", "2345 6789 0123", "27ABCDE1234F1Z5"] });
+      const r = needPdf(s, h, { pages: 4, text: ["Quarterly", "finance lead", "Consulting hours"], notText: ["priya.sharma@example.com", "ABCDE1234F", "81234 50987", "4111 1111 1111 1111", "2345 6789 0123", "27ABCDE1234F1Z5"] });
       const log = first(s, ".txt");
       return ok([...r.notes, log ? "log: " + readFileSync(log.path, "utf8").split("\n").slice(4, 12).filter(Boolean).join("; ") : "✗ no log"]);
   } },
@@ -280,7 +280,8 @@ print('cells' if found else 'flat')`);
       const sha = h.sh("sha256sum", [h.join(h.FX, "text.pdf")]).out.split(" ")[0];
       const md5 = h.sh("md5sum", [h.join(h.FX, "text.pdf")]).out.split(" ")[0];
       const sha1 = h.sh("sha1sum", [h.join(h.FX, "text.pdf")]).out.split(" ")[0];
-      return ok([t.includes(sha) ? "sha256 ok" : "✗ sha256", t.includes(md5) ? "md5 ok" : "✗ md5", t.includes(sha1) ? "sha1 ok" : "✗ sha1", /Pages:\s+4/.test(t) ? "pdf info" : "✗ pdf info"]);
+      const sha512 = h.sh("sha512sum", [h.join(h.FX, "text.pdf")]).out.split(" ")[0];
+      return ok([t.includes(sha) ? "sha256 ok" : "✗ sha256", t.includes(sha512) ? "sha512 ok" : "✗ sha512", t.includes(md5) ? "md5 ok" : "✗ md5", t.includes(sha1) ? "sha1 ok" : "✗ sha1", /Pages:\s+4/.test(t) ? "pdf info" : "✗ pdf info"]);
   } },
   { id: "compare", slug: "compare-pdfs", files: ["cmp-a.pdf", "cmp-b.pdf"], check: (s, h) => ok([...needPdf(s, h, { text: ["Comparison report", "45", "late fee"] }).notes, s[0].note ?? ""]) },
   { id: "gst-invoice", slug: "gst-invoice", options: { invoice: {

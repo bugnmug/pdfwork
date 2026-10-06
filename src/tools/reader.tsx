@@ -170,7 +170,7 @@ export default function Reader({ tool }: { tool: Tool }) {
     <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Panel className="overflow-hidden">
         <div ref={listRef} className="max-h-[70vh] overflow-auto px-5 py-6 font-[Doc_Serif,serif] text-[17px] leading-[1.8] text-ink sm:px-8">
-          {!units.length ? <Notice tone="warn">This PDF has no readable text (it looks scanned). Run OCR first.</Notice> : null}
+          {!units.length ? <Notice tone="warn">Nothing to read aloud: this looks like a scan. Open it in OCR: Searchable PDF first.</Notice> : null}
           {units.map((u, i) => (
             <span key={i} data-i={i}>
               {i === 0 || units[i - 1].page !== u.page ? <span className="my-3 block font-sans text-xs font-medium tracking-wide text-ink-3 uppercase">Page {u.page}</span> : null}

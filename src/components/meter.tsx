@@ -22,7 +22,7 @@ function MeterDetails({ server, direct, events }: { server: number; direct: numb
       <div>
         <p className="text-xs font-medium tracking-wide text-ink-3 uppercase">Sent to servers this session</p>
         <p className="mt-1 text-3xl font-semibold tabular">{formatBytes(server)}</p>
-        {direct > 0 ? <p className="mt-1 text-sm text-ink-2 tabular">Plus {formatBytes(direct)} sent to the other device over an encrypted peer-to-peer connection.</p> : null}
+        {direct > 0 ? <p className="mt-1 text-sm text-ink-2 tabular">Plus {formatBytes(direct)} sent straight to the other device, encrypted in transit.</p> : null}
       </div>
       <p className="text-sm leading-relaxed text-ink-2">
         Your files are opened and processed by this browser. This meter counts every byte the page sends out: requests, beacons, sockets and peer connections. Loading the app and its engines only downloads; it sends nothing of yours.

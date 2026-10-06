@@ -75,7 +75,7 @@ export async function ocrPdf(src: Src, o: OcrOpts = {}, onProgress?: ProgressFn)
           }
           onProgress?.(i / n, `Reading text on page ${i + 1} of ${n}`);
           const scale = (o.dpi ?? 300) / 72;
-          const canvas = await renderPage(page, scale, { maxPixels: 30_000_000, readback: true });
+          const canvas = await renderPage(page, scale, { readback: true });
           page.cleanup();
           const res = await worker.recognize(canvas, {}, { blocks: true, text: true });
           confSum += res.data.confidence || 0;

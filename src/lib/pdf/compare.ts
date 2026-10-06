@@ -16,7 +16,7 @@ async function docText(src: Src, onProgress?: ProgressFn) {
 
 export async function compareText(a: Src, b: Src, onProgress?: ProgressFn): Promise<CompareResult> {
   const [ta, tb] = [await docText(a, (f) => onProgress?.(f * 0.4, "Reading the first file")), await docText(b, (f) => onProgress?.(0.4 + f * 0.4, "Reading the second file"))];
-  if (!ta.text.trim() && !tb.text.trim()) throw new Error("Neither file has a text layer. Run OCR on both, or use the visual comparison.");
+  if (!ta.text.trim() && !tb.text.trim()) throw new Error("Both files look like scans, so there's no text to compare. Open them in OCR: Searchable PDF first, or switch to the visual comparison.");
   onProgress?.(0.9, "Comparing");
   const parts = diffWordsWithSpace(ta.text, tb.text) as DiffPart[];
   const count = (pred: (p: DiffPart) => boolean | undefined) => parts.filter(pred).reduce((n, p) => n + p.value.trim().split(/\s+/).filter(Boolean).length, 0);
