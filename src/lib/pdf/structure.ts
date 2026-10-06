@@ -5,7 +5,7 @@
  * running headers, footers and page numbers removed. Text keeps its font, size and colour.
  * Used by PDF → Word / HTML / EPUB / Markdown / Excel.
  */
-import { toLines, type Line, type PageText, type Shape, type TextItem } from "./pdfjs";
+import { toLines, type Line, type PageText, type Pic, type Shape, type TextItem } from "./pdfjs";
 
 export type Family = "sans" | "serif" | "mono";
 export type Run = {
@@ -33,6 +33,10 @@ export type Run = {
    * to a stop that many points in from the left edge of the text (options set in columns).
    */
   tab?: "right" | "next" | number;
+  /** A picture set in the text (an icon before a phone number, a thumbnail in a row of a table); its text is "\uFFFC". */
+  pic?: Pic;
+  /** Set over a picture: its colour (white on a photo) is kept as it is. */
+  onPic?: boolean;
 };
 /** One table cell: its paragraphs (each a list of styled runs) and the plain text. Cards also carry their blocks. */
 export type Cell = {
@@ -49,13 +53,28 @@ export type Cell = {
   margins?: { left: number; right: number; top: number; bottom: number };
   /** Its paragraphs hang this far after their first word (a label), in points. */
   hang?: number;
+  /** Text set in the middle, or at the foot, of a taller row. */
+  valign?: "center" | "bottom";
 };
 /**
  * Where a block sits, in points: the top of its first line (or its box) and the bottom of its
  * last, the sizes of those lines (0 for a box or table edge), baseline-to-baseline spacing
  * inside it, and the gap below it, to the next block or to the edge of the box it is in.
  */
-export type Geo = { top: number; bottom: number; first: number; last: number; leading?: number; gap?: number; next?: number; /** Left and right edges (boxes). */ left?: number; right?: number };
+export type Geo = {
+  top: number;
+  bottom: number;
+  first: number;
+  last: number;
+  leading?: number;
+  gap?: number;
+  next?: number;
+  /** Left and right edges (boxes). */
+  left?: number;
+  right?: number;
+  /** The next block starts over this one (text set over a photo); `gap` then runs from this block's top. */
+  under?: boolean;
+};
 /** How a list level is numbered: Word's number format, the text around the number, and the first value. */
 export type ListFormat = {
   /** "none": no number from Word; the item's text carries its own label (a clause number like 2.1, or options set in a row). */
@@ -144,7 +163,9 @@ export type SBlock =
   /** `deliberate`: the page ended early on purpose (a new chapter), not because it was full. */
   | { kind: "pagebreak"; page: number; deliberate?: boolean }
   /** A line drawn across the page between blocks; `inset`: how far in from the edges of the text it stops (points). */
-  | { kind: "rule"; color: string; h: number; inset: { left: number; right: number }; page: number; geo?: Geo };
+  | { kind: "rule"; color: string; h: number; inset: { left: number; right: number }; page: number; geo?: Geo }
+  /** Pictures in a row (one or more), where and how large each shows on the page (points). */
+  | { kind: "image"; pics: Pic[]; page: number; geo?: Geo };
 
 /** A line drawn under a heading or paragraph across the text: its colour, thickness, and distance below the text (points). */
 export type Under = { color: string; h: number; at: number };
@@ -155,8 +176,8 @@ export type BodyStyle = { size: number; face?: string; family?: Family; color?: 
 export type PageLayout = { width: number; height: number; top: number; right: number; bottom: number; left: number };
 /** One line of a running header or footer: its pieces by position ("{PAGE}" and "{PAGES}" stand for page numbers), and its look. */
 export type FurnitureLine = { parts: { text: string; at: "left" | "center" | "right" }[]; size: number; color?: string; face?: string; family?: Family; bold: boolean; italic?: boolean; /** Distance from the top of the page (header) or the bottom (footer), points. */ edge: number };
-/** Running header and footer lines, as they appear on the pages. */
-export type Furniture = { header: FurnitureLine[]; footer: FurnitureLine[] };
+/** Running header and footer lines, as they appear on the pages, and pictures that repeat with them (a logo), where they sit on the page. */
+export type Furniture = { header: FurnitureLine[]; footer: FurnitureLine[]; pics?: { pic: Pic; at: "header" | "footer" }[] };
 
 export type Segment = { text: string; x: number; x2: number; items: TextItem[] };
 
@@ -232,7 +253,7 @@ type Box = Rect & { fill?: string; stroke?: string };
 /** A drawn list marker: an empty square (check box), or a bullet (a dot, ring or small square). */
 type Mark = Rect & { check: boolean; bullet: string; color?: string };
 /** A text item as used here: may be raised (superscript) or sit on a drawn badge. */
-type Item = TextItem & { sup?: boolean; bg?: string; /** Right edge of the badge it sits on. */ bgRight?: number };
+type Item = TextItem & { sup?: boolean; bg?: string; /** Right edge of the badge it sits on. */ bgRight?: number; /** A picture set in the line, standing in as one character. */ pic?: Pic; /** Drawn over a picture. */ onPic?: boolean };
 type SLine = Omit<Line, "items"> & { items: Item[]; dom: number; domBase: number; /** Column it was read from, for text set in columns. */ col?: number };
 
 const centerIn = (r: Rect, x: number, y: number, pad = 1) => x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad;
@@ -342,10 +363,15 @@ function itemRun(it: Item, text: string, dom?: number): Run {
   if (it.sup) r.sup = true;
   if (it.bg) r.bg = it.bg;
   if (it.track) r.track = Math.round(it.track * it.fontSize * 10) / 10;
+  if (it.pic) r.pic = it.pic;
+  if (it.onPic) r.onPic = true;
   return r;
 }
 
 const sameStyle = (a: Run, b: Run) =>
+  !a.pic &&
+  !b.pic &&
+  !!a.onPic === !!b.onPic &&
   a.bold === b.bold && a.italic === b.italic && a.size === b.size && a.color === b.color && a.face === b.face && a.family === b.family && !!a.sup === !!b.sup && a.bg === b.bg && a.track === b.track && !b.br && b.tab === undefined;
 
 /** Styled runs of a sequence of items (one line or part of one), with spaces where the gaps are. */
@@ -358,7 +384,7 @@ function itemsRuns(items: Item[], dom?: number): Run[] {
     const last = runs[runs.length - 1];
     if (last && it.x - prevEnd > it.fontSize * 0.18 && !/\s$/.test(last.text) && !/^\s/.test(text)) text = " " + text;
     const r = itemRun(it, text, dom);
-    if (last && (sameStyle(last, r) || !text.trim())) last.text += text;
+    if (last && !last.pic && !r.pic && (sameStyle(last, r) || !text.trim())) last.text += text;
     else if (last && /^\s+$/.test(last.text) && runs.length > 1) {
       // A lone space run takes the style of what follows.
       runs.pop();
@@ -434,7 +460,7 @@ function mergeRuns(runs: Run[]): Run[] {
   for (const r of runs) {
     const last = out[out.length - 1];
     if (last && sameStyle(last, r)) last.text += r.text;
-    else if (last && !r.text.trim()) last.text += r.text;
+    else if (last && !last.pic && !r.text.trim()) last.text += r.text;
     else out.push({ ...r });
   }
   for (const r of out) r.text = r.text.replace(/\s+/g, " ");
@@ -446,7 +472,7 @@ function mergeRuns(runs: Run[]): Run[] {
 }
 
 /** Plain text of runs (a line break the author set becomes a newline). */
-export const runsText = (runs: Run[]) => runs.map((r) => (r.br ? "\n" : "") + r.text).join("");
+export const runsText = (runs: Run[]) => runs.map((r) => (r.br ? "\n" : "") + (r.pic ? "" : r.text)).join("");
 
 /** Items of a line from x0 (inclusive) to x1 (exclusive), cutting items that straddle the bounds. */
 function sliceItems(items: Item[], x0: number, x1 = Infinity): Item[] {
@@ -487,11 +513,11 @@ function furniture(pages: { lines: Line[]; height: number }[]): Set<string> {
 
 /* ------------------------------------------------------------- shapes */
 
-type Graphics = { hrules: Rule[]; vrules: Rule[]; boxes: Box[]; marks: Mark[] };
+type Graphics = { hrules: Rule[]; vrules: Rule[]; boxes: Box[]; marks: Mark[]; pics: Pic[] };
 
 /** Sort a page's shapes into rules, boxes and small marks (check boxes, drawn bullets). */
-function graphicsOf(shapes: Shape[], pw: number, ph: number): Graphics {
-  const g: Graphics = { hrules: [], vrules: [], boxes: [], marks: [] };
+function graphicsOf(shapes: Shape[], pw: number, ph: number, pics: Pic[] = []): Graphics {
+  const g: Graphics = { hrules: [], vrules: [], boxes: [], marks: [], pics };
   for (const s of shapes) {
     const color = s.fill ?? s.stroke;
     if (s.h <= 3.2 && s.w >= 10) g.hrules.push({ x: s.x, y: s.y, w: s.w, h: s.h, color });
@@ -518,7 +544,8 @@ function graphicsOf(shapes: Shape[], pw: number, ph: number): Graphics {
 
 /** A page, or a box on it, with the text and shapes inside (boxes inside it are its kids). */
 /** `x1`: how far right its text may run, where that's more than its longest line (a block beside another). */
-type Region = { box?: Box; items: Item[]; kids: Region[]; hrules: Rule[]; vrules: Rule[]; marks: Mark[]; fills: Box[]; outlines: Box[]; x1?: number };
+/** `pic`: the region is a picture (its box is where the picture shows), placed among the text like a box. */
+type Region = { box?: Box; items: Item[]; kids: Region[]; hrules: Rule[]; vrules: Rule[]; marks: Mark[]; fills: Box[]; outlines: Box[]; x1?: number; pic?: Pic };
 
 const newRegion = (box?: Box): Region => ({ box, items: [], kids: [], hrules: [], vrules: [], marks: [], fills: [], outlines: [] });
 
@@ -560,7 +587,48 @@ function tableRow(b: Box, inner: Item[], items: Item[], size: number, boxes: Box
   return shared.size >= 2;
 }
 
-function regionsOf(items: Item[], g: Graphics): Region {
+/**
+ * The page's pictures, sorted by how they sit among the text. A backdrop under most of the
+ * page's text (a scanned page under its text, a page background) is left out. A small picture
+ * in a line of text (an icon before a phone number, a picture used as a bullet), and a picture
+ * in a column of pictures each with text beside it (thumbnails in the rows of a table), stand in
+ * the text as one character each, so they stay in their line or cell. The rest are figures,
+ * placed among the text like boxes.
+ */
+function figures(pics: Pic[], items: Item[], page: { width: number; height: number }): { kids: Pic[]; inline: Item[] } {
+  const text = items.filter((it) => it.str.trim());
+  const kids: Pic[] = [];
+  const inline: Item[] = [];
+  const mid = (o: Rect) => o.y + o.h / 2;
+  for (const p of pics) {
+    if (p.w < 6 || p.h < 6) continue;
+    const over = text.filter((it) => centerIn(p, ...itemCenter(it), -1)).reduce((k, it) => k + chars(it.str), 0);
+    if (over >= 40 && p.w * p.h > page.width * page.height * 0.7) continue;
+    const icon = text.find(
+      (it) =>
+        p.h <= it.fontSize * 2.4 &&
+        p.w <= it.fontSize * 4 &&
+        Math.min(p.y + p.h, it.y + it.h) - Math.max(p.y, it.y) > Math.min(p.h, it.h) * 0.5 &&
+        Math.min(Math.abs(it.x - (p.x + p.w)), Math.abs(p.x - (it.x + it.w))) < it.fontSize * 2.5,
+    );
+    const beside = text.filter((it) => mid(it) > p.y && mid(it) < p.y + p.h && (it.x >= p.x + p.w - 1 || it.x + it.w <= p.x + 1));
+    // A thumbnail in a table's row has a line or two beside it; a photo beside a paragraph (a bio) has more, and stays a figure.
+    const short = new Set(beside.map((it) => Math.round(it.base))).size <= 2;
+    const stacked = short && pics.some((o) => o !== p && Math.abs(o.x - p.x) < 3 && Math.abs(o.w - p.w) < Math.max(4, p.w * 0.25) && (o.y >= p.y + p.h - 1 || o.y + o.h <= p.y + 1));
+    const host = icon ?? (stacked && beside.length ? beside.reduce((a, b) => (Math.abs(mid(b) - mid(p)) < Math.abs(mid(a) - mid(p)) ? b : a)) : undefined);
+    if (!host) {
+      kids.push(p);
+      continue;
+    }
+    // In the host's line (on its baseline, in its size), with the picture's own box.
+    inline.push({ ...host, str: "\uFFFC", x: p.x, w: p.w, y: p.y, h: p.h, ox: p.x, bbox: { x: p.x, y: p.y, w: p.w, h: p.h }, bold: false, italic: false, color: undefined, track: undefined, sup: undefined, bg: undefined, bgRight: undefined, hasEOL: false, pic: p });
+  }
+  return { kids, inline };
+}
+
+function regionsOf(text: Item[], g: Graphics, page: { width: number; height: number }): Region {
+  const fig = figures(g.pics, text, page);
+  const items = fig.inline.length ? [...text, ...fig.inline] : text;
   const root = newRegion();
   const containers: Box[] = [];
   const fills: Box[] = [];
@@ -609,6 +677,14 @@ function regionsOf(items: Item[], g: Graphics): Region {
   const home = (r: Rect, skip?: Region): Region => regs.find((reg) => reg !== skip && reg.box!.w * reg.box!.h > r.w * r.h && contains(reg.box!, r)) ?? root;
   const homeOf = (x: number, y: number): Region => regs.find((reg) => centerIn(reg.box!, x, y)) ?? root;
   for (const reg of regs) home(reg.box!, reg).kids.push(reg);
+  // Pictures sit among the text like boxes, in the box they are drawn in. Text drawn over one
+  // stays with the text around it, and keeps its colour (the picture goes behind it).
+  for (const p of fig.kids) {
+    const reg = newRegion({ x: p.x, y: p.y, w: p.w, h: p.h });
+    reg.pic = p;
+    home(reg.box!).kids.push(reg);
+    for (const it of items) if (!it.pic && centerIn(p, ...itemCenter(it), -1)) it.onPic = true;
+  }
   for (const it of items) homeOf(...itemCenter(it)).items.push(it);
   for (const r of g.hrules) homeOf(r.x + r.w / 2, r.y + r.h / 2).hrules.push(r);
   for (const r of g.vrules) homeOf(r.x + r.w / 2, r.y + r.h / 2).vrules.push(r);
@@ -644,7 +720,7 @@ export function analyze(pagesText: PageText[]): SBlock[] {
   return analyzeDoc(pagesText).blocks;
 }
 
-export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: BodyStyle; layout: PageLayout; furniture: Furniture } {
+export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: BodyStyle; layout: PageLayout; furniture: Furniture; unread: Set<number> } {
   const pages = pagesText.map((p) => {
     const all = toLines(p);
     const dir = all[0]?.dir ?? 0;
@@ -661,10 +737,12 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
 
   const graphics: Graphics[] = [];
   let carry: number[] | undefined;
+  const running = runningPics(pages);
   const perPage = pages.map((p, pi) => {
-    const g = p.dir === 0 ? graphicsOf(p.pt.shapes ?? [], p.width, p.height) : { hrules: [], vrules: [], boxes: [], marks: [] };
+    const pics = (p.pt.pics ?? []).filter((x) => !running.has(x));
+    const g = p.dir === 0 ? graphicsOf(p.pt.shapes ?? [], p.width, p.height, pics) : { hrules: [], vrules: [], boxes: [], marks: [], pics: [] };
     graphics.push(g);
-    const blocks = layoutRegion(regionsOf(kept[pi], g), { page: pi, pt: p.pt, body: body.size, leading: body.leading, columns: carry });
+    const blocks = layoutRegion(regionsOf(kept[pi], g, p), { page: pi, pt: p.pt, body: body.size, leading: body.leading, columns: carry });
     const last = blocks[blocks.length - 1];
     carry = last?.kind === "columns" ? last.starts : undefined;
     return blocks;
@@ -673,7 +751,7 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
   // Where each page's content ends, to tell a page that simply filled up from one ended on purpose.
   const bottoms = kept.map((items, i) => {
     const g = graphics[i];
-    const ys = [...items.filter((it) => it.str.trim()).map((it) => it.y + it.h), ...[...g.boxes, ...g.hrules, ...g.vrules].map((r) => r.y + r.h)];
+    const ys = [...items.filter((it) => it.str.trim()).map((it) => it.y + it.h), ...[...g.boxes, ...g.hrules, ...g.vrules, ...g.pics].map((r) => r.y + r.h)];
     return ys.length ? Math.max(...ys) : 0;
   });
   const out: SBlock[] = [];
@@ -683,7 +761,30 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
   });
   joinAcrossPages(out, layout);
   rankHeadings(out);
-  return { blocks: out, body, layout, furniture: furnitureLines(pages, skip) };
+  const furn = furnitureLines(pages, skip);
+  // Each running picture once, from the first page that has it.
+  const pics = new Map<string, { pic: Pic; at: "header" | "footer" }>();
+  for (const p of pages) for (const pic of p.pt.pics ?? []) if (running.has(pic) && !pics.has(pic.id)) pics.set(pic.id, { pic, at: pic.y + pic.h / 2 < p.height / 2 ? "header" : "footer" });
+  // Pages read in another direction (text running up or down the page) don't place their pictures.
+  const unread = new Set(pages.flatMap((p, pi) => (p.dir === 0 ? [] : [pi])));
+  return { blocks: out, body, layout, furniture: pics.size ? { ...furn, pics: [...pics.values()] } : furn, unread };
+}
+
+/**
+ * Pictures that repeat in the same place at the top or foot of the pages (a logo in the
+ * letterhead, a band along the bottom): the running header and footer, not content.
+ */
+function runningPics(pages: { pt: PageText; height: number }[]): Set<Pic> {
+  const out = new Set<Pic>();
+  if (pages.length < 2) return out;
+  const all = pages.flatMap((p, pi) => (p.pt.pics ?? []).map((pic) => ({ pic, pi, h: p.height })));
+  for (const a of all) {
+    if (out.has(a.pic) || !(a.pic.y + a.pic.h < a.h * 0.2 || a.pic.y > a.h * 0.8)) continue;
+    const same = all.filter((b) => b.pic.id === a.pic.id && Math.abs(b.pic.x - a.pic.x) < 3 && Math.abs(b.pic.y - a.pic.y) < 3 && Math.abs(b.pic.w - a.pic.w) < 3);
+    const n = new Set(same.map((b) => b.pi)).size;
+    if (n >= 2 && n >= pages.length * 0.3) for (const b of same) out.add(b.pic);
+  }
+  return out;
 }
 
 /** The running header and footer, from the first page that carries each line, with page numbers as placeholders. */
@@ -726,7 +827,7 @@ function deliberateBreak(before: SBlock[], after: SBlock[], free: number, body: 
   const height = g.bottom - g.top;
   // How much of it had to fit: text can split after a few lines; a box can't; a heading or
   // lead-in comes with the start of what follows it.
-  let need = first.kind === "box" ? height : first.kind === "table" ? Math.min(height, lead * 4) : first.kind === "heading" || (first.kind === "para" && first.keep) ? height + lead * 3 : Math.min(height, lead * 3);
+  let need = first.kind === "box" || first.kind === "image" ? height : first.kind === "table" ? Math.min(height, lead * 4) : first.kind === "heading" || (first.kind === "para" && first.keep) ? height + lead * 3 : Math.min(height, lead * 3);
   const frame = boxes.find((b) => b.y <= g.top + 1 && b.y + b.h >= g.top && b.h < 700);
   if (frame) need = Math.max(need, frame.h);
   return free > need + lead;
@@ -846,19 +947,22 @@ function layoutOf(pages: PageText[], kept: Item[][], graphics: Graphics[]): Page
   pages.forEach((p, i) => {
     if (Math.round(p.width) !== width || Math.round(p.height) !== height) return;
     const g = graphics[i];
-    const rects: Rect[] = [
-      ...kept[i].filter((it) => it.str.trim() && it.dir === 0).map((it) => ({ x: it.x, y: it.y, w: it.w, h: it.h })),
+    const rects: (Rect & { lift?: number })[] = [
+      // Word sets a line's text a little below the top of its line (0.08 of the size).
+      ...kept[i].filter((it) => it.str.trim() && it.dir === 0).map((it) => ({ x: it.x, y: it.y, w: it.w, h: it.h, lift: it.fontSize * 0.08 })),
       ...[...g.boxes, ...g.hrules, ...g.vrules].filter((r) => r.w < width * 0.95),
     ];
     for (const r of rects) {
       x0 = Math.min(x0, r.x);
-      y0 = Math.min(y0, r.y);
+      y0 = Math.min(y0, r.y - (r.lift ?? 0));
       x1 = Math.max(x1, r.x + r.w);
       y1 = Math.max(y1, r.y + r.h);
     }
   });
   const m = (v: number) => Math.min(108, Math.max(18, Number.isFinite(v) ? v : 72));
-  return { width, height, left: m(x0), top: m(y0), right: m(width - x1), bottom: m(height - y1) };
+  // A little room below the lowest text, so a page that ends with its last line right at the
+  // margin still holds that line when Word sets the text a point or two lower.
+  return { width, height, left: m(x0), top: m(y0), right: m(width - x1), bottom: m(height - y1 - 6) };
 }
 
 /** Size, face and colour of the running text, from character counts; line spacing from its paragraphs. */
@@ -933,8 +1037,9 @@ type Base = { page: number; pt: Ctx["pt"]; body: number; leading?: number; colum
  * what sits beside it in the other, each laid out on its own.
  */
 function layoutRegion(r: Region, base: Base): SBlock[] {
+  if (r.pic) return [picsBlock([r], base)];
   const sb = sidebarOf(r, base);
-  const sp = sb ? null : sideBySide(r, base);
+  const sp = sb ? null : (picSide(r, base) ?? sideBySide(r, base));
   if (!sb && !sp) return layoutPlain(r, base);
   const [y0, y1] = sb ? [sb.y0, sb.y1] : [sp!.y0, sp!.y1];
   const mid = (o: Rect) => o.y + o.h / 2;
@@ -950,10 +1055,29 @@ function layoutRegion(r: Region, base: Base): SBlock[] {
     outlines: r.outlines.filter(keep),
   });
   const text = (bs: SBlock[]) => bs.flatMap(blockParas).map(runsText).join("\n");
-  const cellOfBlocks = (bs: SBlock[], extra: Partial<Cell>): Cell => ({ paras: bs.flatMap(blockParas), text: text(bs), blocks: bs, ...extra });
+  // The last block in a cell ends where its side does: the row is as tall as the taller side.
+  const ending = (bs: SBlock[], to?: number) => {
+    const last = [...bs].reverse().find((b) => "geo" in b && b.geo);
+    const g = last && "geo" in last ? last.geo : undefined;
+    if (g && g.gap === undefined) [g.gap, g.next] = [to !== undefined ? Math.min(72, Math.max(0, to - g.bottom)) : 0, undefined];
+    return bs;
+  };
+  // Content set in the middle of the row (a logo beside the letterhead's text) or at its foot.
+  const valignOf = (bs: SBlock[]): Cell["valign"] => {
+    const gs = bs.flatMap((b) => ("geo" in b && b.geo ? [b.geo] : []));
+    if (!gs.length) return undefined;
+    const a = Math.min(...gs.map((g) => g.top)) - y0;
+    const z = y1 - Math.max(...gs.map((g) => g.bottom));
+    return a > 3 && Math.abs(a - z) < Math.max(2.5, (y1 - y0) * 0.12) ? "center" : a > 3 && z < 1.5 ? "bottom" : undefined;
+  };
+  const cellOfBlocks = (bs: SBlock[], extra: Partial<Cell>, to?: number): Cell => {
+    const valign = to !== undefined ? valignOf(bs) : undefined;
+    return { paras: bs.flatMap(blockParas), text: text(ending(bs, valign ? undefined : to)), blocks: bs, ...extra, ...(valign ? { valign } : {}) };
+  };
+  // How far a part's text, and any picture in it, reaches across.
   const extent = (reg: Region) => {
-    const its = reg.items.filter((it) => it.str.trim());
-    return its.length ? { x0: Math.min(...its.map((it) => it.x)), x1: Math.max(...its.map((it) => it.x + it.w)) } : null;
+    const rs: Rect[] = [...reg.items.filter((it) => it.str.trim()), ...reg.kids.filter((k) => k.pic).map((k) => k.box!)];
+    return rs.length ? { x0: Math.min(...rs.map((o) => o.x)), x1: Math.max(...rs.map((o) => o.x + o.w)) } : null;
   };
   let cells: Cell[];
   let ws: number[];
@@ -982,11 +1106,18 @@ function layoutRegion(r: Region, base: Base): SBlock[] {
     // Text on the left could run on towards the right-hand block.
     left.x1 = er.x0 - 12;
     const none = { left: 0, right: 0, top: 0, bottom: 0 };
-    cells = [cellOfBlocks(layoutRegion(left, base), { margins: none }), cellOfBlocks(layoutRegion(right, base), { margins: none })];
-    ws = [er.x0 - el.x0, er.x1 - er.x0];
+    cells = [cellOfBlocks(layoutRegion(left, base), { margins: none }, y1), cellOfBlocks(layoutRegion(right, base), { margins: none }, y1)];
+    // The right-hand side may run on to where the region's text ends (its lines wrap no sooner in Word).
+    const words = r.items.filter((it) => it.str.trim());
+    const rx = Math.max(er.x1, r.box ? r.box.x + r.box.w - (insets(r)?.x ?? 0) : Math.max(er.x1, ...words.map((it) => it.x + it.w)));
+    ws = [er.x0 - el.x0, rx - er.x0];
     layout = { x: el.x0, w: ws[0] + ws[1] };
   }
   const total = ws[0] + ws[1];
+  // Where text is the first thing in it, the table starts with that text's line.
+  const spanItems = r.items.filter((it) => it.str.trim() && inSpan(it));
+  const topText = spanItems.length ? spanItems.reduce((a, b) => (b.y < a.y ? b : a)) : undefined;
+  const topKid = Math.min(Infinity, ...r.kids.filter((k) => inSpan(k.box!)).map((k) => k.box!.y));
   const table: SBlock = {
     kind: "table",
     rows: [cells.map((c) => c.text)],
@@ -995,7 +1126,7 @@ function layoutRegion(r: Region, base: Base): SBlock[] {
     widths: ws.map((w) => w / total),
     layout,
     page: base.page,
-    geo: { top: y0, bottom: y1, first: 0, last: 0 },
+    geo: { top: y0, bottom: y1, first: topText && topText.y <= topKid + 1 ? half(topText.fontSize) : 0, last: 0 },
   };
   const out = layoutRegion(part((o) => !inSpan(o), r.box), base);
   const at = out.findIndex((b) => "geo" in b && !!b.geo && b.geo.top >= y1 - 1);
@@ -1084,7 +1215,7 @@ function sidebarOf(r: Region, base: Base): { kid: Region; left: boolean; y0: num
   const width = r.box?.w ?? base.pt.width;
   for (const kid of r.kids) {
     const b = kid.box!;
-    if (b.h < height * 0.4 || b.w > width * 0.45) continue;
+    if (kid.pic || b.h < height * 0.4 || b.w > width * 0.45) continue;
     const beside = r.items.filter((it) => it.str.trim() && it.y + it.h / 2 >= b.y && it.y + it.h / 2 <= b.y + b.h);
     if (toLines({ page: 0, width: 0, height: 0, items: beside }).length < 3) continue;
     const left = beside.every((it) => it.x >= b.x + b.w + 4);
@@ -1096,41 +1227,91 @@ function sidebarOf(r: Region, base: Base): { kid: Region; left: boolean; y0: num
   return null;
 }
 
-/** The gap below each block: to the next one, or for the last block in a box, to the box's edge. */
+/**
+ * A picture with text beside it and nothing on its far side (a logo beside the letterhead, a
+ * photo beside a short bio): the two side by side, split down the space between them. Text
+ * that only overlaps the picture's top or foot is ordinary text above or below it.
+ */
+function picSide(r: Region, base: Base): { y0: number; y1: number; gx: number } | null {
+  const width = r.box?.w ?? base.pt.width;
+  for (const kid of r.kids) {
+    if (!kid.pic) continue;
+    const b = kid.box!;
+    if (b.w > width * 0.7) continue;
+    const mid = (o: Rect) => o.y + o.h / 2;
+    const band = r.items.filter((it) => it.str.trim() && mid(it) >= b.y - 1 && mid(it) <= b.y + b.h + 1);
+    const right = band.filter((it) => it.x >= b.x + b.w - 1);
+    const left = band.filter((it) => it.x + it.w <= b.x + 1);
+    // Text on one side only, and none drawn over the picture.
+    const side = right.length + left.length === band.length ? (right.length && !left.length ? right : left.length && !right.length ? left : null) : null;
+    if (!side || side.reduce((k, it) => k + chars(it.str), 0) < 3) continue;
+    const onRight = side === right;
+    // Anything else in the band (another box or picture) sits with the text.
+    const others = r.kids.filter((k) => k !== kid && k.box!.y < b.y + b.h && k.box!.y + k.box!.h > b.y);
+    if (!others.every((k) => (onRight ? k.box!.x >= b.x + b.w : k.box!.x + k.box!.w <= b.x))) continue;
+    const tx = onRight ? Math.min(...side.map((it) => it.x)) : Math.max(...side.map((it) => it.x + it.w));
+    return { y0: Math.min(b.y, ...side.map((it) => it.y)), y1: Math.max(b.y + b.h, ...side.map((it) => it.y + it.h)), gx: onRight ? (b.x + b.w + tx) / 2 : (tx + b.x) / 2 };
+  }
+  return null;
+}
+
+/**
+ * The gap below each block: to the next one, or for the last block in a box, to the box's edge.
+ * Space the page leaves empty (nothing else sits level with it) is kept whatever its size
+ * (room left for an answer, a title set halfway down the page); where something else does sit
+ * level with it, the next block isn't simply the one below, so the gap is kept modest.
+ */
 function setGaps(out: SBlock[], box?: Box) {
   const placed = out.filter((b): b is Extract<SBlock, { geo?: Geo }> & { geo: Geo } => "geo" in b && !!b.geo);
   placed.forEach((b, k) => {
     const nx = placed[k + 1]?.geo;
     if (nx) {
-      b.geo.gap = Math.max(0, nx.top - b.geo.bottom);
+      const gap = Math.max(0, nx.top - b.geo.bottom);
+      const empty = !placed.some((o, j) => j !== k && j !== k + 1 && o.geo.top < nx.top - 1 && o.geo.bottom > b.geo.bottom + 1);
+      b.geo.gap = empty ? gap : Math.min(gap, 72);
       b.geo.next = nx.first;
+      // Text set over a picture: the gap runs from the picture's top to that text.
+      if (b.kind === "image" && nx.top < b.geo.bottom - 2) [b.geo.under, b.geo.gap] = [true, Math.max(0, nx.top - b.geo.top)];
     } else if (box) {
-      b.geo.gap = Math.max(0, box.y + box.h - b.geo.bottom);
+      // To the box's edge: the box itself keeps any room below that.
+      b.geo.gap = Math.min(72, Math.max(0, box.y + box.h - b.geo.bottom));
       b.geo.next = undefined;
     }
   });
 }
 
 function layoutPlain(r: Region, base: Base): SBlock[] {
-  const lines = linesOf(r.items, base.pt);
+  const groups = cardGroups(r.kids);
+  // Captions set one under each picture of a row go with their picture (see captionsOf).
+  const lines = captionsOf(groups, linesOf(r.items, base.pt));
   const x0 = lines.length ? Math.min(...lines.map((l) => l.x)) : 0;
   // In a box, text can run as far from its right edge as it starts from the left.
   const x1 = lines.length ? Math.max(...lines.map((l) => l.x + l.w), r.box ? r.box.x + r.box.w - Math.min(24, x0 - r.box.x) : -Infinity, r.x1 ?? -Infinity) : 0;
   const ctx: Ctx = { ...base, hrules: r.hrules, used: new Set(), vrules: r.vrules, marks: r.marks, fills: r.fills, outlines: r.outlines, x0, x1 };
   // Runs of ordinary lines, and stretches set in columns, in order down the region.
   type Unit = { y: number; lines: SLine[]; gutter?: number };
-  const groups = cardGroups(r.kids);
   const units: Unit[] = [];
   let at = 0;
   const push = (ls: SLine[], gutter?: number) => {
     if (ls.length) units.push({ y: ls[0].y + ls[0].h / 2, lines: ls, gutter });
   };
-  // Ordinary lines are split where a box or row of cards comes between them.
+  // Ordinary lines are split where a box or row of cards comes between them. Pictures with text
+  // beside them (in a row of a table, beside a list) don't split it: they follow that text.
+  const kidsOf = (g: Group) => g.rows.flat();
+  const beside = (g: Group) =>
+    kidsOf(g).every((k) => k.pic) &&
+    lines.some((l) =>
+      kidsOf(g).some((k) => {
+        const b = k.box!;
+        return Math.min(l.y + l.h, b.y + b.h) - Math.max(l.y, b.y) > l.h * 0.4 && l.items.some((it) => it.str.trim() && (it.x >= b.x + b.w - 1 || it.x + it.w <= b.x + 1));
+      }),
+    );
+  const cuts = groups.filter((g) => !beside(g));
   const pushPlain = (ls: SLine[]) => {
     let cur: SLine[] = [];
     for (const l of ls) {
       const mid = l.y + l.h / 2;
-      if (cur.length && groups.some((g) => g.y > cur[cur.length - 1].y + cur[cur.length - 1].h / 2 && g.y <= mid)) {
+      if (cur.length && cuts.some((g) => g.y > cur[cur.length - 1].y + cur[cur.length - 1].h / 2 && g.y <= mid)) {
         push(cur);
         cur = [];
       }
@@ -1192,7 +1373,35 @@ function attachRules(out: SBlock[], lines: SLine[], ctx: Ctx) {
   }
 }
 
-type Group = { y: number; rows: Region[][] };
+/** Boxes or pictures in rows; `caps`: the caption under each picture of a single row. */
+type Group = { y: number; rows: Region[][]; caps?: Map<Region, Item[]> };
+
+/**
+ * Lines set under a row of pictures with each piece of text under one picture (captions under
+ * photos side by side): taken out of the running text and given to their pictures. Returns the
+ * lines left.
+ */
+function captionsOf(groups: Group[], lines: SLine[]): SLine[] {
+  const taken = new Set<SLine>();
+  for (const g of groups) {
+    const row = g.rows[0];
+    if (g.rows.length !== 1 || row.length < 2 || !row.every((k) => k.pic)) continue;
+    const caps = new Map<Region, Item[]>();
+    let last = Math.max(...row.map((k) => k.box!.y + k.box!.h));
+    for (const l of [...lines].sort((a, b) => a.y - b.y)) {
+      if (taken.has(l) || l.y < last - 1) continue;
+      if (l.y - last > Math.max(l.h, 6) * 1.2) break;
+      const segs = segments(l);
+      const owners = segs.map((sg) => row.find((k) => sg.x >= k.box!.x - 4 && sg.x2 <= k.box!.x + k.box!.w + 4));
+      if (owners.some((o) => !o)) break;
+      segs.forEach((sg, i) => caps.set(owners[i]!, [...(caps.get(owners[i]!) ?? []), ...sg.items]));
+      taken.add(l);
+      last = l.y + l.h;
+    }
+    if (caps.size) g.caps = caps;
+  }
+  return taken.size ? lines.filter((l) => !taken.has(l)) : lines;
+}
 
 /** Boxes side by side form a row of cards; rows of cards that line up form one grid. */
 function cardGroups(kids: Region[]): Group[] {
@@ -1225,13 +1434,54 @@ function cardGroups(kids: Region[]): Group[] {
 
 /** How far a box's text sits from its edges (points). */
 function insets(r: Region): { x: number; y: number } | undefined {
-  const its = r.items.filter((it) => it.str.trim());
+  // Its text, and any picture in it.
+  const its: Rect[] = [...r.items.filter((it) => it.str.trim()), ...r.kids.filter((k) => k.pic).map((k) => k.box!)];
   if (!its.length || !r.box) return undefined;
   const lim = (v: number) => Math.min(24, Math.max(2, v));
   return { x: lim(Math.min(...its.map((i) => i.x)) - r.box.x), y: lim(Math.min(...its.map((i) => i.y)) - r.box.y) };
 }
 
+/** Pictures side by side, each with its caption under it: a row of cards without lines. */
+function captionedRow(row: Region[], caps: Map<Region, Item[]>, base: { page: number; pt: Ctx["pt"]; body: number }): SBlock {
+  const cells = row.map((k): Cell => {
+    const b = k.box!;
+    const its = caps.get(k) ?? [];
+    const ctx: Ctx = { page: base.page, pt: base.pt, body: base.body, hrules: [], used: new Set(), vrules: [], marks: [], fills: [], outlines: [], x0: b.x, x1: b.x + b.w };
+    const blocks: SBlock[] = [picsBlock([k], base), ...(its.length ? blocksOf(linesFromItems(its, base.pt), ctx) : [])];
+    setGaps(blocks);
+    const last = blocks[blocks.length - 1];
+    if ("geo" in last && last.geo && last.geo.gap === undefined) last.geo.gap = 0;
+    const paras = blocks.flatMap(blockParas);
+    return { paras, text: paras.map(runsText).join("\n"), blocks };
+  });
+  const xs = row.map((k) => k.box!);
+  const raw = xs.map((b, i) => (i + 1 < xs.length ? xs[i + 1].x - b.x : b.w));
+  const total = raw.reduce((a, b) => a + b, 0) || 1;
+  const bottom = Math.max(...row.map((k) => Math.max(k.box!.y + k.box!.h, ...(caps.get(k) ?? []).map((it) => it.y + it.h))));
+  return {
+    kind: "table",
+    rows: [cells.map((c) => c.text)],
+    cells: [cells],
+    header: false,
+    widths: raw.map((w) => w / total),
+    lines: "cards",
+    pad: { x: 0, y: 0 },
+    page: base.page,
+    geo: { top: Math.min(...xs.map((b) => b.y)), bottom, first: 0, last: 0 },
+    cardCols: xs.map((b) => ({ x: b.x, w: b.w })),
+  };
+}
+
+/** Pictures in a row, as one block. */
+function picsBlock(kids: Region[], base: { page: number }): SBlock {
+  const pics = kids.map((k) => k.pic!).sort((a, b) => a.x - b.x);
+  return { kind: "image", pics, page: base.page, geo: { top: Math.min(...pics.map((p) => p.y)), bottom: Math.max(...pics.map((p) => p.y + p.h)), first: 0, last: 0 } };
+}
+
 function groupBlocks(g: Group, base: { page: number; pt: Ctx["pt"]; body: number }): SBlock[] {
+  if (g.caps) return [captionedRow(g.rows[0], g.caps, base)];
+  // Pictures only (one, a row, or a grid of them): a row of pictures at a time.
+  if (g.rows.every((rw) => rw.every((k) => k.pic))) return g.rows.map((rw) => picsBlock(rw, base));
   if (g.rows.length === 1 && g.rows[0].length === 1) {
     const kid = g.rows[0][0];
     const inner = layoutRegion(kid, base);
@@ -1560,7 +1810,7 @@ function columnsBlock(sides: SLine[][], starts: number[], rows: SLine[], ctx: Ct
   placed.forEach((b, k) => {
     const nx = placed[k + 1]?.geo;
     const gap = nx ? nx.top - b.geo.bottom : undefined;
-    b.geo.gap = gap !== undefined && gap >= 0 ? gap : undefined;
+    b.geo.gap = gap !== undefined && gap >= 0 ? Math.min(gap, 72) : undefined;
     b.geo.next = nx?.first;
   });
   const geo: Geo = { top: Math.min(...rows.map((l) => l.y)), bottom: Math.max(...rows.map((l) => l.y + l.h)), first: rows[0].dom, last: rows[rows.length - 1].dom };
@@ -2446,8 +2696,24 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
       return cellOf(parts, fill, bands[b].x1);
     }),
   );
-  const filled = cells.flat().filter((c) => c.text).length;
+  const filled = cells.flat().filter((c) => c.paras.length).length;
   if (filled / (cells.length * bands.length) < 0.35) return null;
+  // Text set in the middle (or at the foot) of a row made taller by another cell.
+  groups.forEach((g, ri) => {
+    const all = g.flatMap((k) => placed.get(k)!);
+    const top = Math.min(...all.map((p) => p.y));
+    const bottom = Math.max(...all.map((p) => p.y + p.h));
+    const words = all.filter((p) => !p.items.some((i) => (i as Item).pic));
+    if (!words.length || bottom - top < median(words.map((p) => p.h)) * 1.8) return;
+    bands.forEach((_, b) => {
+      const ps = all.filter((p) => p.band === b);
+      if (!ps.length) return;
+      const a = Math.min(...ps.map((p) => p.y)) - top;
+      const z = bottom - Math.max(...ps.map((p) => p.y + p.h));
+      if (a > 3 && Math.abs(a - z) < Math.max(2.5, (bottom - top) * 0.12)) cells[ri][b].valign = "center";
+      else if (a > 3 && z < 1.5) cells[ri][b].valign = "bottom";
+    });
+  });
   // Columns set flush right (figures) or centred: every piece of text ends (or centres) at
   // the same place while their starts wander.
   bands.forEach((_, b) => {
@@ -2561,11 +2827,20 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
       return ps.slice(1).map((p, n) => p.base - ps[n].base).filter((d) => d > p0size(ps) * 0.9 && d < p0size(ps) * 2.2);
     }),
   );
-  const pad = rowGaps.length ? { x: padX, y: Math.min(14, Math.max(1.5, median(rowGaps) / 2)) } : undefined;
+  const pad = rowGaps.length ? { x: padX, y: Math.min(14, Math.max(0.3, median(rowGaps) / 2)) } : undefined;
   // Rows set further apart than usual (space left to sign in) keep their extra space.
   const extra = pad ? rowGaps.map((g) => Math.max(0, g - pad.y * 2)) : [];
   // The rules this table draws (across its columns, from just above it to just below).
   const rules = drawn.lines ? hr.filter((r) => r.y >= top - lineH * 2.5 && r.y <= bottomY + lineH * 2.5 && Math.min(r.x + r.w, tx1) - Math.max(r.x, tx0) > r.w * 0.5) : [];
+  // A rule drawn in pieces (one under each cell) is the table's all along.
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const r of hr) {
+      if (rules.includes(r) || !rules.some((o) => Math.abs(o.y - r.y) < 1 && r.x < o.x + o.w + 2 && r.x + r.w > o.x - 2)) continue;
+      rules.push(r);
+      grew = true;
+    }
+  }
   return { end, cells, header, widths: floored.map((w) => w / sum), span, pad, inset, leading: steps.length ? median(steps) : undefined, rules, ...(extra.some((e) => e > 4) ? { rowSpace: extra } : {}), ...drawn };
 }
 

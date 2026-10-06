@@ -1,7 +1,7 @@
 # docx-dump.py <file.docx>: a Word document's structure as JSON, for test checks.
 # Body blocks in order: paragraphs (style, alignment, text with "\t" for tabs and "\n" for
-# line breaks, list numbering, tab stops, borders) and tables (cells with their fill and the
-# blocks inside, so nested tables show), plus the running header and footer.
+# line breaks, list numbering, tab stops, borders, pictures) and tables (cells with their fill
+# and the blocks inside, so nested tables show), plus the running header and footer.
 import json
 import sys
 
@@ -52,6 +52,9 @@ def text_of(p):
 def para(p):
     ppr = p.find(W("pPr"))
     o = {"t": "p", "text": text_of(p)}
+    pics = len(p.findall(".//" + W("drawing")))
+    if pics:
+        o["pics"] = pics
     if ppr is not None:
         st = ppr.find(W("pStyle"))
         if st is not None:
@@ -106,6 +109,6 @@ sec = doc.sections[0]
 furniture = {}
 for name, part in (("header", sec.header), ("footer", sec.footer)):
     xml = part._element.xml if part is not None else ""
-    furniture[name] = {"text": "\n".join(p.text for p in part.paragraphs) if part is not None else "", "page": "PAGE" in xml, "pages": "NUMPAGES" in xml}
+    furniture[name] = {"text": "\n".join(p.text for p in part.paragraphs) if part is not None else "", "page": "PAGE" in xml, "pages": "NUMPAGES" in xml, "pics": xml.count("<w:drawing")}
 
 print(json.dumps({"body": body(doc.element.body), **furniture}, ensure_ascii=False))

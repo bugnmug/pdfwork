@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- A two-page site report with pictures, laid out page by page the way a design tool prints one:
+     a logo at the top of every page and another beside the letterhead, a banner photo cropped to
+     a wide strip, a figure with its caption, a photo beside the text, a row of three photos with a
+     caption under each, small icons before the contact details, a callout box with a picture in it,
+     a table with a thumbnail in each row and a picture turned on its side. PDF to Word must put
+     each picture where the page has it, at its size and crop, beside the text it sits beside, and
+     keep the repeated logo in the running header. Pictures come from fixtures/ (make-fixtures.py). -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; line-height: 1.4; color: #1f2933; margin: 0; }
+.sheet { width: 210mm; height: 297mm; padding: 30mm 18mm 20mm; box-sizing: border-box; position: relative; overflow: hidden; break-after: page; }
+.runhead { position: absolute; top: 10mm; right: 18mm; width: 26mm; display: block; }
+.letterhead { display: flex; align-items: center; gap: 12pt; margin: 0 0 14pt; }
+.letterhead img { width: 30mm; display: block; }
+.letterhead h1 { font-size: 20pt; margin: 0 0 2pt; color: #b42318; }
+.letterhead p { margin: 0; color: #52606d; }
+.banner { width: 100%; height: 38mm; object-fit: cover; display: block; margin: 0 0 12pt; }
+h2 { font-size: 13pt; margin: 14pt 0 6pt; color: #b42318; }
+p { margin: 0 0 7pt; }
+figure { margin: 10pt 0 12pt; text-align: center; }
+figure img { width: 110mm; display: block; margin: 0 auto 4pt; }
+figcaption { font-size: 8.5pt; color: #52606d; }
+.beside { display: flex; gap: 14pt; align-items: flex-start; margin: 0 0 10pt; }
+.beside img { width: 55mm; display: block; flex: none; }
+.beside div p:last-child { margin: 0; }
+.row { display: flex; gap: 10pt; margin: 8pt 0 12pt; }
+.row div { flex: 1; font-size: 8.5pt; color: #52606d; }
+.row img { width: 100%; height: 30mm; object-fit: cover; display: block; margin: 0 0 3pt; }
+.contact p { margin: 0 0 3pt; }
+.contact img { height: 9pt; vertical-align: -1pt; margin-right: 4pt; }
+.callout { border: 1px solid #d0d7de; background: #f6f8fa; padding: 9pt 11pt; display: flex; gap: 11pt; align-items: center; margin: 10pt 0; break-inside: avoid; }
+.callout img { width: 22mm; display: block; }
+.callout p { margin: 0; }
+table { border-collapse: collapse; width: 100%; margin: 6pt 0 10pt; }
+th, td { text-align: left; padding: 4pt 6pt; border-bottom: 1px solid #d0d7de; vertical-align: middle; }
+th { font-size: 9pt; color: #52606d; }
+td img { width: 16mm; display: block; }
+.turned { margin: 16pt 0 0; display: flex; gap: 16pt; align-items: center; }
+.turned img { width: 40mm; transform: rotate(90deg); margin: 6mm -4mm; display: block; }
+</style></head><body>
+<div class="sheet"><img class="runhead" src="../fixtures/logo.png" alt="">
+<div class="letterhead"><img src="../fixtures/logo.png" alt=""><div><h1>Riverside Clinic</h1><p>Renovation site report, week 38</p><p>Prepared by the site office, 21 September 2026</p></div></div>
+<img class="banner" src="../fixtures/photo.jpg" alt="">
+<h2>Summary</h2>
+<p>Work on the east wing stayed on schedule this week. The roof membrane is complete, the new windows are in on the ground floor, and the electrical first fix passed inspection on Thursday.</p>
+<figure><img src="../fixtures/pic.webp" alt=""><figcaption>Figure 1. The east wing from the car park, Friday afternoon.</figcaption></figure>
+<h2>Roof and windows</h2>
+<div class="beside"><img src="../fixtures/photo.jpg" alt=""><div><p>The roofing team finished the membrane on Tuesday and the flashing on Wednesday. Rain on Thursday gave a useful test: no leaks were found in the plant room or the corridor below.</p><p>Window frames for the ground floor arrived complete and were fitted in two days. The first floor frames are due next Monday.</p></div></div>
+<p>Scaffolding on the north face comes down once the gutters are fitted, expected by the end of next week.</p>
+</div>
+<div class="sheet"><img class="runhead" src="../fixtures/logo.png" alt="">
+<h2>Progress photos</h2>
+<div class="row"><div><img src="../fixtures/pic.webp" alt="">Reception, ceiling grid in place</div><div><img src="../fixtures/photo.jpg" alt="">Plant room, new boiler</div><div><img src="../fixtures/thumb.png" alt="">Corridor, first fix complete</div></div>
+<h2>Materials on order</h2>
+<table>
+<tr><th>Item</th><th>Description</th><th>Due</th></tr>
+<tr><td><img src="../fixtures/thumb.png" alt=""></td><td>Fire doors, 14 sets with closers</td><td>29 Sep</td></tr>
+<tr><td><img src="../fixtures/pic.webp" alt=""></td><td>Ceiling tiles for the first floor</td><td>2 Oct</td></tr>
+<tr><td><img src="../fixtures/photo.jpg" alt=""></td><td>Boiler flue kit</td><td>6 Oct</td></tr>
+</table>
+<div class="callout"><img src="../fixtures/logo.png" alt=""><p><b>Site visit on 2 October.</b> The client team will walk the east wing at 10:00. Please keep the corridor clear and the plant room locked.</p></div>
+<h2>Contacts</h2>
+<div class="contact"><p><img src="../fixtures/logo.png" alt="">Site office: 020 7946 0000</p><p><img src="../fixtures/logo.png" alt="">site.office@example.com</p></div>
+<div class="turned"><img src="../fixtures/pic.webp" alt=""><p>Drawing reference E-104, shown turned as on the drawing board.</p></div>
+</div>
+</body></html>

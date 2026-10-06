@@ -351,6 +351,28 @@ export const CASES = [
         expect(main && parasIn(main.blocks).some((p) => p.text === "Senior Data Engineer\t2023 – now"), "experience with dates in the main column"),
       ]);
   } },
+  { id: "pdf-to-word-site-report", slug: "pdf-to-word", files: ["site-report.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const ps = parasIn(d.body);
+      const ts = tablesIn(d.body);
+      const pic = (c) => parasIn(c.blocks).some((p) => p.pics);
+      const head = d.body.find((b) => b.t === "table");
+      const figure = ps.findIndex((p) => p.text.startsWith("Figure 1."));
+      const row = ts.find((t) => t.rows.length === 1 && t.rows[0].filter(pic).length === 3);
+      const items = ts.find((t) => cellText(t.rows[0][0]) === "Item");
+      const callout = ts.find((t) => t.rows[0].length === 2 && pic(t.rows[0][0]) && cellText(t.rows[0][1]).startsWith("Site visit"));
+      return ok([
+        expect(head && pic(head.rows[0][0]) && cellText(head.rows[0][1]).startsWith("Riverside Clinic"), "logo beside the letterhead"),
+        expect(d.body[1] && d.body.slice(1, 3).some((b) => b.t === "p" && b.pics), "banner photo under the letterhead"),
+        expect(figure > 0 && ps[figure - 1].pics === 1, "figure above its caption"),
+        expect(ts.some((t) => t.rows[0].length === 2 && pic(t.rows[0][0]) && cellText(t.rows[0][1]).startsWith("The roofing team")), "photo beside its text"),
+        expect(row && ["Reception", "Plant room", "Corridor"].every((w) => row.rows[0].some((c) => pic(c) && parasIn(c.blocks).some((p) => p.text.startsWith(w)))), "three photos in a row, each over its caption"),
+        expect(items && shape(items) === "4x3" && items.rows.slice(1).every((r) => pic(r[0])) && cellText(items.rows[1][1]).startsWith("Fire doors"), "thumbnails in the table's rows"),
+        expect(callout, "picture inside the callout box"),
+        expect(ps.filter((p) => p.pics === 1 && /Site office|site\.office/.test(p.text)).length === 2, "icons kept in the contact lines"),
+        expect(d.header.pics === 1, "repeated logo in the running header, once"),
+      ]);
+  } },
   { id: "pdf-to-excel-wrapped-table", slug: "pdf-to-excel", files: ["partners.pdf"], check: (s, h) => {
       const x = first(s, ".xlsx");
       const rows = JSON.parse(py(h, `import openpyxl,json;ws=openpyxl.load_workbook(${JSON.stringify(x.path)}).active;print(json.dumps([[c if c is not None else "" for c in r] for r in ws.iter_rows(values_only=True)]))`));

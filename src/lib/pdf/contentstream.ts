@@ -161,25 +161,37 @@ function xobjects(res: PDFDict | undefined, ctx: PDFContext): PDFDict | undefine
   return d instanceof PDFDict ? d : undefined;
 }
 
-/** For every image XObject, the largest size (in points) it is drawn at anywhere in the document. */
-export function imageDisplaySizes(doc: PDFDocument): Map<string, { w: number; h: number }> {
+/** A rectangle as [x0, y0, x1, y1]. */
+export type Rect4 = [number, number, number, number];
+
+/** One image drawn on a page: the image object, the matrix that maps its unit square onto the page, and the clip in force around it (page space). */
+export type ImageDraw = { page: number; ref: PDFRef; m: M; clip?: Rect4 };
+
+const apply = (m: M, x: number, y: number): [number, number] => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+const grow = (r: Rect4 | undefined, [x, y]: [number, number]): Rect4 => (r ? [Math.min(r[0], x), Math.min(r[1], y), Math.max(r[2], x), Math.max(r[3], y)] : [x, y, x, y]);
+const meet = (a: Rect4 | undefined, b: Rect4): Rect4 => (a ? [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])] : b);
+const PAINT = new Set(["n", "f", "F", "f*", "S", "s", "B", "B*", "b", "b*"]);
+
+/**
+ * Every image drawn on every page, inside forms too, with the matrix it is drawn with and the
+ * clip around it (the bounding box of each clipping path, so a photo cropped to a frame shows
+ * only the frame).
+ */
+export function walkImages(doc: PDFDocument, visit: (d: ImageDraw) => void) {
   const ctx = doc.context;
-  const sizes = new Map<string, { w: number; h: number }>();
-  const record = (ref: PDFRef, m: M) => {
-    const w = Math.hypot(m[0], m[1]);
-    const h = Math.hypot(m[2], m[3]);
-    const key = ref.toString();
-    const cur = sizes.get(key);
-    if (!cur || w * h > cur.w * cur.h) sizes.set(key, { w, h });
-  };
-  const run = (bytes: Uint8Array, res: PDFDict | undefined, base: M, depth: number) => {
+  const run = (page: number, bytes: Uint8Array, res: PDFDict | undefined, base: M, clip0: Rect4 | undefined, depth: number) => {
     if (depth > 12) return;
     const xo = xobjects(res, ctx);
     const toks = tokenize(bytes);
-    const stack: M[] = [];
-    let ctm = base;
+    type St = { ctm: M; clip?: Rect4 };
+    const stack: St[] = [];
+    let st: St = { ctm: base, clip: clip0 };
     const nums: number[] = [];
     let lastName = "";
+    // The current path's bounding box on the page, and whether it clips once painted.
+    let path: Rect4 | undefined;
+    let clips = false;
+    const pt = (x: number, y: number) => (path = grow(path, apply(st.ctm, x, y)));
     for (const t of toks) {
       if (t.t === "num") {
         nums.push(Number(t.v));
@@ -194,15 +206,38 @@ export function imageDisplaySizes(doc: PDFDocument): Map<string, { w: number; h:
         nums.length = 0;
         continue;
       }
+      const a = nums.slice(-6);
       switch (t.v) {
         case "q":
-          stack.push(ctm);
+          stack.push({ ...st });
           break;
         case "Q":
-          ctm = stack.pop() ?? base;
+          st = stack.pop() ?? { ctm: base, clip: clip0 };
           break;
         case "cm":
-          if (nums.length >= 6) ctm = mul(nums.slice(-6) as M, ctm);
+          if (nums.length >= 6) st.ctm = mul(a as M, st.ctm);
+          break;
+        case "re":
+          if (nums.length >= 4) {
+            const [x, y, w, h] = nums.slice(-4);
+            pt(x, y);
+            pt(x + w, y);
+            pt(x, y + h);
+            pt(x + w, y + h);
+          }
+          break;
+        case "m":
+        case "l":
+          if (nums.length >= 2) pt(nums[nums.length - 2], nums[nums.length - 1]);
+          break;
+        case "c":
+        case "v":
+        case "y":
+          for (let k = 0; k + 1 < nums.length; k += 2) pt(nums[k], nums[k + 1]);
+          break;
+        case "W":
+        case "W*":
+          clips = true;
           break;
         case "Do": {
           const raw = xo?.get(PDFName.of(lastName));
@@ -210,12 +245,21 @@ export function imageDisplaySizes(doc: PDFDocument): Map<string, { w: number; h:
             const obj = ctx.lookup(raw);
             if (obj instanceof PDFRawStream || obj instanceof PDFStream) {
               const sub = obj.dict.lookupMaybe(PDFName.of("Subtype"), PDFName)?.asString();
-              if (sub === "/Image") record(raw, ctm);
+              if (sub === "/Image") visit({ page, ref: raw, m: st.ctm, clip: st.clip });
               else if (sub === "/Form") {
+                const num = (arr: PDFArray | undefined, k: number, dflt: number) => (arr?.lookup(k) as PDFNumber | undefined)?.asNumber?.() ?? dflt;
                 const mArr = obj.dict.lookupMaybe(PDFName.of("Matrix"), PDFArray);
-                const fm: M = mArr ? (Array.from({ length: 6 }, (_, k) => (mArr.lookup(k) as PDFNumber)?.asNumber?.() ?? (k === 0 || k === 3 ? 1 : 0)) as M) : [1, 0, 0, 1, 0, 0];
+                const fm: M = mArr ? (Array.from({ length: 6 }, (_, k) => num(mArr, k, k === 0 || k === 3 ? 1 : 0)) as M) : [1, 0, 0, 1, 0, 0];
+                const m = mul(fm, st.ctm);
+                // A form draws only inside its bounding box.
+                const bb = obj.dict.lookupMaybe(PDFName.of("BBox"), PDFArray);
+                let clip = st.clip;
+                if (bb && bb.size() === 4) {
+                  const [x0, y0, x1, y1] = [0, 1, 2, 3].map((k) => num(bb, k, 0));
+                  clip = meet(clip, [apply(m, x0, y0), apply(m, x1, y0), apply(m, x0, y1), apply(m, x1, y1)].reduce<Rect4 | undefined>((r, p) => grow(r, p), undefined)!);
+                }
                 try {
-                  run(streamBytes(ctx, obj), resourcesOf(obj.dict, ctx) ?? res, mul(fm, ctm), depth + 1);
+                  run(page, streamBytes(ctx, obj), resourcesOf(obj.dict, ctx) ?? res, m, clip, depth + 1);
                 } catch {
                   /* undecodable form: ignore */
                 }
@@ -224,19 +268,115 @@ export function imageDisplaySizes(doc: PDFDocument): Map<string, { w: number; h:
           }
           break;
         }
+        default:
+          if (PAINT.has(t.v)) {
+            if (clips && path) st.clip = meet(st.clip, path);
+            path = undefined;
+            clips = false;
+          }
       }
       nums.length = 0;
     }
   };
-  const pages = doc.getPages();
-  pages.forEach((p, i) => {
+  doc.getPages().forEach((p, i) => {
     try {
-      run(pageContent(doc, i), resourcesOf(p.node, ctx) ?? (p.node.Resources() as PDFDict | undefined), [1, 0, 0, 1, 0, 0], 0);
+      run(i, pageContent(doc, i), resourcesOf(p.node, ctx) ?? (p.node.Resources() as PDFDict | undefined), [1, 0, 0, 1, 0, 0], undefined, 0);
     } catch {
       /* skip page */
     }
   });
+}
+
+/** For every image XObject, the largest size (in points) it is drawn at anywhere in the document. */
+export function imageDisplaySizes(doc: PDFDocument): Map<string, { w: number; h: number }> {
+  const sizes = new Map<string, { w: number; h: number }>();
+  walkImages(doc, ({ ref, m }) => {
+    const w = Math.hypot(m[0], m[1]);
+    const h = Math.hypot(m[2], m[3]);
+    const key = ref.toString();
+    const cur = sizes.get(key);
+    if (!cur || w * h > cur.w * cur.h) sizes.set(key, { w, h });
+  });
   return sizes;
+}
+
+/**
+ * The matrix pdf.js uses to show a page (scale 1): page space to the page as seen, with the
+ * origin at its top-left corner and y running down, after the crop box and /Rotate.
+ */
+export function viewTransform(page: ReturnType<PDFDocument["getPage"]>): M {
+  const box = (r: { x: number; y: number; width: number; height: number }): Rect4 => [r.x, r.y, r.x + r.width, r.y + r.height];
+  const media = box(page.getMediaBox());
+  const both = meet(box(page.getCropBox()), media);
+  const [x0, y0, x1, y1] = both[2] > both[0] && both[3] > both[1] ? both : media;
+  let rot = page.getRotation().angle;
+  rot = rot % 90 ? 0 : ((rot % 360) + 360) % 360;
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const [A, B, C, D] = rot === 90 ? [0, 1, 1, 0] : rot === 180 ? [-1, 0, 0, 1] : rot === 270 ? [0, -1, -1, 0] : [1, 0, 0, -1];
+  const [ox, oy] = A === 0 ? [Math.abs(cy - y0), Math.abs(cx - x0)] : [Math.abs(cx - x0), Math.abs(cy - y0)];
+  return [A, B, C, D, ox - A * cx - C * cy, oy - B * cx - D * cy];
+}
+
+/** Where an image shows on its page, in the page's visual frame (points, origin top-left). */
+export type Placement = {
+  /** Visible part: its bounding box. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Its own width and height as drawn (after any crop), rotation clockwise in degrees, and whether it is mirrored. */
+  ow: number;
+  oh: number;
+  rot: number;
+  flip: boolean;
+  /** Fractions trimmed off each side of the image by a clip (image's own sides). */
+  crop?: { left: number; top: number; right: number; bottom: number };
+};
+
+/** An image draw mapped onto the page as seen; null when nothing of it shows. */
+export function placementOf(d: ImageDraw, view: M, page: { width: number; height: number }): Placement | null {
+  const m = mul(d.m, view);
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (Math.abs(det) < 1e-6) return null;
+  // The visible part of the unit square: the clip (and the page) mapped back into image space.
+  const inv = (x: number, y: number): [number, number] => {
+    const dx = x - m[4];
+    const dy = y - m[5];
+    return [(m[3] * dx - m[2] * dy) / det, (-m[1] * dx + m[0] * dy) / det];
+  };
+  let vis: Rect4 = [0, 0, 1, 1];
+  const fence = (r: Rect4) => {
+    const uv = [inv(r[0], r[1]), inv(r[2], r[1]), inv(r[0], r[3]), inv(r[2], r[3])].reduce<Rect4 | undefined>((acc, p) => grow(acc, p), undefined)!;
+    vis = meet(vis, uv);
+  };
+  if (d.clip) {
+    const c = d.clip;
+    const corners = [apply(view, c[0], c[1]), apply(view, c[2], c[1]), apply(view, c[0], c[3]), apply(view, c[2], c[3])];
+    fence(corners.reduce<Rect4 | undefined>((acc, p) => grow(acc, p), undefined)!);
+  }
+  fence([0, 0, page.width, page.height]);
+  const [u0, v0, u1, v1] = vis;
+  if (u1 - u0 < 1e-3 || v1 - v0 < 1e-3) return null;
+  const shown = [apply(m, u0, v0), apply(m, u1, v0), apply(m, u0, v1), apply(m, u1, v1)].reduce<Rect4 | undefined>((acc, p) => grow(acc, p), undefined)!;
+  // The image's rightward and downward directions on the page (its top row is at v = 1).
+  let rx = m[0];
+  let ry = m[1];
+  const flip = rx * -m[3] - ry * -m[2] < 0;
+  if (flip) [rx, ry] = [-rx, -ry];
+  const rot = Math.round(((Math.atan2(ry, rx) * 180) / Math.PI + 360) % 360);
+  const crop = u0 > 0.002 || v0 > 0.002 || u1 < 0.998 || v1 < 0.998 ? { left: u0, right: 1 - u1, bottom: v0, top: 1 - v1 } : undefined;
+  return {
+    x: shown[0],
+    y: shown[1],
+    w: shown[2] - shown[0],
+    h: shown[3] - shown[1],
+    ow: Math.hypot(m[0], m[1]) * (u1 - u0),
+    oh: Math.hypot(m[2], m[3]) * (v1 - v0),
+    rot: rot === 360 ? 0 : rot,
+    flip,
+    ...(crop ? { crop } : {}),
+  };
 }
 
 /** Which pages draw which image refs (for listing extracted images by page). */

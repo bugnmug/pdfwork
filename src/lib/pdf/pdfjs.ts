@@ -7,6 +7,7 @@
  * marks the spaces it infers, so text comes back as the document says it.
  */
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
+import type { Placement } from "./contentstream";
 
 type PdfjsMod = typeof import("pdfjs-dist");
 let cached: Promise<PdfjsMod> | null = null;
@@ -200,7 +201,10 @@ export type TextItem = {
 /** A filled or stroked shape (rectangle, rule, box), as its bounding box in the visual frame; `round` when drawn with curves. */
 export type Shape = { x: number; y: number; w: number; h: number; fill?: string; stroke?: string; round?: boolean };
 
-export type PageText = { page: number; width: number; height: number; items: TextItem[]; shapes?: Shape[] };
+/** A picture drawn on the page: which image (`id`, see export's image list) and where it shows (contentstream's Placement). */
+export type Pic = Placement & { id: string };
+
+export type PageText = { page: number; width: number; height: number; items: TextItem[]; shapes?: Shape[]; pics?: Pic[] };
 
 /** Names of serif faces, for PDFs that don't flag their fonts as serif. */
 const SERIF = /serif|times|roman|georgia|garamond|cambria|bookantiqua|bookman|minion|palatino|lora|merriweather|playfair|baskerville|caslon|bodoni|didot|charter|crimson|spectral|literata|newsreader|fraunces|cormorant|bitter|slab|alegreya|cardo|gelasio|tinos|domine|vollkorn|noticia|constantia|sabon|utopia|perpetua|rockwell|tiempos|chronicle|schoolbook|goudy|janson|plantin|joanna|calisto|libertin|kepler|warnock|stix|lmroman|cmr\d/i;

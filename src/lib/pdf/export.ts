@@ -2,31 +2,69 @@
 import JSZip from "jszip";
 import { BRAND } from "@/lib/brand";
 import { canvasToBytes, stem, tick, type OutFile, type ProgressFn } from "./core";
-import { imagesByPage } from "./contentstream";
+import { imagesByPage, placementOf, viewTransform, walkImages } from "./contentstream";
 import { open, withZip, type Src } from "./pages";
 import { decodePixels, jpegBytes, listImages, pixelsToCanvas } from "./pdfimages";
-import { extractPages, linesToText, renderPage, toLines, withPdfjs, type PageText } from "./pdfjs";
-import { analyzeDoc, listLabel, luminance, pageGrid, runsText, type BodyStyle, type Cell, type Family, type FurnitureLine, type Geo, type ListFormat, type PageLayout, type Run, type SBlock, type Under } from "./structure";
+import { extractPages, linesToText, renderPage, toLines, withPdfjs, type PageText, type Pic } from "./pdfjs";
+import { analyzeDoc, listLabel, luminance, pageGrid, runsText, type BodyStyle, type Cell, type Family, type Furniture, type FurnitureLine, type Geo, type ListFormat, type PageLayout, type Run, type SBlock, type Under } from "./structure";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-async function readStructured(src: Src, onProgress?: ProgressFn) {
+/**
+ * The document's structure. With `images`, also its pictures, each placed where it is drawn
+ * (on the pages as `pics`, so they take their place among the text), keyed by `ref`.
+ */
+async function readStructured(src: Src, onProgress?: ProgressFn, o: { images?: boolean } = {}) {
   const pages = await extractPages(src.bytes, { password: src.password, styles: true, onProgress: (f, l) => onProgress?.(f * 0.5, l) });
   const chars = pages.reduce((s, p) => s + p.items.reduce((a, i) => a + i.str.trim().length, 0), 0);
   if (chars < 20) throw new Error("This looks like a scan, so there's no text to convert. Open it in OCR: Searchable PDF first.");
-  const { blocks, body, layout, furniture } = analyzeDoc(pages);
-  return { pages, blocks, body, layout, furniture };
+  const images = o.images ? await placeImages(src, pages).catch(() => new Map<string, ExtractedImage>()) : new Map<string, ExtractedImage>();
+  const { blocks, body, layout, furniture, unread } = analyzeDoc(pages);
+  return { pages, blocks, body, layout, furniture, images, unread };
+}
+
+/** The document's pictures by object, each drawn place added to its page as a `pic`. */
+async function placeImages(src: Src, pages: PageText[]): Promise<Map<string, ExtractedImage>> {
+  const doc = await open(src);
+  const byRef = new Map((await imagesOf(doc, src.name, { minSize: 8 })).map((im) => [im.ref, im]));
+  const views = new Map<number, ReturnType<typeof viewTransform>>();
+  walkImages(doc, (draw) => {
+    const pt = pages[draw.page];
+    const im = byRef.get(draw.ref.toString());
+    if (!pt || !im) return;
+    if (!views.has(draw.page)) views.set(draw.page, viewTransform(doc.getPage(draw.page)));
+    const p = placementOf(draw, views.get(draw.page)!, pt);
+    if (p) (pt.pics ??= []).push({ ...p, id: im.ref });
+  });
+  return byRef;
+}
+
+/**
+ * Pictures with no place among the text, by page (drawn where the page's content couldn't be
+ * followed): they go at the end of their page. Pictures left out on purpose (a scan under its
+ * text, icons in a line) had a place and stay out.
+ */
+function unplaced(images: Map<string, ExtractedImage>, pages: PageText[], unread = new Set<number>()): Map<number, ExtractedImage[]> {
+  const placed = new Set(pages.flatMap((p, pi) => (unread.has(pi) ? [] : (p.pics ?? []).map((x) => x.id))));
+  const out = new Map<number, ExtractedImage[]>();
+  for (const im of images.values()) if (!placed.has(im.ref) && im.width >= 40 && im.height >= 40) out.set(im.page, [...(out.get(im.page) ?? []), im]);
+  return out;
 }
 
 type ListBlock = Extract<SBlock, { kind: "list" }>;
 type TableBlock = Extract<SBlock, { kind: "table" }>;
+type ImageBlock = Extract<SBlock, { kind: "image" }>;
 
 /* ------------------------------------------------------------- images */
 
-export type ExtractedImage = { name: string; bytes: Uint8Array; mime: string; page: number; width: number; height: number };
+/** A picture taken out of the PDF: `ref` names the PDF object it came from. */
+export type ExtractedImage = { name: string; bytes: Uint8Array; mime: string; page: number; width: number; height: number; ref: string };
 
 export async function extractImages(src: Src, o: { minSize?: number; format?: "original" | "png" } = {}, onProgress?: ProgressFn): Promise<ExtractedImage[]> {
-  const doc = await open(src);
+  return imagesOf(await open(src), src.name, o, onProgress);
+}
+
+async function imagesOf(doc: Awaited<ReturnType<typeof open>>, srcName: string, o: { minSize?: number; format?: "original" | "png" } = {}, onProgress?: ProgressFn): Promise<ExtractedImage[]> {
   const pageOf = imagesByPage(doc);
   const images = listImages(doc).filter((im) => !im.isMask && !im.usedAsMask && im.width >= (o.minSize ?? 24) && im.height >= (o.minSize ?? 24));
   const out: ExtractedImage[] = [];
@@ -34,10 +72,11 @@ export async function extractImages(src: Src, o: { minSize?: number; format?: "o
     const im = images[k];
     onProgress?.(k / Math.max(1, images.length), `Extracting image ${k + 1} of ${images.length}`);
     const page = pageOf.get(im.ref.toString()) ?? -1;
-    const base = `${stem(src.name)}-p${page >= 0 ? page + 1 : "x"}-img${String(k + 1).padStart(3, "0")}`;
+    const base = `${stem(srcName)}-p${page >= 0 ? page + 1 : "x"}-img${String(k + 1).padStart(3, "0")}`;
+    const ref = im.ref.toString();
     const jpg = jpegBytes(im);
     if (jpg && !im.smask && o.format !== "png" && im.colorSpace.kind !== "cmyk") {
-      out.push({ name: `${base}.jpg`, bytes: jpg, mime: "image/jpeg", page, width: im.width, height: im.height });
+      out.push({ name: `${base}.jpg`, bytes: jpg, mime: "image/jpeg", page, width: im.width, height: im.height, ref });
       continue;
     }
     let canvas: HTMLCanvasElement | null = null;
@@ -57,7 +96,7 @@ export async function extractImages(src: Src, o: { minSize?: number; format?: "o
       if (px) canvas = pixelsToCanvas(px);
     }
     if (!canvas) continue;
-    out.push({ name: `${base}.png`, bytes: await canvasToBytes(canvas, "image/png"), mime: "image/png", page, width: im.width, height: im.height });
+    out.push({ name: `${base}.png`, bytes: await canvasToBytes(canvas, "image/png"), mime: "image/png", page, width: im.width, height: im.height, ref });
     if (k % 4 === 3) await tick();
   }
   out.sort((a, b) => a.page - b.page);
@@ -112,6 +151,8 @@ const mdEsc = (s: string) => s.replace(/([*_`[\]#|\\])/g, "\\$1");
 const mdRuns = (runs: Run[]): string =>
   runs
     .map((r): string => {
+      // Pictures in the text have no place in plain Markdown.
+      if (r.pic) return "";
       const t = mdEsc(r.text);
       if (!t.trim()) return t;
       if (r.sup) return `<sup>${t.trim()}</sup>`;
@@ -164,7 +205,14 @@ export async function pdfToMarkdown(src: Src, onProgress?: ProgressFn): Promise<
 
 /* ----------------------------------------------------------------- html */
 
+/** The pictures of the document being written as HTML (for pictures set in the text). */
+let htmlPics: Map<string, ExtractedImage> | undefined;
+
 const htmlRun = (r: Run) => {
+  if (r.pic) {
+    const im = htmlPics?.get(r.pic.id);
+    return im ? `<span style="display:inline-block;vertical-align:middle">${htmlPic(r.pic, im)}</span>` : "";
+  }
   let t = esc(r.text);
   if (r.br) t = "<br>" + t;
   if (r.sup) t = `<sup>${t}</sup>`;
@@ -208,12 +256,47 @@ function htmlList(b: ListBlock): string {
   return html;
 }
 
-function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>): string {
+/**
+ * A picture at the size it shows in the PDF (at most the page's width), turned and mirrored
+ * as there; a cropped one inside a frame that shows only the part the PDF shows.
+ */
+function htmlPic(p: Pic, im: ExtractedImage): string {
+  const w = Math.round(p.ow * (96 / 72));
+  const h = Math.round(p.oh * (96 / 72));
+  const src = `data:${im.mime};base64,${b64(im.bytes)}`;
+  const turn = [p.rot ? `rotate(${p.rot}deg)` : "", p.flip ? "scaleX(-1)" : ""].filter(Boolean).join(" ");
+  let pic: string;
+  if (!p.crop) pic = `<img src="${src}" alt="" width="${w}" height="${h}">`;
+  else {
+    const c = p.crop;
+    const fw = 1 - c.left - c.right;
+    const fh = 1 - c.top - c.bottom;
+    const pc = (v: number) => `${(v * 100).toFixed(2)}%`;
+    pic = `<span class="crop" style="width:${w}px;aspect-ratio:${w}/${h}"><img src="${src}" alt="" style="width:${pc(1 / fw)};height:${pc(1 / fh)};left:${pc(-c.left / fw)};top:${pc(-c.top / fh)}"></span>`;
+  }
+  if (!turn) return pic;
+  // Turned in a frame as big as it shows, so it takes its turned room on the page.
+  const vw = Math.round(p.w * (96 / 72));
+  const vh = Math.round(p.h * (96 / 72));
+  return `<span class="turn" style="width:${vw}px;height:${vh}px"><span style="width:${w}px;height:${h}px;transform:translate(-50%,-50%) ${turn}">${pic}</span></span>`;
+}
+
+function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>, images?: Map<string, ExtractedImage>): string {
+  if (images && htmlPics !== images) {
+    const prev = htmlPics;
+    htmlPics = images;
+    try {
+      return blocksToHtml(blocks, imgs, images);
+    } finally {
+      htmlPics = prev;
+    }
+  }
   const out: string[] = [];
   let page = 0;
   const flushImgs = (p: number) => {
     for (const im of imgs.get(p) ?? []) out.push(`<figure><img src="data:${im.mime};base64,${b64(im.bytes)}" alt="" width="${Math.min(im.width, 720)}"></figure>`);
   };
+  const inner = (bs: SBlock[]) => blocksToHtml(bs, new Map(), images);
   for (const b of blocks) {
     if (b.kind === "pagebreak") {
       flushImgs(page);
@@ -235,23 +318,34 @@ function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>): st
       out.push(`<p${style ? ` style="${style}"` : ""}>${htmlRuns(b.runs)}</p>`);
     } else if (b.kind === "list") out.push(htmlList(b));
     else if (b.kind === "rule") out.push(`<hr style="border:0;border-top:${Math.max(1, Math.round(b.h))}px solid ${b.color}">`);
-    else if (b.kind === "columns") out.push(`<div style="columns:${b.count};column-gap:2em">${blocksToHtml(b.blocks, new Map())}</div>`);
+    else if (b.kind === "columns") out.push(`<div style="columns:${b.count};column-gap:2em">${inner(b.blocks)}</div>`);
     else if (b.kind === "box") {
       // Light boxes keep their colour; dark ones become a light panel with a bar in their colour, since text colours aren't kept here.
       const light = !b.fill || luminance(b.fill) > 0.75;
       const style = light ? `background:${b.fill ?? "transparent"};border:1px solid ${b.stroke ?? b.fill ?? "#ccc"}` : `background:#f4f6f8;border-left:4px solid ${b.fill}`;
-      out.push(`<aside style="${style};padding:.75em 1em;margin:1em 0;border-radius:4px">${blocksToHtml(b.blocks, new Map())}</aside>`);
+      out.push(`<aside style="${style};padding:.75em 1em;margin:1em 0;border-radius:4px">${inner(b.blocks)}</aside>`);
     } else if (b.kind === "table" && b.layout) {
-      out.push(...b.cells.flat().map((c) => `<div>${blocksToHtml(c.blocks ?? [], new Map())}</div>`));
+      out.push(...b.cells.flat().map((c) => `<div>${inner(c.blocks ?? [])}</div>`));
+    } else if (b.kind === "table" && b.lines === "cards") {
+      // Cards side by side (boxes, or pictures with their captions): a row that wraps on small screens.
+      const card = (c: Cell) => {
+        const style = [c.fill ? `background:${c.fill}` : "", c.stroke ? `border:1px solid ${c.stroke}` : "", c.fill || c.stroke ? "padding:.75em 1em;border-radius:4px" : ""].filter(Boolean).join(";");
+        return `<div${style ? ` style="${style}"` : ""}>${c.blocks?.length ? inner(c.blocks) : c.paras.map(htmlRuns).join("<br>")}</div>`;
+      };
+      out.push(...b.cells.map((r) => `<div class="cards">${r.filter(Boolean).map(card).join("")}</div>`));
     } else if (b.kind === "table") {
       const cell = (bl: TableBlock, ri: number, ci: number, tag: string) => {
         const c = bl.cells[ri]?.[ci];
-        const inner = c?.blocks?.length ? blocksToHtml(c.blocks, new Map()) : (c?.paras ?? []).map(htmlRuns).join("<br>");
-        return `<${tag}${c?.align ? ` style="text-align:${c.align}"` : ""}>${inner}</${tag}>`;
+        const html = c?.blocks?.length ? inner(c.blocks) : (c?.paras ?? []).map(htmlRuns).join("<br>");
+        const style = [c?.align ? `text-align:${c.align}` : "", c?.valign ? `vertical-align:${c.valign === "center" ? "middle" : "bottom"}` : ""].filter(Boolean).join(";");
+        return `<${tag}${style ? ` style="${style}"` : ""}>${html}</${tag}>`;
       };
       const row = (ri: number, tag: string) => `<tr>${b.rows[ri].map((_, ci) => cell(b, ri, ci, tag)).join("")}</tr>`;
       const head = b.header ? `<thead>${row(0, "th")}</thead>` : "";
       out.push(`<table>${head}<tbody>${b.rows.map((_, ri) => (b.header && ri === 0 ? "" : row(ri, "td"))).join("")}</tbody></table>`);
+    } else if (b.kind === "image" && images) {
+      const pics = b.pics.flatMap((p) => (images.has(p.id) ? [htmlPic(p, images.get(p.id)!)] : []));
+      if (pics.length) out.push(`<figure${pics.length > 1 ? ' class="row"' : ""}>${pics.join("")}</figure>`);
     }
   }
   flushImgs(page);
@@ -266,17 +360,14 @@ function b64(u: Uint8Array) {
 
 const HTML_CSS = `body{font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:46rem;margin:2.5rem auto;padding:0 1.25rem;color:#1a1a1a}
 h1,h2,h3{line-height:1.25}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #ccc;padding:.35rem .5rem;text-align:left;vertical-align:top}th{background:#f3f3f3}
-figure{margin:1rem 0}img{max-width:100%;height:auto}hr.page{border:0;border-top:1px dashed #ddd;margin:2rem 0}`;
+figure{margin:1rem 0}img{max-width:100%;height:auto}figure.row{display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start}.crop{display:inline-block;max-width:100%;overflow:hidden;position:relative}.crop img{position:absolute;max-width:none}.turn{display:inline-block;position:relative}.turn>span{position:absolute;left:50%;top:50%}.turn img{max-width:none}.cards{display:flex;flex-wrap:wrap;gap:1rem;margin:1rem 0}.cards>div{flex:1 1 12rem;min-width:0}.cards figure{margin:0 0 .4rem}hr.page{border:0;border-top:1px dashed #ddd;margin:2rem 0}`;
 
 export async function pdfToHtml(src: Src, o: { mode?: "reflow" | "exact"; images?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
   const title = stem(src.name);
   if (o.mode === "exact") return pdfToHtmlExact(src, onProgress);
-  const { blocks } = await readStructured(src, onProgress);
-  const imgs = new Map<number, ExtractedImage[]>();
-  if (o.images !== false) {
-    for (const im of await extractImages(src, { minSize: 40 }).catch(() => [])) imgs.set(im.page, [...(imgs.get(im.page) ?? []), im]);
-  }
-  const html = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><meta name="generator" content="${esc(BRAND.name)}"><style>${HTML_CSS}</style></head><body>\n${blocksToHtml(blocks, imgs)}\n</body></html>\n`;
+  // Pictures go where the page has them; any whose place couldn't be read, at the end of their page.
+  const { blocks, images, pages, unread } = await readStructured(src, onProgress, { images: o.images !== false });
+  const html = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><meta name="generator" content="${esc(BRAND.name)}"><style>${HTML_CSS}</style></head><body>\n${blocksToHtml(blocks, unplaced(images, pages, unread), images)}\n</body></html>\n`;
   return { filename: `${title}.html`, bytes: new TextEncoder().encode(html), mime: "text/html", note: "Reflowed, readable on phones" };
 }
 
@@ -397,10 +488,19 @@ type DocxMod = typeof import("docx");
 type DocxOut = InstanceType<DocxMod["Paragraph"]> | InstanceType<DocxMod["Table"]>;
 /** Formatting a paragraph's runs inherit (size in half-points, colour without "#"). */
 type RunBase = { font: string; size: number; color: string; bold: boolean; italic: boolean };
-type Where = { width: number; bg?: string; pageBreak?: boolean; cell?: boolean };
+/**
+ * Where blocks go: the width (twips), the colour behind them, and where the text's left edge
+ * is on the page (points), when known. `last`: the block ends a cell or box, which keeps the
+ * space below it.
+ */
+type Where = { width: number; bg?: string; pageBreak?: boolean; cell?: boolean; x0?: number; last?: boolean };
 /** Marks where the page switches to `count` text columns (1: back to one), splitting the document into sections. */
 class Columns {
-  constructor(public count: number) {}
+  /** `space`: between the columns, in twips. */
+  constructor(
+    public count: number,
+    public space = 360,
+  ) {}
 }
 const content = (xs: (DocxOut | Columns)[]): DocxOut[] => xs.filter((x): x is DocxOut => !(x instanceof Columns));
 
@@ -433,8 +533,52 @@ const LINE_HEIGHT: Record<string, number> = {
   "Franklin Gothic Medium": 1.13,
 };
 
+/** A cell whose last paragraph was one line in the PDF (set solid in Word), or that holds blocks of its own. */
+const solidEnd = (c: Cell | undefined) => !c || !!c.blocks?.length || (!!c.geo && !c.geo.leadings[Math.max(0, c.paras.length - 1)]);
+
+/** The most space kept between two blocks (points); the structure already keeps gaps it isn't sure of modest. */
+const MAX_GAP = 800;
+
 /** Text set in one paragraph: its main face and size, and Word's line spacing for it. */
 type Lines = { size: number; factor: number; multiple: number };
+
+/**
+ * How a picture floats: "over" the text where it is on the page (a logo in the running header);
+ * "clear", where it is on the page with `below` points kept clear under it and the text going on
+ * below it (a photo across the top of the page, above the margin); "behind" the text, `dy` points
+ * from the paragraph it is anchored in (a photo with a title set over it).
+ */
+type Float = { mode: "over" | "clear" | "behind"; below?: number; dy?: number };
+
+/** A picture as Word shows it: its own size (times `k`), turned, mirrored and cropped as in the PDF; inline, or floating (see Float). */
+function picRun(d: DocxMod, p: Pic, im: ExtractedImage | undefined, k = 1, float?: Float) {
+  if (!im) return null;
+  const px = (pt: number) => Math.max(1, Math.round(pt * k * (96 / 72)));
+  const pct = (f: number) => Math.round(f * 10000) / 100;
+  const emu = (pt: number) => Math.round(pt * 12700);
+  // A turned picture's own box is centred where the turned one shows.
+  const at = { x: p.x + p.w / 2 - p.ow / 2, y: p.y + p.h / 2 - p.oh / 2 };
+  return new d.ImageRun({
+    type: im.mime === "image/png" ? "png" : "jpg",
+    data: im.bytes,
+    transformation: { width: px(p.ow), height: px(p.oh), ...(p.rot ? { rotation: p.rot } : {}), ...(p.flip ? { flip: { horizontal: true } } : {}) },
+    ...(p.crop ? { crop: { left: pct(p.crop.left), top: pct(p.crop.top), right: pct(p.crop.right), bottom: pct(p.crop.bottom) } } : {}),
+    ...(float
+      ? {
+          floating: {
+            horizontalPosition: { relative: d.HorizontalPositionRelativeFrom.PAGE, offset: emu(at.x) },
+            verticalPosition: float.mode === "behind" ? { relative: d.VerticalPositionRelativeFrom.PARAGRAPH, offset: emu((float.dy ?? 0) + at.y - p.y) } : { relative: d.VerticalPositionRelativeFrom.PAGE, offset: emu(at.y) },
+            allowOverlap: true,
+            ...(float.mode === "clear" ? { wrap: { type: d.TextWrappingType.TOP_AND_BOTTOM }, margins: { top: 0, bottom: emu(float.below ?? 0), left: 0, right: 0 } } : { wrap: { type: d.TextWrappingType.NONE } }),
+            ...(float.mode === "behind" ? { behindDocument: true } : {}),
+          },
+        }
+      : {}),
+    altText: { name: im.name, description: "", title: "" },
+    // In a run of tiny type, so the line holding it is no taller than the picture.
+    run: { size: 2 },
+  });
+}
 
 /** Writes structure blocks as Word content, keeping the PDF's fonts, sizes, colours, spacing, boxes and lists. */
 class WordWriter {
@@ -450,6 +594,7 @@ class WordWriter {
     private bs: BodyStyle,
     blocks: SBlock[],
     private layout: PageLayout,
+    private images: Map<string, ExtractedImage> = new Map(),
   ) {
     this.body = { font: wordFont(bs.face, bs.family), size: Math.round(bs.size * 2), color: hex(bs.color) ?? "000000", bold: false, italic: false };
     // Each heading level looks like its first heading (its longest run).
@@ -501,12 +646,14 @@ class WordWriter {
   /**
    * Line spacing for a paragraph: from its own baseline-to-baseline spacing when it has
    * several lines; single lines of large type are set solid, other text like the body.
+   * With `solid`, single lines are always set solid (table cells: the row is as tall as the
+   * PDF's, with no extra line spacing to take back).
    */
-  private linesOf(runs: Run[], leading?: number): Lines {
+  private linesOf(runs: Run[], leading?: number, solid = false): Lines {
     const main = [...runs].sort((x, y) => y.text.length - x.text.length)[0];
     const size = main?.size ?? this.bs.size;
     const factor = LINE_HEIGHT[wordFont(main?.face, main?.family)] ?? 1.17;
-    const multiple = leading ? clamp(leading / (size * factor), 0.9, 3) : size > this.bs.size * 1.15 ? 1 : this.multiple;
+    const multiple = leading ? clamp(leading / (size * factor), 0.9, 3) : solid || size > this.bs.size * 1.15 ? 1 : this.multiple;
     return { size, factor, multiple };
   }
 
@@ -520,7 +667,12 @@ class WordWriter {
   private after(l: Lines, gap?: number, next = 0): number {
     if (gap === undefined) return this.paraAfter;
     const below = l.multiple * l.factor * l.size - 1.12 * l.size;
-    return Math.round(clamp(gap - below - 0.08 * next, 0, 72) * 20);
+    return Math.round(clamp(gap - below - 0.08 * next, 0, MAX_GAP) * 20);
+  }
+
+  /** The paragraph mark in the paragraph's own size: a mark in the larger default size would make its last line taller. */
+  private mark(l: Lines, base: RunBase) {
+    return Math.abs(l.size * 2 - base.size) >= 1 ? { run: { size: Math.round(l.size * 2) } } : {};
   }
 
   private spacing(l: Lines, after: number) {
@@ -534,7 +686,7 @@ class WordWriter {
   private underlined(l: Lines, u: Under | undefined, geo?: Geo) {
     if (!u) return { spacing: this.spacing(l, this.after(l, geo?.gap, geo?.next)) };
     const below = l.multiple * l.factor * l.size - 1.12 * l.size;
-    const after = geo?.gap !== undefined ? Math.round(clamp(geo.gap - u.at - u.h - 0.08 * (geo.next ?? 0), 0, 72) * 20) : this.paraAfter;
+    const after = geo?.gap !== undefined ? Math.round(clamp(geo.gap - u.at - u.h - 0.08 * (geo.next ?? 0), 0, MAX_GAP) * 20) : this.paraAfter;
     return {
       spacing: this.spacing(l, after),
       border: { bottom: { style: this.d.BorderStyle.SINGLE, size: Math.max(2, Math.round(u.h * 8)), color: hex(u.color) ?? "000000", space: Math.round(clamp(u.at - below, 0, 31)) } },
@@ -550,6 +702,7 @@ class WordWriter {
         new d.Paragraph({
           heading: level,
           children: this.runs(b.runs, this.heads[b.level], at.bg),
+          ...this.mark(l, this.heads[b.level]),
           pageBreakBefore: at.pageBreak,
           ...this.underlined(l, b.under, b.geo),
           ...(b.align ? { alignment: b.align === "center" ? d.AlignmentType.CENTER : d.AlignmentType.RIGHT } : {}),
@@ -562,6 +715,7 @@ class WordWriter {
       return [
         new d.Paragraph({
           children: this.runs(b.runs, this.body, at.bg),
+          ...this.mark(l, this.body),
           ...this.tabStops(b.runs, at.width),
           pageBreakBefore: at.pageBreak,
           keepNext: b.keep,
@@ -586,7 +740,7 @@ class WordWriter {
       // An empty paragraph one point tall with its bottom border where the line is.
       const gap = b.geo?.gap;
       // Its one-point line and the rule itself already take some of the gap.
-      const after = gap !== undefined ? Math.round(clamp(gap - 0.08 * (b.geo?.next ?? 0) - 1 - b.h, 0, 72) * 20) : 0;
+      const after = gap !== undefined ? Math.round(clamp(gap - 0.08 * (b.geo?.next ?? 0) - 1 - b.h, 0, MAX_GAP) * 20) : 0;
       return [
         new d.Paragraph({
           children: [],
@@ -598,31 +752,187 @@ class WordWriter {
         }),
       ];
     }
-    if (b.kind === "table") return this.withBreak(this.table(b, at), b.geo, at);
+    if (b.kind === "table") return this.withBreak(this.table(b, at), b.geo, at, b.layout ? this.tailOf(b) : this.overOf(b));
     if (b.kind === "box") return this.withBreak(this.box(b, at), b.geo, at);
+    if (b.kind === "image") return this.picture(b, at);
     if (b.kind === "columns") {
-      // Inside a column, tables and boxes are a column wide.
-      const width = at.cell ? at.width : Math.round((at.width - 360 * (b.count - 1)) / b.count);
-      const inner = b.blocks.flatMap((x, k) => this.block(x, { ...at, width, pageBreak: at.pageBreak && k === 0, cell: true }));
+      // The space between the columns as in the PDF (from where each starts); inside a column, tables and boxes are a column wide.
+      const pitch = b.starts && b.starts.length > 1 ? b.starts[1] - b.starts[0] : 0;
+      const gutter = pitch ? Math.round(clamp(b.count * pitch - at.width / 20, 6, 72) * 20) : 360;
+      const width = at.cell ? at.width : Math.round((at.width - gutter * (b.count - 1)) / b.count);
+      const inner = b.blocks.flatMap((x, k) => this.block(x, { ...at, width, pageBreak: at.pageBreak && k === 0, cell: true, x0: undefined }));
+      // The first column may start lower than the columns do (a heading with space above it, beside a column running on).
+      const g0 = b.blocks.map((x) => ("geo" in x ? x.geo : undefined)).find(Boolean);
+      const drop = g0 && b.geo ? g0.top - 0.08 * g0.first - (b.geo.top - 0.08 * b.geo.first) : 0;
+      if (drop >= 1) inner.unshift(new d.Paragraph({ children: [], spacing: { before: 0, after: 0, line: Math.round(drop * 20), lineRule: d.LineRuleType.EXACT } }));
       // Columns of their own: a section set in columns (not inside a table or box).
-      return at.cell ? content(inner) : [new Columns(b.count), ...content(inner), new Columns(1)];
+      return at.cell ? content(inner) : [new Columns(b.count, gutter), ...content(inner), new Columns(1)];
     }
     return [];
   }
 
-  /** An empty paragraph after a table (it keeps the next table from joining it), exactly as tall as the gap below it in the PDF. */
-  private withBreak(out: DocxOut[], geo: Geo | undefined, at: Where): DocxOut[] {
+  /**
+   * Pictures at their size and place. One goes in a paragraph of its own, set in from the left
+   * as on the page (a wide one reaches into the margins as it does in the PDF); a row of them
+   * goes in a table without lines, each at the top of a column as wide as it, the space
+   * between them kept. Pictures too wide for the room they have shrink to fit.
+   */
+  private picture(b: ImageBlock, at: Where): DocxOut[] {
     const d = this.d;
-    const gap = geo?.gap !== undefined ? clamp(geo.gap - 0.08 * (geo.next ?? 0), 1, 72) : 8;
+    const pics = b.pics.filter((p) => this.images.has(p.id));
+    if (!pics.length) return [];
+    const left = Math.min(...pics.map((p) => p.x));
+    const span = Math.max(...pics.map((p) => p.x + p.w)) - left;
+    const width = at.width / 20;
+    // Room: the text's width in a cell or a column; the page's width, margins and all, elsewhere.
+    const page = at.x0 !== undefined && !at.cell;
+    const k = Math.min(1, (page ? this.layout.width : width) / Math.max(1, span));
+    const shift = at.x0 !== undefined ? left - at.x0 : 0;
+    const x = page ? clamp(shift, -at.x0!, Math.max(0, this.layout.width - at.x0! - span * k)) : clamp(shift, 0, Math.max(0, width - span * k));
+    // Word adds nothing below the pictures but the paragraph mark's line, set tiny.
+    const gap = b.geo?.gap;
+    const after = gap !== undefined ? Math.round(clamp(gap - 0.08 * (b.geo?.next ?? 0), 0, MAX_GAP) * 20) : this.paraAfter;
+    const mark = { size: 2 };
+    const p0 = pics[0];
+    const anchor = (run: ReturnType<typeof picRun>, after = 0) =>
+      new d.Paragraph({ children: run ? [run] : [], pageBreakBefore: at.pageBreak, run: mark, spacing: { before: 0, after: Math.round(clamp(after, 0, MAX_GAP) * 20), line: 20, lineRule: d.LineRuleType.EXACT } });
+    // Text set over the picture (a title on a photo): the picture goes behind the text, where it
+    // is, and the text where it is over it. Its paragraph sits at the picture's top, or at the top
+    // margin for a picture that starts above it.
+    if (pics.length === 1 && b.geo?.under) {
+      const top = page ? Math.max(p0.y, this.layout.top) : p0.y;
+      const after = (gap ?? 0) - 0.08 * (b.geo.next ?? 0) - (top - p0.y) - 1;
+      return [anchor(picRun(d, p0, this.images.get(p0.id), 1, { mode: "behind", dy: p0.y - top }), after)];
+    }
+    // A picture that starts above the top margin (a photo across the top of the page) is fixed
+    // where it is on the page, and the text goes on below it.
+    if (page && pics.length === 1 && p0.y < this.layout.top - 1 && p0.h < this.layout.height * 0.9) {
+      return [anchor(picRun(d, p0, this.images.get(p0.id), 1, { mode: "clear", below: Math.max(0, gap ?? 0) }))];
+    }
+    if (pics.length === 1) {
+      const run = this.imageRun(pics[0], k);
+      const right = Math.min(0, width - (x + span * k));
+      return [
+        new d.Paragraph({
+          children: run ? [run] : [],
+          pageBreakBefore: at.pageBreak,
+          run: mark,
+          spacing: { before: 0, after, line: 240, lineRule: d.LineRuleType.AUTO },
+          ...(x || right ? { indent: { left: Math.round(x * 20), ...(right ? { right: Math.round(right * 20) } : {}) } } : {}),
+        }),
+      ];
+    }
+    // A row: a column for each picture and for each space between two.
+    const none = { style: d.BorderStyle.NONE, size: 0, color: "auto" };
+    const zero = { top: 0, bottom: 0, left: 0, right: 0 };
+    const slots: { w: number; pic?: Pic }[] = [];
+    pics.forEach((p, i) => {
+      if (i) {
+        const gapX = (p.x - (pics[i - 1].x + pics[i - 1].w)) * k;
+        if (gapX >= 0.5) slots.push({ w: gapX });
+      }
+      slots.push({ w: p.w * k, pic: p });
+    });
+    const cells = slots.map((s) => {
+      const run = s.pic ? this.imageRun(s.pic, k) : null;
+      return new d.TableCell({
+        width: { size: Math.round(s.w * 20), type: d.WidthType.DXA },
+        margins: zero,
+        borders: { top: none, bottom: none, left: none, right: none },
+        children: [new d.Paragraph({ children: run ? [run] : [], run: mark, spacing: { before: 0, after: 0, line: 240, lineRule: d.LineRuleType.AUTO } })],
+      });
+    });
+    const cols = slots.map((s) => Math.round(s.w * 20));
+    const table = new d.Table({
+      width: { size: cols.reduce((a, c) => a + c, 0), type: d.WidthType.DXA },
+      columnWidths: cols,
+      layout: d.TableLayoutType.FIXED,
+      ...(x ? { indent: { size: Math.round(x * 20), type: d.WidthType.DXA } } : {}),
+      borders: { top: none, bottom: none, left: none, right: none, insideHorizontal: none, insideVertical: none },
+      margins: zero,
+      rows: [new d.TableRow({ cantSplit: true, children: cells })],
+    });
+    return this.withBreak([table], b.geo, at);
+  }
+
+  private imageRun(p: Pic, k = 1) {
+    return picRun(this.d, p, this.images.get(p.id), k);
+  }
+
+  /** Line spacing of a table's cell text: its usual size, at the spacing measured in its cells. */
+  private cellLines(b: TableBlock): Lines {
+    const sizes = b.cells.flatMap((r) => r.flatMap((c) => c?.geo?.sizes ?? [])).sort((x, y) => x - y);
+    return this.linesOf([{ text: "x", bold: false, italic: false, size: sizes.length ? sizes[sizes.length >> 1] : this.bs.size }], b.leading, true);
+  }
+
+  /** How far a plain table's last line in a row reaches below the row's padding in Word (points): none for a last row of single lines, set solid. */
+  private overOf(b: TableBlock, ri = b.cells.length - 1): number {
+    if (b.lines === "cards" || b.layout) return 0;
+    if ((b.cells[ri] ?? []).every(solidEnd)) return 0;
+    const l = this.cellLines(b);
+    return Math.max(0, l.multiple * l.factor * l.size - 1.12 * l.size - (b.pad?.y ?? 3));
+  }
+
+  /**
+   * The space below a table or box that ends a cell or box, in twips: it goes in the cell's
+   * bottom margin, since readers drop an empty paragraph after a table there.
+   */
+  private below(b: SBlock | undefined): number {
+    const tableLike = b && (b.kind === "table" || b.kind === "box" || (b.kind === "image" && b.pics.length > 1));
+    if (!b || !tableLike || !("geo" in b) || b.geo?.gap === undefined) return 0;
+    const tail = b.kind === "table" ? (b.layout ? this.tailOf(b) : this.overOf(b)) : 0;
+    return Math.round(clamp(b.geo.gap - 0.08 * (b.geo.next ?? 0) - tail, 0, MAX_GAP) * 20);
+  }
+
+  /** The paragraph Word needs after a table that ends a cell: as small as can be. */
+  private stub() {
+    return new this.d.Paragraph({ children: [], spacing: { before: 0, after: 0, line: 20, lineRule: this.d.LineRuleType.EXACT } });
+  }
+
+  /**
+   * How far below its text a table of content set side by side ends in Word: the last line of
+   * its deepest side is as tall as its line spacing, which reaches past the text (points).
+   */
+  private tailOf(b: TableBlock): number {
+    const bottom = b.geo?.bottom;
+    if (bottom === undefined) return 0;
+    return Math.max(
+      0,
+      ...b.cells.flat().map((c) => {
+        const last = c?.blocks?.[c.blocks.length - 1];
+        const g = last && "geo" in last ? last.geo : undefined;
+        if (!last || !g || Math.abs(g.bottom - bottom) > 2 || c?.valign) return 0;
+        const runs = last.kind === "para" || last.kind === "heading" ? last.runs : last.kind === "list" ? last.items[last.items.length - 1] : undefined;
+        if (!runs) return 0;
+        const l = this.linesOf(runs, g.leading);
+        return Math.max(0, l.multiple * l.factor * l.size - 1.12 * l.size);
+      }),
+    );
+  }
+
+  /** An empty paragraph after a table (it keeps the next table from joining it), exactly as tall as the gap below it in the PDF. */
+  private withBreak(out: DocxOut[], geo: Geo | undefined, at: Where, tail = 0): DocxOut[] {
+    const d = this.d;
+    if (at.last) return out;
+    const gap = geo?.gap !== undefined ? clamp(geo.gap - 0.08 * (geo.next ?? 0) - tail, 1, MAX_GAP) : 8;
     out.push(new d.Paragraph({ children: [], spacing: { before: 0, after: 0, line: Math.round(gap * 20), lineRule: d.LineRuleType.EXACT } }));
     return at.pageBreak ? [new d.Paragraph({ children: [], pageBreakBefore: true, spacing: { before: 0, after: 0, line: 20, lineRule: d.LineRuleType.EXACT } }), ...out] : out;
   }
 
   private runs(rs: Run[], base: RunBase, bg?: string) {
     return rs.flatMap((r) => {
-      const o = { ...(this.runOptions(r, base, bg) as object), ...(r.br ? { break: 1 } : {}) } as ConstructorParameters<DocxMod["TextRun"]>[0];
       // A piece set flush right follows a tab (unshaded, so a badge's colour stays on the badge) to the stop at the right edge (see tabStops).
-      return r.tab !== undefined ? [new this.d.TextRun({ children: [new this.d.Tab()] }), new this.d.TextRun(o)] : [new this.d.TextRun(o)];
+      // The tab is set in the size of the text after it, or a larger default size would make the line taller.
+      const size = r.size && Math.abs(r.size * 2 - base.size) >= 1 ? { size: Math.round(r.size * 2) } : {};
+      const tab = r.tab !== undefined ? [new this.d.TextRun({ ...size, children: [new this.d.Tab()] })] : [];
+      const brk = r.br ? [new this.d.TextRun({ ...size, break: 1 })] : [];
+      // A picture in the text, at its size.
+      if (r.pic) {
+        const pic = this.imageRun(r.pic);
+        return [...brk, ...tab, ...(pic ? [pic] : [])];
+      }
+      const o = { ...(this.runOptions(r, base, bg) as object), ...(r.br ? { break: 1 } : {}) } as ConstructorParameters<DocxMod["TextRun"]>[0];
+      return [...tab, new this.d.TextRun(o)];
     });
   }
 
@@ -645,7 +955,8 @@ class WordWriter {
     if (r.family && font !== base.font) o.font = font;
     // Light text shows only on the dark background it was drawn on.
     const behind = r.bg ?? bg;
-    const color = r.color && luminance(r.color) > 0.72 && !(behind && luminance(behind) < 0.55) ? undefined : hex(r.color);
+    // (Text set over a picture keeps its colour: the picture is behind it.)
+    const color = r.color && luminance(r.color) > 0.72 && !(behind && luminance(behind) < 0.55) && !r.onPic ? undefined : hex(r.color);
     if (color && color !== base.color) o.color = color;
     if (r.bg) o.shading = { type: this.d.ShadingType.CLEAR, color: "auto", fill: hex(r.bg) };
     // Tracked-out text keeps its letter-spacing (in twentieths of a point).
@@ -672,7 +983,9 @@ class WordWriter {
       if (f.kind === "bullet" || f.kind === "check") {
         // Word's own bullet glyphs: a dot, "o" in Courier New for a ring, a small square, a dash, a check box.
         const [text, font] = f.kind === "check" ? ["\u2610", "Segoe UI Symbol"] : f.bullet === "◦" ? ["o", "Courier New"] : f.bullet === "▪" || f.bullet === "▫" ? ["\u25AA", "Segoe UI Symbol"] : f.bullet === "–" ? ["\u2013", undefined] : ["\u2022", undefined];
-        return { level: lvl, format: d.LevelFormat.BULLET, text, alignment: d.AlignmentType.START, style: { paragraph: { indent }, run: { ...look, ...(font ? { font } : {}) } } };
+        // A face other than the text's sets its glyph a little smaller, so its taller line doesn't open up the list.
+        const small = font ? { size: Math.round((f.run?.size ?? this.bs.size) * 1.6) } : {};
+        return { level: lvl, format: d.LevelFormat.BULLET, text, alignment: d.AlignmentType.START, style: { paragraph: { indent }, run: { ...look, ...small, ...(font ? { font } : {}) } } };
       }
       const format = { decimal: d.LevelFormat.DECIMAL, lowerLetter: d.LevelFormat.LOWER_LETTER, upperLetter: d.LevelFormat.UPPER_LETTER, lowerRoman: d.LevelFormat.LOWER_ROMAN, upperRoman: d.LevelFormat.UPPER_ROMAN }[f.kind];
       const run = f.run ? { ...look, font: wordFont(f.run.face, f.run.family) } : undefined;
@@ -700,13 +1013,14 @@ class WordWriter {
         // colours one step apart.
         const below = l.multiple * l.factor * l.size - 1.12 * l.size;
         const space = Math.round(clamp(rule.at - below, 0, 30));
-        if (gap !== undefined) after = Math.round(clamp(gap - rule.at - rule.h - 0.08 * (next ?? 0), 0, 72) * 20);
+        if (gap !== undefined) after = Math.round(clamp(gap - rule.at - rule.h - 0.08 * (next ?? 0), 0, MAX_GAP) * 20);
         const color = i % 2 ? shade(hex(rule.color) ?? "000000", 1) : (hex(rule.color) ?? "000000");
         border = { bottom: { style: d.BorderStyle.SINGLE, size: Math.max(2, Math.round(rule.h * 8)), color, space } };
       }
       const spacing = big ? { ...this.spacing(l, after), line: Math.round(l.multiple * l.factor * l.size * 20), lineRule: d.LineRuleType.EXACT } : this.spacing(l, after);
       return new d.Paragraph({
         children: this.runs(it, this.body, at.bg),
+        ...this.mark(l, this.body),
         ...this.tabStops(it, at.width),
         ...(b.align === "justify" ? { alignment: d.AlignmentType.JUSTIFIED } : {}),
         numbering: { reference, level: b.levels[i] ?? 0 },
@@ -724,12 +1038,13 @@ class WordWriter {
     const d = this.d;
     const ps = c?.paras.length ? c.paras : [[]];
     return ps.map((p, pi) => {
-      const l = this.linesOf(p, c?.geo?.leadings[pi] ?? leading);
+      // A paragraph of one line in the PDF is set solid: its own spacing, not the spacing of longer cells.
+      const l = this.linesOf(p, c?.geo ? c.geo.leadings[pi] : leading, true);
       const after = pi < ps.length - 1 ? this.after(l, c?.geo?.gaps[pi] ?? 2, c?.geo?.sizes[pi + 1]) : Math.round(below * 20);
       const alignment = c?.align === "right" ? d.AlignmentType.RIGHT : c?.align === "center" ? d.AlignmentType.CENTER : undefined;
       // A label with its text hanging after it (options in a grid).
       const hang = c?.hang ? { indent: { left: Math.round(c.hang * 20), hanging: Math.round(c.hang * 20) } } : {};
-      return new d.Paragraph({ children: this.runs(p, this.body, bg), ...this.tabStops(p, width), ...hang, spacing: this.spacing(l, after), keepNext: keep, alignment });
+      return new d.Paragraph({ children: this.runs(p, this.body, bg), ...this.mark(l, this.body), ...this.tabStops(p, width), ...hang, spacing: this.spacing(l, after), keepNext: keep, alignment });
     });
   }
 
@@ -767,9 +1082,11 @@ class WordWriter {
     const rowRules = b.lines === "rows" ? b.rowRules : undefined;
     const borders = b.lines === "grid" ? all(line(lc)) : all(none);
     // Cell margins: the PDF's space around cell text, less what Word's taller lines already take.
-    const sizes = b.cells.flatMap((r) => r.flatMap((c) => c?.geo?.sizes ?? []));
-    const l = this.linesOf([{ text: "x", bold: false, italic: false, size: sizes.length ? sizes.sort((x, y) => x - y)[sizes.length >> 1] : this.bs.size }], b.leading);
+    const l = this.cellLines(b);
     const below = l.multiple * l.factor * l.size - 1.12 * l.size;
+    // Where a row's last line reaches further below its text than the row's padding, the next
+    // row's padding above gives up the difference.
+    const over = cards ? 0 : Math.round(Math.max(0, ...b.cells.map((_, ri) => this.overOf(b, ri))) * 20);
     const padX = Math.round((b.pad?.x ?? (cards ? 8 : 5)) * 20);
     const top = Math.round(clamp((b.pad?.y ?? 3) - 0.08 * l.size, 0, 30) * 20);
     const bottom = cards ? 0 : Math.round(clamp((b.pad?.y ?? 3) - below, 0, 30) * 20);
@@ -780,7 +1097,14 @@ class WordWriter {
     const empty = () => new d.Paragraph({ children: [], spacing: { before: 0, after: 0, line: 20, lineRule: d.LineRuleType.EXACT } });
     const spacer = (w: number) => new d.TableCell({ width: { size: w, type: d.WidthType.DXA }, borders: noEdges, margins: { top: 0, bottom: 0, left: 0, right: 0 }, children: [empty()] });
     const rows: InstanceType<DocxMod["TableRow"]>[] = [];
+    // Content set side by side keeps its place, so each cell's left edge on the page is known.
+    const slotX = (si: number) => (b.layout && !at.cell ? b.layout.x + slots.slice(0, si).reduce((a, sl) => a + sl.w, 0) / 20 : undefined);
+    // A row of single lines (set solid): its padding below takes back only a solid line's room, and it runs no further below.
+    const singles = b.cells.map((r) => !cards && r.every(solidEnd));
     b.cells.forEach((r, ri) => {
+      const single = singles[ri];
+      const rowSize = Math.max(0, ...r.flatMap((c) => c?.geo?.sizes ?? []));
+      const solidBottom = single && rowSize ? Math.round(clamp((b.pad?.y ?? 3) - (this.linesOf([{ text: "x", bold: false, italic: false, size: rowSize }], undefined, true).factor - 1.12) * rowSize, 0, 30) * 20) : undefined;
       if (ri > 0 && (b.cardRowGaps?.[ri - 1] ?? 0) >= 3) {
         rows.push(new d.TableRow({ height: { value: Math.round(b.cardRowGaps![ri - 1] * 20), rule: d.HeightRule.EXACT }, children: [new d.TableCell({ columnSpan: slots.length, borders: noEdges, margins: { top: 0, bottom: 0, left: 0, right: 0 }, children: [empty()] })] }));
       }
@@ -790,7 +1114,7 @@ class WordWriter {
           cantSplit: !b.broken && r.every((c) => (c?.paras.length ?? 0) <= 6),
           // A sidebar as tall as in the PDF (no taller than the page's text area).
           ...(b.layout?.h && !at.cell ? { height: { value: Math.round(Math.min(b.layout.h, this.layout.height - this.layout.top - this.layout.bottom - 14) * 20), rule: d.HeightRule.ATLEAST } } : {}),
-          children: slots.map(({ w, ci }) => {
+          children: slots.map(({ w, ci }, si) => {
             if (ci === undefined) return spacer(w);
             const c = r[ci];
             const fill = c?.fill;
@@ -798,16 +1122,34 @@ class WordWriter {
             // Word keeps a table on one page when every row but the last keeps with the next.
             const keep = b.keep && ri < b.cells.length - 1;
             const inner = w - (c?.margins ? Math.round((c.margins.left + c.margins.right) * 20) : padX * 2);
-            const kids: DocxOut[] = c?.blocks?.length ? content(c.blocks.flatMap((x) => this.block(x, { width: inner, bg, cell: true }))) : this.cellParas(c, bg, inner, b.leading, keep, b.rowSpace?.[ri] ?? 0);
-            if (!(kids[kids.length - 1] instanceof d.Paragraph)) kids.push(new d.Paragraph({ children: [] }));
+            const cx = slotX(si);
+            const x0 = cx !== undefined ? cx + (c?.margins ? c.margins.left : padX / 20) : undefined;
+            const nb = c?.blocks?.length ?? 0;
+            const kids: DocxOut[] = nb ? content(c!.blocks!.flatMap((x, k) => this.block(x, { width: inner, bg, cell: true, x0, last: k === nb - 1 }))) : this.cellParas(c, bg, inner, b.leading, keep, b.rowSpace?.[ri] ?? 0);
+            if (!(kids[kids.length - 1] instanceof d.Paragraph)) kids.push(this.stub());
+            const under = nb ? this.below(c!.blocks![nb - 1]) : 0;
             const edge = c?.stroke ? line(hex(c.stroke) ?? "000000", 6) : undefined;
             const rule = (color?: string | null) => (color ? line(hex(color) ?? "000000", 6) : none);
             const cellBorders = cards && edge ? { top: edge, bottom: edge, left: edge, right: edge } : rowRules ? { top: rule(rowRules[ri]), bottom: ri === b.cells.length - 1 ? rule(rowRules[ri + 1]) : none, left: none, right: none } : undefined;
             const cm = c?.margins;
-            const m = cm ? { top: Math.round(cm.top * 20), bottom: Math.round(cm.bottom * 20), left: Math.round(cm.left * 20), right: Math.round(cm.right * 20) } : marginsOf(ci);
+            let m = cm ? { top: Math.round(cm.top * 20), bottom: Math.round(cm.bottom * 20), left: Math.round(cm.left * 20), right: Math.round(cm.right * 20) } : marginsOf(ci);
+            if (!cm && solidBottom !== undefined && solidBottom !== bottom) m = { ...(m ?? { top, bottom, left: padX, right: padX }), bottom: solidBottom };
+            // A line drawn between rows sits in the space between them in the PDF; in Word it adds
+            // its width to the row, so the row's padding gives that much up.
+            const above = b.lines === "grid" ? 10 : rowRules?.[ri] ? 15 : 0;
+            const beneath = ri === b.cells.length - 1 ? (b.lines === "grid" ? 10 : rowRules?.[ri + 1] ? 15 : 0) : 0;
+            // A row as tall as a picture in it: the picture fills its line, with none of a line of text's room above or below.
+            const pictured = !cm && !cards && r.some((x) => x?.paras.some((p) => p.some((run) => run.pic && run.pic.oh > l.size * 1.5)));
+            const lift = ri > 0 && !cm && !pictured && !singles[ri - 1] ? over : 0;
+            if (above || beneath || under || pictured || lift) {
+              const base = m ?? { top, bottom, left: padX, right: padX };
+              const py = Math.round((b.pad?.y ?? 3) * 20);
+              m = { ...base, top: Math.max(0, (pictured ? py : base.top) - above - lift), bottom: Math.max(0, (pictured ? py : base.bottom) - beneath) + under };
+            }
             return new d.TableCell({
               width: { size: w, type: d.WidthType.DXA },
               ...(m ? { margins: m } : {}),
+              ...(c?.valign ? { verticalAlign: c.valign === "center" ? d.VerticalAlignTable.CENTER : d.VerticalAlignTable.BOTTOM } : {}),
               children: kids,
               ...(fill ? { shading: { type: d.ShadingType.CLEAR, color: "auto", fill: hex(fill) } } : {}),
               ...(cellBorders ? { borders: cellBorders } : {}),
@@ -836,8 +1178,11 @@ class WordWriter {
     const none = { style: d.BorderStyle.NONE, size: 0, color: "auto" };
     const padX = Math.round((b.pad?.x ?? 10) * 20);
     const first = b.blocks.map((x) => ("geo" in x ? x.geo : undefined)).find(Boolean)?.first ?? 0;
-    const kids = content(b.blocks.flatMap((x) => this.block(x, { width: at.width - padX * 2, bg: b.fill ?? at.bg, cell: true })));
-    if (!(kids[kids.length - 1] instanceof d.Paragraph)) kids.push(new d.Paragraph({ children: [] }));
+    const x0 = b.geo?.left !== undefined ? b.geo.left + padX / 20 : undefined;
+    const n = b.blocks.length;
+    const kids = content(b.blocks.flatMap((x, k) => this.block(x, { width: at.width - padX * 2, bg: b.fill ?? at.bg, cell: true, x0, last: k === n - 1 })));
+    if (!(kids[kids.length - 1] instanceof d.Paragraph)) kids.push(this.stub());
+    const under = this.below(b.blocks[n - 1]);
     return [
       new d.Table({
         width: { size: at.width, type: d.WidthType.DXA },
@@ -852,7 +1197,7 @@ class WordWriter {
               new d.TableCell({
                 width: { size: at.width, type: d.WidthType.DXA },
                 // The last paragraph's spacing reaches down to the box's edge, so no bottom margin.
-                margins: { top: Math.round(clamp((b.pad?.y ?? 8) - 0.08 * first, 0, 30) * 20), bottom: 0, left: padX, right: padX },
+                margins: { top: Math.round(clamp((b.pad?.y ?? 8) - 0.08 * first, 0, 30) * 20), bottom: under, left: padX, right: padX },
                 ...(b.fill ? { shading: { type: d.ShadingType.CLEAR, color: "auto", fill: hex(b.fill) } } : {}),
                 children: kids,
               }),
@@ -908,12 +1253,12 @@ function fieldRuns(xml: string, pages: number): string {
 }
 
 /** The document split into sections where the number of text columns changes. */
-function sectionsOf(d: DocxMod, children: (DocxOut | Columns)[], layout: PageLayout, furniture?: { header: FurnitureLine[]; footer: FurnitureLine[] }) {
-  const parts: { count: number; children: DocxOut[] }[] = [{ count: 1, children: [] }];
+function sectionsOf(d: DocxMod, children: (DocxOut | Columns)[], layout: PageLayout, furniture?: Furniture, images = new Map<string, ExtractedImage>()) {
+  const parts: { count: number; space?: number; children: DocxOut[] }[] = [{ count: 1, children: [] }];
   for (const c of children) {
     if (c instanceof Columns) {
       if (!parts[parts.length - 1].children.length) parts.pop();
-      parts.push({ count: c.count, children: [] });
+      parts.push({ count: c.count, space: c.space, children: [] });
     } else parts[parts.length - 1].children.push(c);
   }
   // A section set in columns needs one after it, or Word won't balance its columns.
@@ -922,8 +1267,15 @@ function sectionsOf(d: DocxMod, children: (DocxOut | Columns)[], layout: PageLay
   const used = parts.filter((p) => p.children.length);
   // Running header and footer on the first section; later sections carry them on.
   const width = Math.round((layout.width - layout.left - layout.right) * 20);
-  const header = furniture?.header.length ? { headers: { default: new d.Header({ children: furniture.header.map((l) => furnitureParagraph(d, l, width)) }) } } : {};
-  const footer = furniture?.footer.length ? { footers: { default: new d.Footer({ children: furniture.footer.map((l) => furnitureParagraph(d, l, width)) }) } } : {};
+  // Running pictures (a logo in the letterhead) stay where they are on the page, over nothing else.
+  const floats = (at: "header" | "footer") => {
+    const runs = (furniture?.pics ?? []).filter((x) => x.at === at).flatMap(({ pic }) => picRun(d, pic, images.get(pic.id), 1, { mode: "over" }) ?? []);
+    return runs.length ? [new d.Paragraph({ children: runs, spacing: { before: 0, after: 0, line: 20, lineRule: d.LineRuleType.EXACT } })] : [];
+  };
+  const heads = [...floats("header"), ...(furniture?.header ?? []).map((l) => furnitureParagraph(d, l, width))];
+  const feet = [...(furniture?.footer ?? []).map((l) => furnitureParagraph(d, l, width)), ...floats("footer")];
+  const header = heads.length ? { headers: { default: new d.Header({ children: heads }) } } : {};
+  const footer = feet.length ? { footers: { default: new d.Footer({ children: feet }) } } : {};
   // Header and footer where the PDF has them, inside the page margins.
   const page = pageSetup(d, layout);
   const fit = (lines: FurnitureLine[] | undefined, margin: number) => (lines?.length ? Math.round(clamp(Math.min(...lines.map((l) => l.edge)), 12, Math.max(12, margin - lines.length * 12 - 4)) * 20) : undefined);
@@ -935,7 +1287,7 @@ function sectionsOf(d: DocxMod, children: (DocxOut | Columns)[], layout: PageLay
     properties: {
       page: { ...page, margin },
       ...(i > 0 ? { type: d.SectionType.CONTINUOUS } : {}),
-      ...(p.count > 1 ? { column: { count: p.count, space: 360, equalWidth: true } } : {}),
+      ...(p.count > 1 ? { column: { count: p.count, space: p.space ?? 360, equalWidth: true } } : {}),
     },
     children: p.children as never[],
   }));
@@ -959,7 +1311,8 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
   let layout: PageLayout = { width: 595.3, height: 841.9, top: 72, right: 72, bottom: 72, left: 72 };
   let docStyles: ConstructorParameters<typeof d.Document>[0]["styles"];
   let numbering: unknown[] = [];
-  let furniture: { header: FurnitureLine[]; footer: FurnitureLine[] } = { header: [], footer: [] };
+  let furniture: Furniture = { header: [], footer: [] };
+  let images = new Map<string, ExtractedImage>();
   let pageCount = 1;
   if (o.mode === "exact") {
     await withPdfjs(
@@ -983,15 +1336,16 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
       src.password,
     );
   } else {
-    const r = await readStructured(src, onProgress);
+    const r = await readStructured(src, onProgress, { images: o.images !== false });
     const { blocks, body } = r;
     layout = r.layout;
     furniture = r.furniture;
+    images = r.images;
     pageCount = r.pages.length;
     const contentWidth = Math.round((layout.width - layout.left - layout.right) * 20);
-    const imgs = new Map<number, ExtractedImage[]>();
-    if (o.images !== false) for (const im of await extractImages(src, { minSize: 40 }).catch(() => [])) imgs.set(im.page, [...(imgs.get(im.page) ?? []), im]);
-    const w = new WordWriter(d, body, blocks, layout);
+    // Pictures go where the page has them; any whose place couldn't be read, at the end of their page.
+    const imgs = unplaced(r.images, r.pages, r.unread);
+    const w = new WordWriter(d, body, blocks, layout, r.images);
     let page = 0;
     const pushImgs = (p: number) => {
       for (const im of imgs.get(p) ?? []) {
@@ -1000,6 +1354,7 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
       }
     };
     let breakNext = false;
+    let top = true;
     for (const b of blocks) {
       if (b.kind === "pagebreak") {
         pushImgs(page);
@@ -1008,8 +1363,16 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
         breakNext = o.pageBreaks !== false && b.deliberate !== false;
         continue;
       }
-      const out = w.block(b, { width: contentWidth, pageBreak: breakNext });
-      if (out.length) breakNext = false;
+      // The first block on a page starts as far down as it does in the PDF: below an empty
+      // paragraph that tall (readers drop the space before a paragraph at the top of a page).
+      const g = "geo" in b ? b.geo : undefined;
+      const lead = (top || breakNext) && g ? g.top - 0.08 * g.first - layout.top : 0;
+      if (lead >= 1) {
+        children.push(new d.Paragraph({ children: [], pageBreakBefore: breakNext, spacing: { before: 0, after: 0, line: Math.round(lead * 20), lineRule: d.LineRuleType.EXACT } }));
+        breakNext = false;
+      }
+      const out = w.block(b, { width: contentWidth, pageBreak: breakNext, x0: layout.left });
+      if (out.length || lead >= 1) breakNext = top = false;
       children.push(...out);
     }
     pushImgs(page);
@@ -1021,7 +1384,7 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
     title: name,
     styles: docStyles,
     numbering: { config: numbering as never },
-    sections: sectionsOf(d, children, layout, furniture),
+    sections: sectionsOf(d, children, layout, furniture, images),
   });
   let bytes: Uint8Array = new Uint8Array(await (await d.Packer.toBlob(doc)).arrayBuffer());
   const zip = await JSZip.loadAsync(bytes);
