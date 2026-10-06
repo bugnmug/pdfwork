@@ -890,7 +890,7 @@ export const TOOLS: Tool[] = [
     slug: "pdf-to-excel",
     name: "PDF to Excel",
     blurb: "Tables become real rows and columns.",
-    long: "Detects table columns from the layout and puts each value in its own cell, with numbers stored as numbers. One sheet per page, or everything on one sheet.",
+    long: "Rebuilds each table with its header, shading and lines. Figures become numbers and percentages shown as printed, dates become dates, and codes keep their leading zeros. One sheet per page, or everything on one sheet, where a table that runs over several pages (a bank statement) becomes one.",
     category: "from-pdf",
     icon: "Table2",
     ui: "workspace",

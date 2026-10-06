@@ -225,10 +225,10 @@ export const CASES = [
       const d = docxLayout(h, first(s, ".docx").path);
       const shapes = d.tables.map((t) => `${t.cells.length}x${t.cells[0].length}`).join(" ");
       return ok([
-        shapes === "5x4 4x2 5x4 3x5" ? `tables ${shapes}` : `✗ tables ${shapes}`,
+        shapes === "5x4 4x2 5x4 4x5" ? `tables ${shapes}` : `✗ tables ${shapes}`,
         d.tables[1]?.cells[1]?.[1]?.endsWith("in any way at all.") ? "wrapped cell kept whole" : "✗ wrapped cell split",
         d.tables[2]?.cells[4]?.join("|") === "Total|4,63,600|2,92,800|1,70,800" ? "totals row" : "✗ totals row",
-        d.tables[3]?.cells[0]?.[1] === "2025 results overall / Deals" ? "grouped header" : "✗ grouped header",
+        d.tables[3]?.cells[0]?.slice(1, 3).every((c) => c === "2025 results overall") && d.tables[3]?.cells[1]?.join("|") === "Region|Deals|Value|Deals|Value" ? "grouped header over its two columns" : "✗ grouped header",
         d.body.some((p) => p.startsWith("Paragraph after table A")) ? "paragraph after table" : "✗ paragraph swallowed",
         d.body.some((p) => p.startsWith("Figures in rupees")) ? "note after table" : "✗ note swallowed",
       ]);
@@ -388,6 +388,73 @@ export const CASES = [
   { id: "pdf-to-word-exact", slug: "pdf-to-word", files: ["cmp-a.pdf"], options: { mode: "exact" }, check: (s, h) => {
       const o = h.officeText(first(s, ".docx").path);
       return ok([o.ok ? "opens in LibreOffice" : "✗ " + o.note]);
+  } },
+  // A bank statement on one sheet: one table of transactions, its header once, real dates and
+  // numbers, references kept as text, and totals that agree with the statement's own summary.
+  { id: "pdf-to-excel-statement", slug: "pdf-to-excel", files: ["statement.pdf"], options: { oneSheet: true }, check: (s, h) => {
+      const r = JSON.parse(py(h, `import openpyxl,json,datetime
+wb=openpyxl.load_workbook(${JSON.stringify(first(s, ".xlsx").path)});ws=wb.active
+rows=[[c.value for c in r] for r in ws.iter_rows()]
+D=datetime.datetime
+hd=[i for i,r in enumerate(rows) if r[:7]==['Date','Narration','Chq./Ref.No.','Value Dt','Withdrawal Amt.','Deposit Amt.','Closing Balance']]
+body=[r for r in rows[hd[0]+1:] if isinstance(r[0],D)] if hd else []
+sm=[i for i,r in enumerate(rows) if r[0]=='Opening Balance']
+tot=rows[sm[0]+1] if sm else []
+cells=[v for r in rows for v in r if v is not None]
+print(json.dumps({"sheets":len(wb.worksheets),"heads":len(hd),"n":len(body),
+"open":body[0][1]=='OPENING BALANCE' and body[0][0]==D(2026,8,1) and body[0][6]==48210.55 if body else False,
+"refs":all(r[2] is None or (isinstance(r[2],str) and r[2].startswith('000')) for r in body[1:]),
+"dates":all(isinstance(r[3],D) for r in body[1:]),"fmt":ws.cell(row=hd[0]+3,column=1).number_format if hd else '',
+"sums":bool(tot) and abs(sum(r[4] or 0 for r in body)-tot[3])<0.01 and abs(sum(r[5] or 0 for r in body)-tot[4])<0.01 and abs(body[-1][6]-tot[5])<0.01,
+"account":'50100123456789' in cells,"bank":sum(1 for v in cells if v=='NORTHBRIDGE BANK'),"pages":any('Page 1' in str(v) for v in cells),
+"wrapped":'BIL/ONL/000123456789/METRO POWER/MUMBAI ELECTRICITY BILL AUG' in cells}))`));
+      return ok([
+        expect(r.sheets === 1 && r.heads === 1 && r.n === 67, `one table of 67 rows, header once (${r.sheets} sheets, ${r.heads} headers, ${r.n} rows)`),
+        expect(r.open, "opening balance row, dated"),
+        expect(r.dates && r.fmt === "dd\\/mm\\/yy", "value dates are dates, shown day first"),
+        expect(r.refs, "references keep their leading zeros"),
+        expect(r.sums, "withdrawals, deposits and closing balance agree with the summary"),
+        expect(r.account, "account number kept as text"),
+        expect(r.bank === 1 && !r.pages, "letterhead once, no page numbers"),
+        expect(r.wrapped, "wrapped description in one cell"),
+      ]);
+  } },
+  { id: "pdf-to-excel-income-statement", slug: "pdf-to-excel", files: ["income-statement.pdf"], check: (s, h) => {
+      const r = JSON.parse(py(h, `import openpyxl,json
+ws=openpyxl.load_workbook(${JSON.stringify(first(s, ".xlsx").path)}).active
+row=lambda k:next((r for r in ws.iter_rows() if r[0].value==k),None)
+rv=row('Revenue');cs=row('Cost of sales');ip=row('Impairment of goodwill');bp=row('Basic (pence)')
+yr=next((c for r in ws.iter_rows() for c in r if c.value=='Year to 31 March'),None)
+print(json.dumps({"revenue":[c.value for c in rv[1:6]] if rv else None,"indent":rv[0].alignment.indent if rv else 0,
+"neg":[cs[2].value,cs[2].number_format] if cs else None,"pct":[rv[5].number_format] if rv else None,"nil":ip[2].value if ip else None,
+"merged":any(str(m).startswith(yr.coordinate+':') and m.max_col-m.min_col==1 for m in ws.merged_cells.ranges) if yr else False,
+"k":any(c.value=='£000' for r in ws.iter_rows() for c in r),"eps":[c.value for c in bp[1:5]] if bp else None}))`));
+      return ok([
+        expect(JSON.stringify(r.revenue) === "[3,412870,389114,23756,0.061]", `revenue row as numbers (${JSON.stringify(r.revenue)})`),
+        expect(r.indent >= 1, "items indented under their section"),
+        expect(r.neg?.[0] === -251032 && /\(#,##0\)/.test(r.neg?.[1] ?? ""), "bracketed figures negative, still shown in brackets"),
+        expect(r.pct?.[0] === "0.0%", "percentages as percentages"),
+        expect(r.nil === "—", "a dash for nil stays a dash"),
+        expect(r.merged, "heading over two columns spans them"),
+        expect(r.k, "£000 stays a heading"),
+        expect(JSON.stringify(r.eps) === "[8,18.42,13.21,5.21]", "earnings per share rows in the same table"),
+      ]);
+  } },
+  { id: "pdf-to-excel-price-list", slug: "pdf-to-excel", files: ["price-list.pdf"], check: (s, h) => {
+      const r = JSON.parse(py(h, `import openpyxl,json,datetime
+ws=openpyxl.load_workbook(${JSON.stringify(first(s, ".xlsx").path)}).active
+row=next((r for r in ws.iter_rows() if r[0].value=='000142'),None)
+grp=next((c for r in ws.iter_rows() for c in r if c.value=='Adhesives and sealants'),None)
+print(json.dumps({"row":[c.value if not isinstance(c.value,datetime.datetime) else c.value.strftime('%Y-%m-%d') for c in row[:9]] if row else None,
+"fmts":[row[3].number_format,row[4].number_format] if row else None,
+"group":any(str(m).startswith(grp.coordinate+':') and m.max_col-m.min_col==8 for m in ws.merged_cells.ranges) if grp else False,
+"landscape":ws.page_setup.orientation}))`));
+      return ok([
+        expect(JSON.stringify(r.row) === '["000142","Wood screw, 4 x 40 mm, zinc","Box of 200",12.4,0.15,10.54,1240,"Next day","2026-09-14"]', `a row in nine columns, typed (${JSON.stringify(r.row)})`),
+        expect(r.fmts?.[0] === '"$"0.00' && r.fmts?.[1] === "0%", "prices and discounts keep their look"),
+        expect(r.group, "group names across the table"),
+        expect(r.landscape === "landscape", "prints landscape like the PDF"),
+      ]);
   } },
   { id: "pdf-to-excel", slug: "pdf-to-excel", files: ["text.pdf"], check: (s, h) => {
       const x = first(s, ".xlsx");

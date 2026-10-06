@@ -196,6 +196,12 @@ export type TextItem = {
   face?: string;
   /** Letter-spacing: extra space after each character, as a fraction of the font size (tracked-out labels). */
   track?: number;
+  /**
+   * Gaps the reader closed up with a space inside this item (two table cells set close
+   * together come through as one item): the space's index in `str`, where the gap starts
+   * and how wide it is, in the upright frame (points).
+   */
+  gaps?: { at: number; x: number; w: number }[];
 };
 
 /** A filled or stroked shape (rectangle, rule, box), as its bounding box in the visual frame; `round` when drawn with curves. */
@@ -214,9 +220,11 @@ const DESC = 0.22;
 
 /**
  * A space the worker inferred from a gap between glyphs: a marker, then the gap's width
- * in thousandths of the font size as one private-use character (scripts/copy-assets.mjs).
+ * in thousandths of the font size as one private-use character and, after a second marker,
+ * where in the item the gap starts (hundredths of a unit of its width, two 12-bit
+ * characters; scripts/copy-assets.mjs).
  */
-const INFERRED = /\u0091([\uE000-\uEFFF])/g;
+const INFERRED = /\u0091([\uE000-\uEFFF])(?:\u0092([\uE000-\uEFFF])([\uE000-\uEFFF]))?/g;
 
 /**
  * Settle inferred spaces. In letter-spaced text (tracked-out labels) nearly every pair
@@ -228,12 +236,18 @@ export function cleanItemText(str: string): string {
   return settleItemText(str).str;
 }
 
-/** cleanItemText, also giving the letter-spacing of tracked-out text (a fraction of the font size). */
-export function settleItemText(str: string): { str: string; track?: number } {
+/**
+ * cleanItemText, also giving the letter-spacing of tracked-out text (a fraction of the font
+ * size) and the spaces that stand for gaps: their index in the text, the gap's width (a
+ * fraction of the font size) and, where known, where it starts in the item (its width's units).
+ */
+export function settleItemText(str: string): { str: string; track?: number; gaps?: { at: number; em: number; off?: number }[] } {
   let out = str;
   let track: number | undefined;
+  const found: { at: number; em: number; off?: number }[] = [];
   if (out.includes("\u0091")) {
-    const gaps = [...out.matchAll(INFERRED)].map((m) => (m[1].charCodeAt(0) - 0xe000) / 1000);
+    const ms = [...out.matchAll(INFERRED)];
+    const gaps = ms.map((m) => (m[1].charCodeAt(0) - 0xe000) / 1000);
     const letters = out.replace(INFERRED, "").replace(/\s+/g, "").length;
     let word = 0;
     if (gaps.length >= 3 && gaps.length >= (letters - 1) * 0.5) {
@@ -243,9 +257,18 @@ export function settleItemText(str: string): { str: string; track?: number } {
       const within = sorted.filter((g) => g <= word);
       track = within.length ? within[Math.floor(within.length / 2)] : undefined;
     }
-    out = out.replace(INFERRED, (_, g: string) => ((g.charCodeAt(0) - 0xe000) / 1000 > word ? " " : ""));
+    let res = "";
+    let last = 0;
+    ms.forEach((m, k) => {
+      res += out.slice(last, m.index);
+      last = m.index! + m[0].length;
+      if (gaps[k] <= word) return;
+      found.push({ at: res.length, em: gaps[k], ...(m[2] ? { off: ((m[2].charCodeAt(0) - 0xe000) * 4096 + (m[3].charCodeAt(0) - 0xe000)) / 100 } : {}) });
+      res += " ";
+    });
+    out = res + out.slice(last);
   }
-  return { str: out.replace(/\u02BC/g, "\u2019").replace(/\u02EE/g, "\u201D"), ...(track && track > 0.02 ? { track } : {}) };
+  return { str: out.replace(/\u02BC/g, "\u2019").replace(/\u02EE/g, "\u201D"), ...(track && track > 0.02 ? { track } : {}), ...(found.length ? { gaps: found } : {}) };
 }
 
 /** Text items with geometry in the visual frame (handles /Rotate, crop offsets and rotated text). */
@@ -256,7 +279,7 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
   const items: TextItem[] = [];
   for (const raw of content.items) {
     if (!("str" in raw)) continue;
-    const item = raw as { str: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean; color?: string };
+    const item = raw as { str: string; dir?: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean; color?: string };
     const settled = settleItemText(item.str);
     item.str = settled.str;
     if (!item.str) continue;
@@ -268,7 +291,8 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
     const dir = ((((Math.round(ang / 90) * 90) % 360) + 360) % 360) as Dir;
     const ax = m[0] / len;
     const ay = m[1] / len;
-    const w = Math.abs(item.width) * (len / Math.max(1e-6, Math.hypot(item.transform[0], item.transform[1])));
+    const unit = len / Math.max(1e-6, Math.hypot(item.transform[0], item.transform[1]));
+    const w = Math.abs(item.width) * unit;
     const ox = m[4];
     const oy = m[5];
     // Upright frame: rotate the page so this text reads left to right, origin at its top-left.
@@ -310,6 +334,8 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
       hasEOL: item.hasEOL,
       ...(item.color && /^#[0-9a-f]{6}$/.test(item.color) ? { color: item.color } : {}),
       ...(settled.track ? { track: settled.track } : {}),
+      // (Where each closed-up gap sits; text set right to left is reordered, so its gaps are left out.)
+      ...(settled.gaps?.some((g) => g.off !== undefined) && item.dir !== "rtl" ? { gaps: settled.gaps.flatMap((g) => (g.off !== undefined ? [{ at: g.at, x: X + g.off * unit, w: g.em * fontSize }] : [])) } : {}),
     });
   }
   return { page: page.pageNumber, width: viewport.width, height: viewport.height, items };
@@ -569,13 +595,24 @@ function count(items: TextItem[]) {
   return items.reduce((n, i) => n + i.str.length, 0);
 }
 
+/**
+ * Whether the gap between two pieces of text on a line is a space: wider than a fifth of the
+ * type size, or, after an opening bracket or before closing punctuation (a symbol drawn in
+ * another font leaves a little gap), clearly wider.
+ */
+export function spaced(before: string, after: string, gap: number, size: number): boolean {
+  if (!before || /\s$/.test(before) || /^\s/.test(after)) return false;
+  const tight = /[([{“‘]$/.test(before) || /^[)\]}”’.,;:!?%]/.test(after);
+  return gap > size * (tight ? 0.45 : 0.18);
+}
+
 function finishLine(l: Line) {
   l.items.sort((a, b) => a.x - b.x);
   let text = "";
   let prevEnd = -Infinity;
   for (const it of l.items) {
     const gap = it.x - prevEnd;
-    if (text && gap > it.fontSize * 0.18 && !/\s$/.test(text) && !/^\s/.test(it.str)) text += " ";
+    if (spaced(text, it.str, gap, it.fontSize)) text += " ";
     text += it.str;
     prevEnd = it.x + it.w;
   }

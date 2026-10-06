@@ -1,0 +1,123 @@
+<!doctype html>
+<!-- A three-page bank statement as a bank's reporting system prints one (all names and numbers
+     made up): a letterhead repeated on every page, the customer's details beside the account's,
+     a table of 66 transactions with its header repeated on each page, dates beside descriptions
+     with little space between, reference numbers with leading zeros, descriptions that wrap,
+     amounts with a running balance, a summary table drawn as a grid, and page numbers. PDF to
+     Excel must give one table of transactions on one sheet, with real dates and numbers, the
+     references kept as text, and the summary's totals equal to the column sums. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+body { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 7.6pt; color: #111; }
+.sheet { width: 210mm; height: 297mm; padding: 12mm 10mm 14mm; box-sizing: border-box; position: relative; break-after: page; overflow: hidden; }
+.top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #004c8f; padding-bottom: 5pt; margin-bottom: 8pt; }
+.bank { font-size: 16pt; font-weight: bold; color: #004c8f; letter-spacing: 0.5pt; }
+.bank small { display: block; font-size: 7pt; font-weight: normal; color: #444; letter-spacing: 0; }
+.title { text-align: right; font-size: 10pt; font-weight: bold; }
+.title span { display: block; font-size: 7.5pt; font-weight: normal; }
+.cust { display: flex; justify-content: space-between; margin-bottom: 8pt; }
+.cust div { width: 48%; line-height: 1.45; }
+.kv { display: grid; grid-template-columns: 34mm 1fr; }
+.kv b { font-weight: bold; }
+table { width: 100%; border-collapse: collapse; }
+th { background: #004c8f; color: #fff; font-weight: bold; text-align: left; padding: 3pt 3pt; font-size: 7.4pt; }
+td { padding: 2.6pt 3pt; vertical-align: top; border-bottom: 0.5pt solid #c9d3df; }
+tbody tr:nth-child(even) td { background: #eef3f9; }
+.n { text-align: right; white-space: nowrap; }
+td:nth-child(1), td:nth-child(4) { white-space: nowrap; }
+td:nth-child(2) { width: 62mm; }
+.foot { position: absolute; left: 10mm; right: 10mm; bottom: 7mm; display: flex; justify-content: space-between; font-size: 6.8pt; color: #555; border-top: 0.5pt solid #999; padding-top: 3pt; }
+.summary { margin-top: 10pt; width: 60%; }
+.summary td { border: 0.5pt solid #9aa9bb; background: none !important; }
+.summary th { background: #dfe8f3; color: #111; border: 0.5pt solid #9aa9bb; }
+.end { margin-top: 8pt; font-size: 7pt; color: #333; }
+</style></head><body>
+<div class="sheet">
+<div class="top"><div class="bank">NORTHBRIDGE BANK<small>Northbridge Bank Ltd. Andheri East Branch, Mumbai 400069</small></div><div class="title">Statement of Account<span>From 01/08/2026 To 30/09/2026</span></div></div>
+<div class="cust"><div><b>MR. KABIR ANAND</b><br>Flat 1204, Lakeview Towers<br>Powai, Mumbai 400076<br>Maharashtra, India</div><div class="kv"><span>Account No</span><b>: 50100123456789</b><span>Account Type</span><span>: Savings Regular</span><span>Branch IFSC</span><span>: NBBK0000418</span><span>Currency</span><span>: INR</span><span>Customer ID</span><span>: 00418273</span><span>Nomination</span><span>: Registered</span></div></div>
+<table><thead><tr><th>Date</th><th>Narration</th><th>Chq./Ref.No.</th><th>Value Dt</th><th class=n>Withdrawal Amt.</th><th class=n>Deposit Amt.</th><th class=n>Closing Balance</th></tr></thead><tbody>
+<tr><td>01/08/26</td><td>OPENING BALANCE</td><td></td><td></td><td class=n></td><td class=n></td><td class=n>48,210.55</td></tr>
+<tr><td>02/08/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000059081935</td><td>02/08/26</td><td class=n>403.76</td><td class=n></td><td class=n>47,806.79</td></tr>
+<tr><td>04/08/26</td><td>NEFT CR-SBNK0001234-ACME SOFTWARE PVT LTD-SALARY AUG 2026</td><td>000019375836</td><td>04/08/26</td><td class=n></td><td class=n>185,400.00</td><td class=n>233,206.79</td></tr>
+<tr><td>04/08/26</td><td>POS 416021XXXXXX1234 CITY MART MUMBAI</td><td>000094641177</td><td>04/08/26</td><td class=n>531.86</td><td class=n></td><td class=n>232,674.93</td></tr>
+<tr><td>06/08/26</td><td>UPI/CR/624512345678/RAHUL MEHTA/KBNK/rahulm@okkbnk/Payment from Phone</td><td>000084714297</td><td>06/08/26</td><td class=n></td><td class=n>553.22</td><td class=n>233,228.15</td></tr>
+<tr><td>06/08/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000034256684</td><td>06/08/26</td><td class=n>26,552.89</td><td class=n></td><td class=n>206,675.26</td></tr>
+<tr><td>06/08/26</td><td>CHQ PAID-MICR CTS-NO.000318-ANITA DESAI</td><td>000316</td><td>06/08/26</td><td class=n>9,507.50</td><td class=n></td><td class=n>197,167.76</td></tr>
+<tr><td>08/08/26</td><td>UPI/CR/624512345678/RAHUL MEHTA/KBNK/rahulm@okkbnk/Payment from Phone</td><td>000072492024</td><td>08/08/26</td><td class=n></td><td class=n>3,431.71</td><td class=n>200,599.47</td></tr>
+<tr><td>10/08/26</td><td>BIL/ONL/000123456789/METRO POWER/MUMBAI ELECTRICITY BILL AUG</td><td>000020986393</td><td>10/08/26</td><td class=n>376.50</td><td class=n></td><td class=n>200,222.97</td></tr>
+<tr><td>12/08/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000091733095</td><td>12/08/26</td><td class=n>5,363.20</td><td class=n></td><td class=n>194,859.77</td></tr>
+<tr><td>12/08/26</td><td>POS 416021XXXXXX1234 CITY MART MUMBAI</td><td>000066599395</td><td>12/08/26</td><td class=n>1,741.31</td><td class=n></td><td class=n>193,118.46</td></tr>
+<tr><td>12/08/26</td><td>UPI/DR/624533334444/SHOPKART PAY/UBNK/shopkart@ubank/Order 402-1234567-7654321</td><td>000055650450</td><td>12/08/26</td><td class=n>3,746.19</td><td class=n></td><td class=n>189,372.27</td></tr>
+<tr><td>13/08/26</td><td>CHQ PAID-MICR CTS-NO.000318-ANITA DESAI</td><td>000369</td><td>13/08/26</td><td class=n>487.27</td><td class=n></td><td class=n>188,885.00</td></tr>
+<tr><td>14/08/26</td><td>UPI/DR/624533334444/SHOPKART PAY/UBNK/shopkart@ubank/Order 402-1234567-7654321</td><td>000069812891</td><td>14/08/26</td><td class=n>17,145.87</td><td class=n></td><td class=n>171,739.13</td></tr>
+<tr><td>15/08/26</td><td>INT.PD:31-07-2026 TO 31-08-2026</td><td>000032555071</td><td>15/08/26</td><td class=n></td><td class=n>2,669.73</td><td class=n>174,408.86</td></tr>
+<tr><td>17/08/26</td><td>POS 416021XXXXXX1234 CITY MART MUMBAI</td><td>000043234300</td><td>17/08/26</td><td class=n>16,347.55</td><td class=n></td><td class=n>158,061.31</td></tr>
+<tr><td>18/08/26</td><td>INT.PD:31-07-2026 TO 31-08-2026</td><td>000083744576</td><td>18/08/26</td><td class=n></td><td class=n>3,432.18</td><td class=n>161,493.49</td></tr>
+<tr><td>19/08/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000058153450</td><td>19/08/26</td><td class=n>5,306.32</td><td class=n></td><td class=n>156,187.17</td></tr>
+<tr><td>20/08/26</td><td>UPI/DR/624598765432/QUICKBITE/QBNK/quickbite@qbank/Food order</td><td>000011619076</td><td>20/08/26</td><td class=n>203.76</td><td class=n></td><td class=n>155,983.41</td></tr>
+<tr><td>21/08/26</td><td>CHQ PAID-MICR CTS-NO.000318-ANITA DESAI</td><td>000394</td><td>21/08/26</td><td class=n>11,244.35</td><td class=n></td><td class=n>144,739.06</td></tr>
+<tr><td>23/08/26</td><td>CHQ PAID-MICR CTS-NO.000318-ANITA DESAI</td><td>000467</td><td>23/08/26</td><td class=n>36,931.27</td><td class=n></td><td class=n>107,807.79</td></tr>
+<tr><td>23/08/26</td><td>BIL/ONL/000123456789/METRO POWER/MUMBAI ELECTRICITY BILL AUG</td><td>000062664205</td><td>23/08/26</td><td class=n>37,482.47</td><td class=n></td><td class=n>70,325.32</td></tr>
+<tr><td>24/08/26</td><td>INT.PD:31-07-2026 TO 31-08-2026</td><td>000019039243</td><td>24/08/26</td><td class=n></td><td class=n>403.18</td><td class=n>70,728.50</td></tr>
+<tr><td>24/08/26</td><td>BIL/ONL/000123456789/METRO POWER/MUMBAI ELECTRICITY BILL AUG</td><td>000086072408</td><td>24/08/26</td><td class=n>213.09</td><td class=n></td><td class=n>70,515.41</td></tr>
+<tr><td>24/08/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000457</td><td>24/08/26</td><td class=n></td><td class=n>163.20</td><td class=n>70,678.61</td></tr>
+</tbody></table>
+<div class="foot"><span>Northbridge Bank Ltd. Registered office: Northbridge House, Lower Parel, Mumbai 400013</span><span>Page 1 of 3</span></div>
+</div>
+<div class="sheet">
+<div class="top"><div class="bank">NORTHBRIDGE BANK<small>Northbridge Bank Ltd. Andheri East Branch, Mumbai 400069</small></div><div class="title">Statement of Account<span>From 01/08/2026 To 30/09/2026</span></div></div>
+<table><thead><tr><th>Date</th><th>Narration</th><th>Chq./Ref.No.</th><th>Value Dt</th><th class=n>Withdrawal Amt.</th><th class=n>Deposit Amt.</th><th class=n>Closing Balance</th></tr></thead><tbody>
+<tr><td>25/08/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000026487605</td><td>25/08/26</td><td class=n>5,772.89</td><td class=n></td><td class=n>64,905.72</td></tr>
+<tr><td>25/08/26</td><td>BIL/ONL/000123456789/METRO POWER/MUMBAI ELECTRICITY BILL AUG</td><td>000029343122</td><td>25/08/26</td><td class=n>894.34</td><td class=n></td><td class=n>64,011.38</td></tr>
+<tr><td>25/08/26</td><td>IMPS/P2A/624511112222/PRIYA SHARMA/Rent September</td><td>000013099855</td><td>25/08/26</td><td class=n>30,914.04</td><td class=n></td><td class=n>33,097.34</td></tr>
+<tr><td>25/08/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000376</td><td>25/08/26</td><td class=n></td><td class=n>38,909.25</td><td class=n>72,006.59</td></tr>
+<tr><td>25/08/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000081483341</td><td>25/08/26</td><td class=n>505.09</td><td class=n></td><td class=n>71,501.50</td></tr>
+<tr><td>27/08/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000361</td><td>27/08/26</td><td class=n></td><td class=n>350.33</td><td class=n>71,851.83</td></tr>
+<tr><td>28/08/26</td><td>UPI/DR/624598765432/QUICKBITE/QBNK/quickbite@qbank/Food order</td><td>000047502921</td><td>28/08/26</td><td class=n>243.93</td><td class=n></td><td class=n>71,607.90</td></tr>
+<tr><td>29/08/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000056911734</td><td>29/08/26</td><td class=n>18,394.11</td><td class=n></td><td class=n>53,213.79</td></tr>
+<tr><td>30/08/26</td><td>POS 416021XXXXXX1234 CITY MART MUMBAI</td><td>000074780629</td><td>30/08/26</td><td class=n>260.78</td><td class=n></td><td class=n>52,953.01</td></tr>
+<tr><td>01/09/26</td><td>CHQ PAID-MICR CTS-NO.000318-ANITA DESAI</td><td>000321</td><td>01/09/26</td><td class=n>29,507.21</td><td class=n></td><td class=n>23,445.80</td></tr>
+<tr><td>01/09/26</td><td>INT.PD:31-07-2026 TO 31-08-2026</td><td>000068240437</td><td>01/09/26</td><td class=n></td><td class=n>721.49</td><td class=n>24,167.29</td></tr>
+<tr><td>02/09/26</td><td>NEFT CR-SBNK0001234-ACME SOFTWARE PVT LTD-SALARY SEP 2026</td><td>000021397668</td><td>02/09/26</td><td class=n></td><td class=n>185,400.00</td><td class=n>209,567.29</td></tr>
+<tr><td>02/09/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000098027796</td><td>02/09/26</td><td class=n>1,040.50</td><td class=n></td><td class=n>208,526.79</td></tr>
+<tr><td>02/09/26</td><td>CHQ PAID-MICR CTS-NO.000318-ANITA DESAI</td><td>000339</td><td>02/09/26</td><td class=n>5,899.56</td><td class=n></td><td class=n>202,627.23</td></tr>
+<tr><td>04/09/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000326</td><td>04/09/26</td><td class=n></td><td class=n>40,952.05</td><td class=n>243,579.28</td></tr>
+<tr><td>06/09/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000013757254</td><td>06/09/26</td><td class=n>435.72</td><td class=n></td><td class=n>243,143.56</td></tr>
+<tr><td>07/09/26</td><td>UPI/DR/624598765432/QUICKBITE/QBNK/quickbite@qbank/Food order</td><td>000083061791</td><td>07/09/26</td><td class=n>2,126.75</td><td class=n></td><td class=n>241,016.81</td></tr>
+<tr><td>08/09/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000088295746</td><td>08/09/26</td><td class=n>38,317.34</td><td class=n></td><td class=n>202,699.47</td></tr>
+<tr><td>10/09/26</td><td>INT.PD:31-07-2026 TO 31-08-2026</td><td>000080263864</td><td>10/09/26</td><td class=n></td><td class=n>758.25</td><td class=n>203,457.72</td></tr>
+<tr><td>12/09/26</td><td>UPI/CR/624512345678/RAHUL MEHTA/KBNK/rahulm@okkbnk/Payment from Phone</td><td>000033131984</td><td>12/09/26</td><td class=n></td><td class=n>795.70</td><td class=n>204,253.42</td></tr>
+<tr><td>12/09/26</td><td>BIL/ONL/000123456789/METRO POWER/MUMBAI ELECTRICITY BILL AUG</td><td>000079571586</td><td>12/09/26</td><td class=n>8,223.19</td><td class=n></td><td class=n>196,030.23</td></tr>
+<tr><td>14/09/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000363</td><td>14/09/26</td><td class=n></td><td class=n>475.64</td><td class=n>196,505.87</td></tr>
+<tr><td>14/09/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000018505221</td><td>14/09/26</td><td class=n>114.60</td><td class=n></td><td class=n>196,391.27</td></tr>
+<tr><td>15/09/26</td><td>IMPS/P2A/624511112222/PRIYA SHARMA/Rent September</td><td>000047203213</td><td>15/09/26</td><td class=n>24,437.81</td><td class=n></td><td class=n>171,953.46</td></tr>
+<tr><td>16/09/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000433</td><td>16/09/26</td><td class=n></td><td class=n>39,894.04</td><td class=n>211,847.50</td></tr>
+<tr><td>17/09/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000331</td><td>17/09/26</td><td class=n></td><td class=n>1,933.20</td><td class=n>213,780.70</td></tr>
+</tbody></table>
+<div class="foot"><span>Northbridge Bank Ltd. Registered office: Northbridge House, Lower Parel, Mumbai 400013</span><span>Page 2 of 3</span></div>
+</div>
+<div class="sheet">
+<div class="top"><div class="bank">NORTHBRIDGE BANK<small>Northbridge Bank Ltd. Andheri East Branch, Mumbai 400069</small></div><div class="title">Statement of Account<span>From 01/08/2026 To 30/09/2026</span></div></div>
+<table><thead><tr><th>Date</th><th>Narration</th><th>Chq./Ref.No.</th><th>Value Dt</th><th class=n>Withdrawal Amt.</th><th class=n>Deposit Amt.</th><th class=n>Closing Balance</th></tr></thead><tbody>
+<tr><td>18/09/26</td><td>BIL/ONL/000123456789/METRO POWER/MUMBAI ELECTRICITY BILL AUG</td><td>000099855030</td><td>18/09/26</td><td class=n>339.10</td><td class=n></td><td class=n>213,441.60</td></tr>
+<tr><td>19/09/26</td><td>POS 416021XXXXXX1234 CITY MART MUMBAI</td><td>000059148289</td><td>19/09/26</td><td class=n>31,780.32</td><td class=n></td><td class=n>181,661.28</td></tr>
+<tr><td>19/09/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000063453132</td><td>19/09/26</td><td class=n>803.92</td><td class=n></td><td class=n>180,857.36</td></tr>
+<tr><td>20/09/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000079203339</td><td>20/09/26</td><td class=n>5,145.47</td><td class=n></td><td class=n>175,711.89</td></tr>
+<tr><td>21/09/26</td><td>IMPS/P2A/624511112222/PRIYA SHARMA/Rent September</td><td>000012614954</td><td>21/09/26</td><td class=n>2,718.74</td><td class=n></td><td class=n>172,993.15</td></tr>
+<tr><td>22/09/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000459</td><td>22/09/26</td><td class=n></td><td class=n>19,836.40</td><td class=n>192,829.55</td></tr>
+<tr><td>23/09/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000326</td><td>23/09/26</td><td class=n></td><td class=n>867.84</td><td class=n>193,697.39</td></tr>
+<tr><td>23/09/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000066673996</td><td>23/09/26</td><td class=n>302.97</td><td class=n></td><td class=n>193,394.42</td></tr>
+<tr><td>24/09/26</td><td>INT.PD:31-07-2026 TO 31-08-2026</td><td>000053895707</td><td>24/09/26</td><td class=n></td><td class=n>26,541.42</td><td class=n>219,935.84</td></tr>
+<tr><td>24/09/26</td><td>ACH D- TP ACH SURELIFE INSURANCE-1234567890</td><td>000046094290</td><td>24/09/26</td><td class=n>127.17</td><td class=n></td><td class=n>219,808.67</td></tr>
+<tr><td>24/09/26</td><td>UPI/DR/624533334444/SHOPKART PAY/UBNK/shopkart@ubank/Order 402-1234567-7654321</td><td>000018941925</td><td>24/09/26</td><td class=n>152.62</td><td class=n></td><td class=n>219,656.05</td></tr>
+<tr><td>25/09/26</td><td>POS 416021XXXXXX1234 CITY MART MUMBAI</td><td>000093443625</td><td>25/09/26</td><td class=n>2,629.67</td><td class=n></td><td class=n>217,026.38</td></tr>
+<tr><td>25/09/26</td><td>UPI/CR/624512345678/RAHUL MEHTA/KBNK/rahulm@okkbnk/Payment from Phone</td><td>000045150991</td><td>25/09/26</td><td class=n></td><td class=n>512.07</td><td class=n>217,538.45</td></tr>
+<tr><td>25/09/26</td><td>ATM WDL/ANDHERI EAST/0811</td><td>000048917884</td><td>25/09/26</td><td class=n>245.45</td><td class=n></td><td class=n>217,293.00</td></tr>
+<tr><td>26/09/26</td><td>CHQ DEP - CLEARING - 000417 - KBNK BANK</td><td>000309</td><td>26/09/26</td><td class=n></td><td class=n>2,279.66</td><td class=n>219,572.66</td></tr>
+<tr><td>26/09/26</td><td>UPI/CR/624512345678/RAHUL MEHTA/KBNK/rahulm@okkbnk/Payment from Phone</td><td>000042974546</td><td>26/09/26</td><td class=n></td><td class=n>3,710.35</td><td class=n>223,283.01</td></tr>
+</tbody></table>
+<table class="summary"><tr><th>Opening Balance</th><th>Dr Count</th><th>Cr Count</th><th class=n>Debits</th><th class=n>Credits</th><th class=n>Closing Bal</th></tr><tr><td class=n>48,210.55</td><td class=n>43</td><td class=n>23</td><td class=n>384,918.45</td><td class=n>559,990.91</td><td class=n>223,283.01</td></tr></table>
+<p class="end">Generated on 01/10/2026 10:42. This is a computer generated statement and does not require a signature. Contents of this statement will be considered correct if no error is reported within 30 days of receipt.</p>
+<div class="foot"><span>Northbridge Bank Ltd. Registered office: Northbridge House, Lower Parel, Mumbai 400013</span><span>Page 3 of 3</span></div>
+</div>
+</body></html>

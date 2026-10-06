@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- An income statement as annual reports set one: a heading centred over each pair of
+     columns above the columns' own headings, a "Note" heading set between the two header rows,
+     indented items under their section, subtotals with rules above, figures in thousands with
+     negatives in brackets, a dash for nil and percentages. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 18mm 16mm; }
+body { font-family: Georgia, serif; font-size: 9.5pt; color: #222; }
+h1 { font-size: 15pt; margin: 0 0 2pt; font-weight: normal; }
+.sub { color: #555; margin: 0 0 14pt; }
+table { border-collapse: collapse; width: 100%; }
+th { font-weight: bold; font-size: 8.5pt; text-align: right; padding: 3pt 6pt; }
+th.l { text-align: left; }
+th[colspan] { text-align: center; }
+thead tr:first-child th[colspan] { border-bottom: 0.6pt solid #222; }
+thead tr:last-child th { border-bottom: 1pt solid #222; }
+td { padding: 3pt 6pt; text-align: right; }
+td.l { text-align: left; }
+td.i1 { padding-left: 18pt; }
+.tot td { font-weight: bold; border-top: 0.6pt solid #222; }
+.grand td { font-weight: bold; border-top: 0.6pt solid #222; border-bottom: 2pt double #222; }
+.sec td { font-weight: bold; padding-top: 9pt; }
+.note { font-size: 8pt; color: #555; margin-top: 12pt; }
+</style></head><body>
+<h1>Harbourline Retail plc</h1>
+<p class="sub">Consolidated income statement for the year ended 31 March 2026 (in thousands of pounds)</p>
+<table>
+<thead>
+<tr><th class="l" rowspan="2"></th><th rowspan="2">Note</th><th colspan="2">Year to 31 March</th><th colspan="2">Change</th></tr>
+<tr><th>2026</th><th>2025</th><th>£000</th><th>%</th></tr>
+</thead>
+<tbody>
+<tr class="sec"><td class="l" colspan="6">Continuing operations</td></tr>
+<tr><td class="l i1">Revenue</td><td>3</td><td>412,870</td><td>389,114</td><td>23,756</td><td>6.1%</td></tr>
+<tr><td class="l i1">Cost of sales</td><td></td><td>(251,032)</td><td>(240,377)</td><td>(10,655)</td><td>4.4%</td></tr>
+<tr class="tot"><td class="l">Gross profit</td><td></td><td>161,838</td><td>148,737</td><td>13,101</td><td>8.8%</td></tr>
+<tr><td class="l i1">Distribution costs</td><td></td><td>(48,210)</td><td>(46,935)</td><td>(1,275)</td><td>2.7%</td></tr>
+<tr><td class="l i1">Administrative expenses</td><td>4</td><td>(61,447)</td><td>(58,019)</td><td>(3,428)</td><td>5.9%</td></tr>
+<tr><td class="l i1">Other operating income</td><td></td><td>2,315</td><td>1,980</td><td>335</td><td>16.9%</td></tr>
+<tr><td class="l i1">Impairment of goodwill</td><td>9</td><td>&mdash;</td><td>(4,500)</td><td>4,500</td><td>n/a</td></tr>
+<tr class="tot"><td class="l">Operating profit</td><td>5</td><td>54,496</td><td>41,263</td><td>13,233</td><td>32.1%</td></tr>
+<tr><td class="l i1">Finance income</td><td>6</td><td>1,204</td><td>866</td><td>338</td><td>39.0%</td></tr>
+<tr><td class="l i1">Finance costs</td><td>6</td><td>(7,931)</td><td>(8,402)</td><td>471</td><td>(5.6%)</td></tr>
+<tr class="tot"><td class="l">Profit before tax</td><td></td><td>47,769</td><td>33,727</td><td>14,042</td><td>41.6%</td></tr>
+<tr><td class="l i1">Income tax expense</td><td>7</td><td>(11,942)</td><td>(8,094)</td><td>(3,848)</td><td>47.5%</td></tr>
+<tr class="grand"><td class="l">Profit for the year</td><td></td><td>35,827</td><td>25,633</td><td>10,194</td><td>39.8%</td></tr>
+<tr class="sec"><td class="l" colspan="6">Earnings per share</td></tr>
+<tr><td class="l i1">Basic (pence)</td><td>8</td><td>18.42</td><td>13.21</td><td>5.21</td><td>39.4%</td></tr>
+<tr><td class="l i1">Diluted (pence)</td><td>8</td><td>18.10</td><td>13.02</td><td>5.08</td><td>39.0%</td></tr>
+</tbody></table>
+<p class="note">The notes on pages 84 to 131 form part of these financial statements. Figures in brackets are negative.</p>
+</body></html>

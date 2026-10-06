@@ -119,7 +119,10 @@ async function buildPdfWorker() {
   patch(
     "fake space marker",
     '        if (textContentItem.initialized) {\n          resetLastChars();\n          textContentItem.str.push(" ");\n',
-    '        if (textContentItem.initialized) {\n          resetLastChars();\n          textContentItem.str.push("\\u0091" + String.fromCharCode(0xe000 + Math.min(4095, Math.round(Math.abs(width / textContentItem.spaceInFlowMin) * SPACE_IN_FLOW_MIN_FACTOR * 1000))));\n',
+    // The gap's width (thousandths of the font size), then where in the item it starts
+    // (hundredths of a unit of the item's width, as two 12-bit characters): text that ran
+    // together across a narrow gap (table cells) can be cut there exactly.
+    '        if (textContentItem.initialized) {\n          resetLastChars();\n          const dypOff = Math.min(16777215, Math.round(Math.abs(textContentItem.totalWidth + textContentItem.width * textContentItem.textAdvanceScale) * 100));\n          textContentItem.str.push("\\u0091" + String.fromCharCode(0xe000 + Math.min(4095, Math.round(Math.abs(width / textContentItem.spaceInFlowMin) * SPACE_IN_FLOW_MIN_FACTOR * 1000))) + "\\u0092" + String.fromCharCode(0xe000 + (dypOff >> 12)) + String.fromCharCode(0xe000 + (dypOff & 4095)));\n',
   );
   // 3. Text colour: track the fill colour and report it on each item, starting a new
   //    item where the colour changes. Colours in spaces that can't be read without

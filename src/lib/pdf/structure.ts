@@ -5,7 +5,7 @@
  * running headers, footers and page numbers removed. Text keeps its font, size and colour.
  * Used by PDF → Word / HTML / EPUB / Markdown / Excel.
  */
-import { toLines, type Line, type PageText, type Pic, type Shape, type TextItem } from "./pdfjs";
+import { spaced, toLines, type Line, type PageText, type Pic, type Shape, type TextItem } from "./pdfjs";
 
 export type Family = "sans" | "serif" | "mono";
 export type Run = {
@@ -55,6 +55,10 @@ export type Cell = {
   hang?: number;
   /** Text set in the middle, or at the foot, of a taller row. */
   valign?: "center" | "bottom";
+  /** The cell runs across this many columns (a group's name across the table, a heading over columns); the cells it covers are empty. */
+  span?: number;
+  /** Its text sits this far in from where its column's text starts (an item under a subtotal's name), in points. */
+  indent?: number;
 };
 /**
  * Where a block sits, in points: the top of its first line (or its box) and the bottom of its
@@ -129,6 +133,8 @@ export type SBlock =
       cells: Cell[][];
       /** The first row is a header row. */
       header: boolean;
+      /** How many rows at the top are header rows, where more than one (a heading over two columns above their own). */
+      head?: number;
       /** Relative column widths, summing to 1. */
       widths: number[];
       /** Where the table sits: its left edge from the left edge of the text around it, and its width (points). */
@@ -202,7 +208,7 @@ function segmentOf(items: TextItem[]): Segment {
   let text = "";
   let x2 = -Infinity;
   for (const it of items) {
-    if (text && it.x - x2 > it.fontSize * 0.18 && !/\s$/.test(text) && !/^\s/.test(it.str)) text += " ";
+    if (spaced(text, it.str, it.x - x2, it.fontSize)) text += " ";
     text += it.str;
     x2 = Math.max(x2, it.x + it.w);
   }
@@ -281,7 +287,7 @@ function relayout(l: SLine) {
   let text = "";
   let prevEnd = -Infinity;
   for (const it of l.items) {
-    if (text && it.x - prevEnd > it.fontSize * 0.18 && !/\s$/.test(text) && !/^\s/.test(it.str)) text += " ";
+    if (spaced(text, it.str, it.x - prevEnd, it.fontSize)) text += " ";
     text += it.str;
     prevEnd = Math.max(prevEnd, it.x + it.w);
   }
@@ -382,7 +388,7 @@ function itemsRuns(items: Item[], dom?: number): Run[] {
     if (!it.str) continue;
     let text = it.str;
     const last = runs[runs.length - 1];
-    if (last && it.x - prevEnd > it.fontSize * 0.18 && !/\s$/.test(last.text) && !/^\s/.test(text)) text = " " + text;
+    if (last && spaced(last.text, text, it.x - prevEnd, it.fontSize)) text = " " + text;
     const r = itemRun(it, text, dom);
     if (last && !last.pic && !r.pic && (sameStyle(last, r) || !text.trim())) last.text += text;
     else if (last && /^\s+$/.test(last.text) && runs.length > 1) {
@@ -424,6 +430,8 @@ function joinRuns(target: Run[], add: Run[]) {
   if (!add.length) return;
   const last = target[target.length - 1];
   if (last && /[a-z]-$/.test(last.text) && /^[a-z]/.test(add[0].text)) last.text = last.text.slice(0, -1);
+  // A word broken at its own hyphen (a code, a name) closes up again: LTD-SALARY.
+  else if (last && /[A-Za-z0-9]-$/.test(last.text) && /^[A-Za-z0-9]/.test(add[0].text)) return void target.push(...add.map((r) => ({ ...r })));
   else if (last && !/\s$/.test(last.text)) last.text += " ";
   target.push(...add.map((r) => ({ ...r })));
 }
@@ -450,6 +458,9 @@ function endedEarly(prev: SLine, next: SLine, ctx: Ctx): boolean {
   const need = (first.w * word.length) / (str.length || 1) + next.dom * 0.25 + 0.5;
   const width = ctx.x1 - ctx.x0;
   const room = ctx.x1 - (prev.x + prev.w);
+  // A long line stopping mid-sentence, the sentence going on in lower case below, wrapped there
+  // (the text is set narrower than the page's).
+  if (prev.w >= width * 0.5 && !/[.:;!?]["”’)]?$/.test(prev.text) && /^\p{Ll}/u.test(next.text)) return false;
   if (room >= 1.5) return room > need;
   const flushRight = Math.abs(next.x + next.w - ctx.x1) < 1.5 && prev.x - ctx.x0 > width * 0.3;
   return flushRight && prev.x - ctx.x0 > need;
@@ -488,7 +499,7 @@ function sliceItems(items: Item[], x0: number, x1 = Infinity): Item[] {
     const a = Math.max(0, Math.round((x0 - it.x) / cw));
     const b = Math.min(n, Math.round((x1 - it.x) / cw));
     if (b <= a) continue;
-    out.push({ ...it, str: it.str.slice(a, b), x: it.x + a * cw, w: (b - a) * cw });
+    out.push({ ...it, str: it.str.slice(a, b), x: it.x + a * cw, w: (b - a) * cw, gaps: it.gaps?.filter((g) => g.at >= a && g.at < b).map((g) => ({ ...g, at: g.at - a })) });
   }
   return out;
 }
@@ -500,8 +511,21 @@ const normalize = (s: string) => s.replace(/\d+/g, "#").replace(/\s+/g, " ").tri
 /** Lines that repeat at the top or bottom of many pages (running heads, page numbers). */
 function furniture(pages: { lines: Line[]; height: number }[]): Set<string> {
   const counts = new Map<string, number>();
+  // A table's header repeated at the top of each page it runs onto is the table's, not the page's:
+  // the lines right under it have their pieces in its columns.
+  const heads = (ls: Line[], i: number) => {
+    const sg = segments(ls[i]);
+    const next = ls.slice(i + 1, i + 5);
+    if (sg.length < 3 || next.length < 2 || next[0].y - (ls[i].y + ls[i].h) > ls[i].h * 2) return false;
+    return (
+      next.filter((n) => {
+        const ns = segments(n);
+        return ns.length >= 2 && sg.filter((g) => ns.some((x) => Math.min(g.x2, x.x2) - Math.max(g.x, x.x) > 0)).length >= 2;
+      }).length >= 2
+    );
+  };
   for (const p of pages) {
-    const edge = p.lines.filter((l) => l.y < p.height * 0.1 || l.y + l.h > p.height * 0.9);
+    const edge = p.lines.filter((l, i) => (l.y < p.height * 0.1 || l.y + l.h > p.height * 0.9) && !(l.y < p.height * 0.1 && heads(p.lines, i)));
     for (const key of new Set(edge.map((l) => normalize(l.text)))) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   // On every page of a two-page document, or on at least half the pages (three or more) of a longer one.
@@ -1572,15 +1596,22 @@ function romanValue(s: string): number {
 function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
   const out: SBlock[] = [];
   if (!lines.length) return out;
-  const segs = lines.map(segments);
+  const segs = lines.map((l) => splitAtRules(segments(l), ctx.vrules, l));
   let para: { runs: Run[]; first: SLine; last: SLine; lines: SLine[]; bar?: string } | null = null;
+  // The lines each paragraph was made from (a table's header set above it may be among them).
+  const lineOf = new Map<SBlock, SLine[]>();
   const flush = () => {
     if (para) {
       const runs = mergeRuns(para.runs);
       const align = alignOf(para.lines, ctx);
       // Centred and flush-right text sits by its alignment, not by indents.
-      const indent = align.align === "center" || align.align === "right" ? {} : indentOf(para.lines, ctx);
-      if (runs.length) out.push({ kind: "para", runs, page: ctx.page, ...align, ...indent, ...(para.bar ? { bar: para.bar } : {}), geo: geoOf(para.lines) });
+      // (Its lines all wrapped where they had to, none broken on purpose: a measure of its own shows.)
+      const indent = align.align === "center" || align.align === "right" ? {} : indentOf(para.lines, ctx, !para.runs.some((r) => r.br) && align.align !== "justify");
+      if (runs.length) {
+        const b: SBlock = { kind: "para", runs, page: ctx.page, ...align, ...indent, ...(para.bar ? { bar: para.bar } : {}), geo: geoOf(para.lines) };
+        out.push(b);
+        lineOf.set(b, para.lines);
+      }
     }
     para = null;
   };
@@ -1616,7 +1647,9 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
       const rows = lines.slice(i, t.end);
       const py = t.pad?.y ?? 0;
       const geo: Geo = { top: Math.min(...rows.map((l) => l.y)) - py, bottom: Math.max(...rows.map((l) => l.y + l.h)) + py, first: 0, last: 0 };
-      out.push({ kind: "table", rows: t.cells.map((r) => r.map((c) => c.text)), cells: t.cells, header: t.header, widths: t.widths, span: t.span, page: ctx.page, pad: t.pad, inset: t.inset, leading: t.leading, ...(t.rowSpace ? { rowSpace: t.rowSpace } : {}), ...(t.lines ? { lines: t.lines, lineColor: t.lineColor, rowRules: t.rowRules } : {}), geo });
+      const tb: TableBlock = { kind: "table", rows: t.cells.map((r) => r.map((c) => c.text)), cells: t.cells, header: t.header, ...(t.head ? { head: t.head } : {}), widths: t.widths, span: t.span, page: ctx.page, pad: t.pad, inset: t.inset, leading: t.leading, ...(t.rowSpace ? { rowSpace: t.rowSpace } : {}), ...(t.lines ? { lines: t.lines, lineColor: t.lineColor, rowRules: t.rowRules } : {}), geo };
+      headsAbove(out, tb, t.bands, lines[i], lineOf, ctx);
+      out.push(tb);
       i = t.end;
       continue;
     }
@@ -1624,7 +1657,9 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
     if (tabbed) {
       flush();
       const left = l.x - ctx.x0;
-      out.push({ kind: "para", runs: tabbed, page: ctx.page, ...(left > 2 ? { indent: { left, first: 0 } } : {}), geo: geoOf([l]) });
+      const tb: SBlock = { kind: "para", runs: tabbed, page: ctx.page, ...(left > 2 ? { indent: { left, first: 0 } } : {}), geo: geoOf([l]) };
+      out.push(tb);
+      lineOf.set(tb, [l]);
       i++;
       continue;
     }
@@ -1665,6 +1700,76 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
   }
   flush();
   return out;
+}
+
+type TableBlock = Extract<SBlock, { kind: "table" }>;
+
+/**
+ * Lines set just above a table that head its columns (a heading centred over two columns, a
+ * label set between two header rows): taken from the paragraphs they were read into and made
+ * the table's header rows, each piece in the column (or columns) it sits over.
+ */
+function headsAbove(out: SBlock[], tb: TableBlock, bands: Band[], first: SLine, lineOf: Map<SBlock, SLine[]>, ctx: Ctx) {
+  const n = tb.cells[0]?.length ?? 0;
+  if (n < 2 || bands.length !== n) return;
+  // Each column reaches halfway across the gaps on either side of its text.
+  const edges = [bands[0].x0 - 6, ...bands.slice(1).map((b, k) => (bands[k].x1 + b.x0) / 2), bands[n - 1].x1 + 6];
+  const rowsAbove: { y: number; y1: number; cells: Cell[] }[] = [];
+  let topRow = { y: first.y, y1: first.y + first.h, cells: tb.cells[0] };
+  let top = first.y;
+  const taken: SBlock[] = [];
+  for (let k = out.length - 1; k >= 0; k--) {
+    const b = out[k];
+    const ls = lineOf.get(b);
+    if (!ls || b.kind !== "para" || b.page !== tb.page) break;
+    let ok = true;
+    const rows: { y: number; y1: number; cells: Cell[] }[] = [];
+    for (const l of [...ls].reverse()) {
+      const sg = segments(l);
+      // Close above, no bigger than the table's text, short pieces each over its own columns.
+      if (top - (l.y + l.h) > l.h * 1.6 || l.dom > ctx.body * 1.3 || sg.length > n || sg.some((g) => g.text.length > 40)) {
+        ok = false;
+        break;
+      }
+      const cols = sg.map((g) => {
+        const over = edges.slice(0, -1).flatMap((x, c) => (Math.min(g.x2, edges[c + 1]) - Math.max(g.x, x) > Math.max(2, (g.x2 - g.x) * 0.2) ? [c] : []));
+        return { g, from: over[0], span: over.length };
+      });
+      if (cols.some((c) => c.from === undefined) || cols.every((c) => c.from === 0) || l.x < edges[0] - 4 || l.x + l.w > edges[n] + 4) {
+        ok = false;
+        break;
+      }
+      const cellAt = (c: { g: Segment; span: number }): Cell => {
+        const runs = mergeRuns(itemsRuns(c.g.items as Item[], (l as SLine).dom));
+        return { paras: [runs], text: runsText(runs), ...(c.span > 1 ? { span: c.span, align: "center" as const } : {}) };
+      };
+      // A label reaching down beside the row below it (set between two header rows) fills that row's empty cell.
+      const into = rows[rows.length - 1] ?? topRow;
+      if (l.y + l.h > into.y - 1 && cols.every((c) => Array.from({ length: c.span }, (_, q) => !into.cells[c.from! + q]?.paras.length).every(Boolean))) {
+        for (const c of cols) into.cells[c.from!] = { ...cellAt(c), ...(into.cells[c.from!]?.fill ? { fill: into.cells[c.from!].fill } : {}) };
+        into.y = Math.min(into.y, l.y);
+      } else {
+        const cells: Cell[] = Array.from({ length: n }, () => ({ paras: [], text: "" }));
+        for (const c of cols) cells[c.from!] = cellAt(c);
+        rows.push({ y: l.y, y1: l.y + l.h, cells });
+      }
+      top = Math.min(top, l.y);
+    }
+    if (!ok) break;
+    taken.push(b);
+    rowsAbove.push(...rows);
+    topRow = rowsAbove[rowsAbove.length - 1] ?? topRow;
+  }
+  if (!taken.length) return;
+  for (const b of taken) out.splice(out.indexOf(b), 1);
+  const extra = rowsAbove.reverse().map((r) => r.cells);
+  tb.cells.unshift(...extra);
+  tb.rows = tb.cells.map((r) => r.map((c) => c.text));
+  tb.head = extra.length + (tb.header ? 1 : 0);
+  tb.header = true;
+  if (tb.geo) tb.geo.top = Math.min(tb.geo.top, top - (tb.pad?.y ?? 0));
+  if (tb.rowRules) tb.rowRules = [...extra.map(() => null), ...tb.rowRules];
+  if (tb.rowSpace) tb.rowSpace = [...extra.map(() => 0), ...tb.rowSpace];
 }
 
 /**
@@ -1713,7 +1818,7 @@ function alignOf(lines: SLine[], ctx: Ctx): { align?: "center" | "right" | "just
 }
 
 /** A paragraph's indents: where its lines start, and how far the first line sits in (or hangs out). */
-function indentOf(lines: SLine[], ctx: Ctx): { indent?: { left: number; first: number; right?: number } } {
+function indentOf(lines: SLine[], ctx: Ctx, wrapped = false): { indent?: { left: number; first: number; right?: number } } {
   if (lines.length < 2) {
     const left = lines[0] ? lines[0].x - ctx.x0 : 0;
     return left >= (lines[0]?.dom ?? 10) * 0.5 ? { indent: { left, first: 0 } } : {};
@@ -1724,7 +1829,19 @@ function indentOf(lines: SLine[], ctx: Ctx): { indent?: { left: number; first: n
   // A justified block narrower than the text around it (an abstract, a quotation) is indented on the right too.
   const body = lines.slice(0, -1);
   const edge = Math.max(...lines.map((l) => l.x + l.w));
-  const right = lines.length >= 3 && body.every((l) => edge - (l.x + l.w) < 1.2) && ctx.x1 - edge >= size * 0.5 ? ctx.x1 - edge : 0;
+  let right = lines.length >= 3 && body.every((l) => edge - (l.x + l.w) < 1.2) && ctx.x1 - edge >= size * 0.5 ? ctx.x1 - edge : 0;
+  // Ragged text set narrower than the column (every line broke with room for the next word):
+  // as narrow, between its longest line and the shortest that would have taken the next word.
+  if (!right && wrapped) {
+    const fits = body.map((l, k) => {
+      const nx = lines[k + 1];
+      const it = nx.items.find((i) => i.str.trim());
+      const str = it ? it.str.trimStart() : "";
+      return l.x + l.w + nx.dom * 0.28 + (it ? (it.w * (str.split(/\s/)[0].length || 1)) / (str.length || 1) : 0);
+    });
+    const most = Math.min(...fits);
+    if (most < ctx.x1 - size * 0.5 && most > edge) right = ctx.x1 - (edge + most) / 2;
+  }
   return Math.abs(first) >= size * 0.5 || left >= size * 0.5 || right ? { indent: { left: Math.max(0, left), first, ...(right ? { right } : {}) } } : {};
 }
 
@@ -1826,7 +1943,10 @@ function proseSides(sides: SLine[][], body: number): boolean {
     const right = Math.max(...text.map((l) => l.x + l.w));
     const full = text.filter((l) => l.x + l.w >= right - (right - left) * 0.3 || /[.!?:]["”’)]?$/.test(l.text)).length;
     const avg = text.reduce((n, l) => n + l.text.length, 0) / text.length;
-    return full / text.length >= 0.7 && avg >= 20;
+    // Prose is words: mostly letters (columns of figures fill their lines just as evenly).
+    const all = text.map((l) => l.text.replace(/\s/g, "")).join("");
+    const letters = (all.match(/\p{L}/gu) ?? []).length;
+    return full / text.length >= 0.7 && avg >= 20 && letters >= all.length * 0.6;
   });
 }
 
@@ -2367,29 +2487,10 @@ function listToken(m: Marker): string {
 
 /* ------------------------------------------------------------- tables */
 
-/** Page → rows of cells for spreadsheets: tables become cells, other lines stay in column A. */
-export function pageGrid(pt: PageText): string[][] {
-  const lines = toLines(pt);
-  const segs = lines.map(segments);
-  const rows: string[][] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const t = findTable(lines, segs, i);
-    if (t) {
-      rows.push(...t.cells.map((r) => r.map((c) => c.text)));
-      i = t.end;
-      continue;
-    }
-    rows.push([lines[i].text]);
-    i++;
-  }
-  return rows;
-}
-
 type Band = { x0: number; x1: number };
 /** A piece of text placed in a column; `span` marks a heading that stretches over several columns. */
 type Placed = Segment & { y: number; h: number; base: number; size: number; bold: boolean; band: number; span: boolean };
-type TableHit = { end: number; cells: Cell[][]; header: boolean; widths: number[]; span?: { x: number; w: number }; lines?: "rows" | "grid"; lineColor?: string; rowRules?: (string | null)[]; pad?: { x: number; y: number }; inset?: number; leading?: number; rules: Rule[]; rowSpace?: number[] };
+type TableHit = { end: number; cells: Cell[][]; header: boolean; head?: number; widths: number[]; bands: Band[]; span?: { x: number; w: number }; lines?: "rows" | "grid"; lineColor?: string; rowRules?: (string | null)[]; pad?: { x: number; y: number }; inset?: number; leading?: number; rules: Rule[]; rowSpace?: number[] };
 type TableCtx = { body: number; hrules: Rule[]; used?: Set<Rule>; vrules: Rule[]; fills: Box[]; outlines: Box[]; marks?: Mark[]; x0?: number; x1?: number };
 
 /** Left edges that line up across at least `min` of the given lines. */
@@ -2425,12 +2526,247 @@ function splitAtStarts(sg: Segment, starts: number[]): Segment[] {
   return parts.filter((p) => p.length).map(segmentOf);
 }
 
+/* Widths of the printable ASCII characters (space to tilde) in Helvetica and Times, thousandths of
+   an em: to estimate where each character of a run of text sits. */
+const SANS_W = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584];
+const SERIF_W = [250,333,408,500,500,833,778,180,333,333,500,564,250,333,250,278,500,500,500,500,500,500,500,500,500,500,278,278,564,564,564,444,921,722,667,667,722,611,556,722,722,333,389,722,611,889,722,722,556,722,667,556,611,722,722,944,722,722,611,333,278,333,469,500,333,444,500,444,500,444,333,500,500,278,278,500,278,778,500,500,500,500,333,389,278,500,500,722,500,500,444,480,200,480,541];
+const glyphW = (c: string, family: TextItem["family"]) => {
+  if (family === "mono") return 600;
+  const k = c.charCodeAt(0) - 32;
+  if (k >= 0 && k < 95) return (family === "serif" ? SERIF_W : SANS_W)[k];
+  return /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(c) ? 1000 : family === "serif" ? 500 : 556;
+};
+
+/**
+ * An item cut where its text runs across a column's edge: a PDF reader runs two cells together
+ * when the space between them is under about half a character, putting a single space for it.
+ * Each space in the item is a possible cut; one is taken where the word after it starts at a
+ * column start (`starts`) or the word before it ends at a column's flush-right edge (`ends`),
+ * as estimated from typical glyph widths fitted to the item's width.
+ */
+function cutAtColumns(it: TextItem, starts: number[], ends: number[], tight: number[] = []): TextItem[] {
+  const str = it.str;
+  if (str.trim().length < 3 || !/\S\s+\S/.test(str)) return [it];
+  // Where the reader marked the gap, its place is exact: cut where it lines up with a column's
+  // edge, or holds one found down the rows.
+  if (it.gaps?.length) {
+    const g = it.gaps.find((q) => starts.some((x) => Math.abs(x - (q.x + q.w)) <= 1.5) || ends.some((x) => Math.abs(x - q.x) <= 1.5) || tight.some((x) => x >= q.x - 0.5 && x <= q.x + q.w + 0.5));
+    if (!g) return [it];
+    const [left, right] = cutAtGap(it, g);
+    return [...cutAtColumns(left, starts, ends, tight), ...cutAtColumns(right, starts, ends, tight)];
+  }
+  const ws = Array.from(str, (c) => glyphW(c, it.family));
+  const total = ws.reduce((a, b) => a + b, 0) || 1;
+  const at: number[] = [0];
+  for (const w of ws) at.push(at[at.length - 1] + (w / total) * it.w);
+  // Also the widths as set at the item's size, counted from either end: exact where the gap the
+  // space stands for is wide (scaling would spread it over every character).
+  const nat: number[] = [0];
+  for (const w of ws) nat.push(nat[nat.length - 1] + (w / 1000) * it.fontSize);
+  const n = str.length;
+  const tol = Math.max(2, it.fontSize * 0.35);
+  for (let k = 1; k < n - 1; k++) {
+    if (str[k] !== " " || str[k - 1] === " ") continue;
+    let e = k;
+    while (e < n && str[e] === " ") e++;
+    if (e >= n) break;
+    const x0 = it.x + at[k];
+    const x1 = it.x + at[e];
+    const ends0 = [x0, it.x + nat[k], it.x + it.w - (nat[n] - nat[k])];
+    const starts1 = [x1, it.x + it.w - (nat[n] - nat[e]), it.x + nat[e]];
+    const s = starts.find((x) => x > it.x + 2 && starts1.some((y) => Math.abs(x - y) <= tol));
+    const z = ends.find((x) => x < it.x + it.w - 2 && ends0.some((y) => Math.abs(x - y) <= tol));
+    if (s === undefined && z === undefined) continue;
+    // The space the reader put there stands for a wider gap: the known edge places the cut exactly,
+    // the other side keeps its own width.
+    const end = z ?? Math.min(x0, (s ?? x0) - 1);
+    const start = s ?? Math.max(end + 1, it.x + it.w - (at[str.length] - at[e]));
+    const left: TextItem = { ...it, str: str.slice(0, k), w: end - it.x, gaps: undefined };
+    const right: TextItem = { ...it, str: str.slice(e), x: start, w: it.x + it.w - start, ox: it.ox + (start - it.x), bbox: { ...it.bbox, x: it.bbox.x + (start - it.x), w: it.x + it.w - start }, gaps: undefined };
+    return [left, ...cutAtColumns(right, starts, ends)];
+  }
+  return [it];
+}
+
+/**
+ * Right edges that line up across at least `min` of the given lines where figures end, each a
+ * different figure: a column of figures set flush right (or codes of one length).
+ */
+function sharedEnds(rows: Segment[][], min: number): number[] {
+  const pts = rows.flatMap((r, ri) => r.map((sg) => ({ x: sg.x2, ri, t: sg.text }))).sort((a, b) => a.x - b.x);
+  const out: number[] = [];
+  for (let i = 0; i < pts.length; ) {
+    let j = i;
+    while (j + 1 < pts.length && pts[j + 1].x - pts[i].x <= 1.5) j++;
+    const g = pts.slice(i, j + 1);
+    i = j + 1;
+    // (Ending in a figure of its own: an amount, a code, a percentage, a balance marked Cr or Dr.)
+    const figures = g.flatMap((p) => p.t.match(/(?:^|\s)([-+(]?[₹$€£]?\d[\d,.]*\)?%?(?:\s+(?:cr|dr))?)$/i)?.slice(1, 2) ?? []);
+    // (Different figures: the same code at the end of a repeated entry doesn't make a column.)
+    if (new Set(g.map((p) => p.ri)).size >= min && figures.length * 2 >= g.length && new Set(figures).size >= Math.min(2, figures.length)) out.push(g[g.length >> 1].x);
+  }
+  return out;
+}
+
+/** Cut a segment between two of its items wherever one of `xs` falls in the space between them. */
+function splitBetween(sg: Segment, xs: number[]): Segment[] {
+  const cuts = xs.filter((x) => x > sg.x && x < sg.x2);
+  if (!cuts.length || sg.items.length < 2) return [sg];
+  const parts: TextItem[][] = [[]];
+  let end = -Infinity;
+  for (const it of sg.items) {
+    const [x0, x1] = inked(it);
+    if (parts[0].length && cuts.some((x) => x >= end - 0.5 && x <= x0 + 0.5)) parts.push([]);
+    parts[parts.length - 1].push(it);
+    end = Math.max(end, x1);
+  }
+  return parts.filter((p) => p.length).map(segmentOf);
+}
+
+/** An item cut at one of its closed-up gaps (see TextItem.gaps): the text before it and after it. */
+function cutAtGap(it: TextItem, g: NonNullable<TextItem["gaps"]>[number]): [TextItem, TextItem] {
+  const end = g.x + g.w;
+  const left: TextItem = { ...it, str: it.str.slice(0, g.at), w: g.x - it.x, gaps: it.gaps!.filter((q) => q.at < g.at) };
+  const right: TextItem = {
+    ...it,
+    str: it.str.slice(g.at + 1),
+    x: end,
+    w: it.x + it.w - end,
+    ox: it.ox + (end - it.x),
+    bbox: { ...it.bbox, x: it.bbox.x + (end - it.x), w: it.x + it.w - end },
+    gaps: it.gaps!.filter((q) => q.at > g.at).map((q) => ({ ...q, at: q.at - g.at - 1 })),
+  };
+  return [left, right];
+}
+
+/** Where an item's text runs, piece by piece between its closed-up gaps. */
+function boxesOf(it: TextItem): [number, number][] {
+  if (!it.gaps?.length) return [inked(it)];
+  const out: [number, number][] = [];
+  let x = it.x;
+  for (const g of it.gaps) {
+    if (g.x > x) out.push([x, g.x]);
+    x = g.x + g.w;
+  }
+  if (it.x + it.w > x) out.push([x, it.x + it.w]);
+  return out;
+}
+
+/** Where an item's characters start and end, without the spaces at its ends. */
+function inked(it: TextItem): [number, number] {
+  const n = it.str.length || 1;
+  const lead = it.str.length - it.str.trimStart().length;
+  const trail = it.str.length - it.str.trimEnd().length;
+  return [it.x + (it.w * lead) / n, it.x + it.w - (it.w * trail) / n];
+}
+
+/** A line's pieces, also cut where a line drawn down the page (a table's column rule) passes between them. */
+function splitAtRules(sgs: Segment[], vrules: Rule[], l: Line): Segment[] {
+  const xs = vrules.filter((r) => r.y <= l.y + l.h * 0.3 && r.y + r.h >= l.y + l.h * 0.7).map((r) => r.x + r.w / 2);
+  if (!xs.length) return sgs;
+  // Text run together across a rule (the reader joined two cells): cut at the space over it.
+  return sgs.flatMap((sg) => {
+    const items = sg.items.flatMap((it) => {
+      let parts = [it];
+      for (const x of xs) parts = parts.flatMap((p) => (p.x < x - 1 && p.x + p.w > x + 1 ? cutAtRule(p, x) : [p]));
+      return parts;
+    });
+    return splitBetween(items.length === sg.items.length ? sg : segmentOf(items), xs);
+  });
+}
+
+/** An item cut at the space that sits over x (a rule drawn between two cells the reader ran together). */
+function cutAtRule(it: TextItem, x: number): TextItem[] {
+  const str = it.str;
+  // The reader's own record of the gap, where it kept one.
+  const g = it.gaps?.find((q) => x >= q.x - 1 && x <= q.x + q.w + 1);
+  if (g) return cutAtGap(it, g);
+  if (it.gaps?.length) return [it];
+  const ws = Array.from(str, (c) => glyphW(c, it.family));
+  const total = ws.reduce((a, b) => a + b, 0) || 1;
+  const at: number[] = [0];
+  for (const w of ws) at.push(at[at.length - 1] + (w / total) * it.w);
+  // The space nearest the rule, if clearly nearest (the next nearest at least twice as far).
+  const spaces: { k: number; e: number; d: number }[] = [];
+  for (let k = 1; k < str.length - 1; k++) {
+    if (str[k] !== " " || str[k - 1] === " ") continue;
+    let e = k;
+    while (e < str.length && str[e] === " ") e++;
+    spaces.push({ k, e, d: Math.abs(it.x + (at[k] + at[e]) / 2 - x) });
+  }
+  spaces.sort((a, b) => a.d - b.d);
+  const [near, next] = spaces;
+  if (!near || near.d > Math.max(6, it.fontSize * 1.3) || (next && next.d < near.d * 2)) return [it];
+  const { k, e } = near;
+  // Each side keeps clear of the rule, as a cell's text keeps inside its padding.
+  const end = Math.min(it.x + at[k], x - 2.5);
+  const start = Math.max(it.x + at[e], x + 2.5);
+  return [
+    { ...it, str: str.slice(0, k), w: end - it.x, gaps: undefined },
+    { ...it, str: str.slice(e), x: start, w: it.x + it.w - start, ox: it.ox + (start - it.x), bbox: { ...it.bbox, x: it.bbox.x + (start - it.x), w: it.x + it.w - start }, gaps: undefined },
+  ];
+}
+
+/**
+ * Column edges set closer than a word gap's limit (dates right beside descriptions, figures
+ * beside figures): a strip left empty down the rows (a header over several columns may cross
+ * it), with the text on one side of it lined up in at least three rows.
+ */
+function tightCuts(ls: Line[]): number[] {
+  if (ls.length < 3) return [];
+  const rows = ls.map((l) => l.items.filter((it) => it.str.trim()).flatMap(boxesOf).sort((a, b) => a[0] - b[0]));
+  const size = median(ls.map((l) => l.size));
+  // (Wider than a word space, about a quarter of the size.)
+  const gap = size * 0.35;
+  const allowed = Math.floor(ls.length * 0.1);
+  const cuts: number[] = [];
+  for (const side of ["start", "end"] as const) {
+    const xs: number[] = [];
+    for (const r of rows) for (let i = 1; i < r.length; i++) if (r[i][0] - r[i - 1][1] >= gap) xs.push(side === "start" ? r[i][0] : r[i - 1][1]);
+    xs.sort((a, b) => a - b);
+    for (let i = 0; i < xs.length; ) {
+      let j = i;
+      while (j + 1 < xs.length && xs[j + 1] - xs[i] <= 1.5) j++;
+      const n = j - i + 1;
+      const x = xs[i + (n >> 1)];
+      i = j + 1;
+      if (n < Math.max(3, ls.length * 0.25)) continue;
+      // The strip beside the edge: empty in (nearly) every row.
+      const [lo, hi] = side === "start" ? [x - gap, x] : [x, x + gap];
+      const crossed = rows.filter((r) => r.some(([a, b]) => a < hi - 0.3 && b > lo + 0.3)).length;
+      if (crossed <= allowed) cuts.push(side === "start" ? x - 0.25 : x + 0.25);
+    }
+  }
+  return cuts.sort((a, b) => a - b);
+}
+
+/**
+ * Lines drawn down a table between its columns: rules at the same place (a cell's side drawn
+ * row by row counts as one line) that run beside at least half the table's lines. Their places.
+ */
+function columnRules(vrules: Rule[], ls: Line[], x0: number, x1: number): number[] {
+  if (ls.length < 2) return [];
+  const mids = ls.map((l) => l.y + l.h / 2);
+  const rs = vrules.filter((r) => r.x > x0 - 16 && r.x < x1 + 16).sort((a, b) => a.x - b.x);
+  const out: number[] = [];
+  for (let i = 0; i < rs.length; ) {
+    let j = i;
+    while (j + 1 < rs.length && rs[j + 1].x - rs[i].x <= 1.5) j++;
+    const group = rs.slice(i, j + 1);
+    i = j + 1;
+    const beside = mids.filter((y) => group.some((r) => y >= r.y && y <= r.y + r.h)).length;
+    if (beside >= Math.max(2, ls.length * 0.5)) out.push(group[0].x + group[0].w / 2);
+  }
+  return out;
+}
+
 /** Columns: horizontal ranges covered by text, separated by empty gutters. */
-function bandsOf(segs: Segment[]): Band[] {
+function bandsOf(segs: Segment[], hard: number[] = []): Band[] {
   const out: Band[] = [];
   for (const sg of [...segs].sort((a, b) => a.x - b.x)) {
     const last = out[out.length - 1];
-    if (last && sg.x <= last.x1 + 3) last.x1 = Math.max(last.x1, sg.x2);
+    // Text that nearly touches is one column, unless a column's edge was found between.
+    if (last && sg.x <= last.x1 + 3 && !(sg.x > last.x1 && hard.some((x) => x > last.x1 - 0.5 && x < sg.x + 0.5))) last.x1 = Math.max(last.x1, sg.x2);
     else out.push({ x0: sg.x, x1: sg.x2 });
   }
   return out;
@@ -2541,6 +2877,14 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     const cover = span.reduce((n, r) => n + Math.min(r.x + r.w, x1) - Math.max(r.x, x0), 0);
     return span.length && cover >= (x1 - x0) * 0.9 ? span : null;
   };
+  // A line set across the whole table: a group's name on a band shaded the table's width, or
+  // between the lines drawn down the table's sides.
+  const acrossTable = (l: Line, x0: number, x1: number) => {
+    const inside = (r: Rect) => r.y <= l.y + l.h * 0.3 && r.y + r.h >= l.y + l.h * 0.7;
+    if (ctx?.fills.some((f) => inside(f) && f.x <= x0 + 2 && f.x + f.w >= x1 - 2 && f.w < (x1 - x0) * 1.6)) return true;
+    const vr = (ctx?.vrules ?? []).filter(inside);
+    return vr.some((r) => r.x <= x0 + 1 && r.x >= x0 - 16) && vr.some((r) => r.x + r.w >= x1 - 1 && r.x <= x1 + 16);
+  };
   // 1. Grow the region: lines with several cells, plus lone lines that sit inside one column.
   const region = [start];
   let bottom = lines[start].y + lines[start].h;
@@ -2549,9 +2893,16 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
   const multi = () => region.filter((k) => segs[k].length >= 2);
   for (let j = start + 1; j < lines.length; j++) {
     const l = lines[j];
-    const sg = segs[j];
+    let sg = segs[j];
     if (!sg.length) break;
     const m = multi();
+    // A row whose cells sit so close it reads as one piece: cut where its items begin at the
+    // columns' starts.
+    if (sg.length === 1 && sg[0].items.length >= 2) {
+      const inner = sharedStarts(m.map((k) => segs[k].slice(1)), 1);
+      const parts = splitBetween(sg[0], inner.filter((x) => sg[0].items.some((it, n) => n > 0 && Math.abs(it.x - x) <= 1.5)).map((x) => x - 0.25));
+      if (parts.length >= 2) segs[j] = sg = parts;
+    }
     const lineH = median(m.map((k) => lines[k].h));
     // Rules between the lines (even with gaps, like signature lines in two columns) allow a wider gap.
     const ruled = hr.some((r) => r.y >= lines[j - 1].y + lines[j - 1].h * 0.5 && r.y + r.h <= l.y + l.h * 0.5 && Math.min(r.x + r.w, right) - Math.max(r.x, left) > (right - left) * 0.3);
@@ -2560,9 +2911,10 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     // A numbered item (its number, its text, perhaps marks set flush right) starts a list, not a row.
     if (ctx?.x1 !== undefined && sg.length >= 2 && sg.length <= 3 && /^(\(?\d{1,3}[.)]|\(?[a-z][.)]|\d{1,3}(\.\d{1,3})+\.?)$/i.test(sg[0].text) && (sg.length === 2 || ctx.x1 - sg[2].x2 < 3)) break;
     if (sg.length < 2) {
-      const starts = sharedStarts(m.map((k) => segs[k]), 1);
       const s0 = sg[0];
-      if (starts.some((x) => x > s0.x + 6 && x < s0.x2 - 6)) break;
+      // (Where the columns after the first start: a row's first piece may sit indented in the first column.)
+      const inner = sharedStarts(m.map((k) => segs[k].slice(1)), 1);
+      if (inner.some((x) => x > s0.x + 6 && x < s0.x2 - 6) && !(m.length >= 2 && acrossTable(l, left, right))) break;
       // A bulleted or numbered line starts a list; a bold line among plain rows heads what follows.
       const lead = s0.text.split(" ")[0];
       if (BULLETS.test(lead) || /^(\(?\d{1,3}[.)]|\(?[a-z][.)])$/i.test(lead) || ctx?.marks?.some((mk) => mk.x + mk.w <= s0.x + 1 && s0.x - (mk.x + mk.w) < l.size * 2.5 && mk.y + mk.h >= l.y && mk.y <= l.y + l.h)) break;
@@ -2578,6 +2930,10 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
       const known = sharedStarts(m.map((k) => segs[k]), 1);
       const matches = sg.filter((s) => known.some((x) => Math.abs(x - s.x) <= 10) || known.some((x, n) => n > 0 && s.x > known[n - 1] && s.x2 >= x - 4 && s.x2 < x + 40)).length;
       if (m.length >= 2 && matches < Math.min(sg.length, 2)) break;
+      // More cells than the rows so far, starting where none of theirs do (one at most lines up):
+      // another table's header.
+      const strong = sg.filter((x) => known.some((k) => Math.abs(k - x.x) <= 10)).length;
+      if (m.length >= 2 && ((sg.length >= Math.max(...m.map((k) => segs[k].length)) + 2 && matches * 2 < sg.length) || (sg.length >= 3 && sg.length > median(m.map((k) => segs[k].length)) && strong <= 1))) break;
       left = Math.min(left, sg[0].x);
       right = Math.max(right, sg[sg.length - 1].x2);
     }
@@ -2599,13 +2955,32 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
 
   // 2. Columns.
   const starts = sharedStarts(multiLines.map((k) => segs[k]), 2);
-  const pieces = new Map<number, Segment[]>(region.map((k) => [k, segs[k].flatMap((sg) => splitAtStarts(sg, starts))]));
+  // Cells the PDF reader ran together: cut where other lines (a header, a wrapped line) show a column's edge.
+  const edgeStarts = sharedStarts(region.map((k) => segs[k].slice(1).concat(segs[k].length === 1 && segs[k][0].x > left + 4 ? segs[k] : [])), 1);
+  const ends = sharedEnds(region.map((k) => segs[k]), 2);
+  const tight = tightCuts(region.map((k) => lines[k]));
+  const own = new Map<number, Segment[]>(
+    region.map((k) => {
+      const cut = segs[k].flatMap((sg) => {
+        const parts = sg.items.map((it) => cutAtColumns(it, edgeStarts, ends, tight));
+        const n = parts.reduce((a, p) => a + p.length - 1, 0);
+        // (A line in one piece cut once may be a heading across the table whose words happen to
+        // line up with a column; a row of cells run together lines up more than once.)
+        if (!n || (segs[k].length === 1 && n < 2)) return [sg];
+        return splitBetween(segmentOf(parts.flat()), parts.flatMap((p) => p.slice(1).map((it) => it.x - 0.25)));
+      });
+      return [k, cut];
+    }),
+  );
+  // Column edges found between pieces that nearly touch.
+  const hard = [...tight, ...[...own.values()].flatMap((sgs) => sgs.slice(1).map((sg, n) => (sgs[n].x2 + sg.x) / 2).filter((x, n) => sgs[n + 1].x - sgs[n].x2 <= 3))];
+  const pieces = new Map<number, Segment[]>(region.map((k) => [k, own.get(k)!.flatMap((sg) => splitAtStarts(sg, starts)).flatMap((sg) => splitBetween(sg, tight))]));
   // Columns come from the fullest rows; other text widens them, joins none of them up
   // (a heading spanning several columns stays one cell) or adds a column of its own.
   const counts = multiLines.map((k) => pieces.get(k)!.length);
   const typical = median(counts);
   const core = multiLines.filter((k) => pieces.get(k)!.length >= typical);
-  const bands = bandsOf(core.flatMap((k) => pieces.get(k)!));
+  const bands = bandsOf(core.flatMap((k) => pieces.get(k)!), hard);
   for (const k of region) {
     if (core.includes(k)) continue;
     for (const sg of pieces.get(k)!) {
@@ -2617,6 +2992,18 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     }
   }
   bands.sort((a, b) => a.x0 - b.x0);
+  // Where the columns are drawn, text between the same two lines is one column (a heading set
+  // flush left over figures set flush right).
+  const drawnEdges = columnRules(ctx?.vrules ?? [], region.map((k) => lines[k]), left, right);
+  if (drawnEdges.length >= 2)
+    for (let i = 0; i + 1 < bands.length; ) {
+      const [a, b] = [bands[i], bands[i + 1]];
+      if (drawnEdges.some((x) => x > a.x1 - 1 && x < b.x0 + 1)) i++;
+      else {
+        a.x1 = Math.max(a.x1, b.x1);
+        bands.splice(i + 1, 1);
+      }
+    }
   if (bands.length < 2 || bands.length > 20) return null;
   // Ordinary cell text stays inside its column; anything reaching past it is a heading over several columns.
   const placed = new Map<number, Placed[]>(
@@ -2654,9 +3041,11 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
   const hasFirst = (k: number) => placed.get(k)!.some((p) => p.band === 0);
   // A line whose first-column text starts in lower case continues the cell above.
   const continues = (k: number) => /^[a-z]/.test(placed.get(k)!.find((p) => p.band === 0)?.text ?? "");
+  // A label and its value set after a colon (Customer ID : 00418273): an entry of its own.
+  const entry = (k: number) => placed.get(k)!.some((p, i, ps) => (p.band > 0 && /^:\s/.test(p.text)) || (i < ps.length - 1 && /\S:$/.test(p.text)));
   let groups: number[][] = [[region[0]]];
   region.slice(1).forEach((k, gi) => {
-    const breakRow = ruledGaps.has(gi) || (cut !== null ? gaps[gi] > cut : hasFirst(k) && !continues(k));
+    const breakRow = ruledGaps.has(gi) || (cut !== null ? gaps[gi] > cut : (hasFirst(k) && !continues(k)) || entry(k));
     if (breakRow) groups.push([k]);
     else groups[groups.length - 1].push(k);
   });
@@ -2685,19 +3074,53 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     return groups.length > 2 && gap <= usualGap * 1.15 + 1 && g.every((k) => Math.abs(domOf(lines[k]) - size) < 0.6 && segs[k].length === 1 && placed.get(k)!.length === 1 && fits(k));
   };
   while (groups.length > 1 && !groups[groups.length - 1].some((k) => segs[k].length >= 2) && !rowLike(groups[groups.length - 1], groups[groups.length - 2])) groups.pop();
+  // A header of two tiers (a heading over each pair of columns, the columns' own headings
+  // under it): the upper tier is a row of its own, so its headings can span their columns.
+  let tiers = 1;
+  if (groups.length > 1 && groups[0].length >= 2) {
+    const g = groups[0];
+    const tier = g.filter((k) => placed.get(k)!.some((p) => p.span) && g.some((j) => j !== k && lines[j].y > lines[k].y + lines[k].h * 0.5 && placed.get(j)!.some((q) => placed.get(k)!.some((p) => p.span && q.band >= p.band && q.x < p.x2))));
+    if (tier.length) {
+      const bottom = Math.max(...tier.map((k) => lines[k].y + lines[k].h));
+      const upper = g.filter((k) => tier.includes(k) || lines[k].y + lines[k].h / 2 < bottom - lines[k].h * 0.25);
+      const lower = g.filter((k) => !upper.includes(k));
+      if (lower.length) {
+        groups.splice(0, 1, upper, lower);
+        tiers = 2;
+      }
+    }
+  }
   if (groups.length < 2) return null;
 
   // 4. Cells, with any shading drawn behind them.
+  // Text in a column wraps where its longest lines end (a line of one long code, which may run
+  // past the column's edge, doesn't count).
+  const wrapAt = bands.map((_, b) => {
+    const ends = region.flatMap((k) => placed.get(k)!.filter((p) => p.band === b && !p.span && /\s/.test(p.text.trim())).map((p) => p.x2));
+    return ends.length ? Math.max(...ends) : bands[b].x1;
+  });
   const cells = groups.map((g) =>
     bands.map((_, b) => {
       const parts = g.flatMap((k) => placed.get(k)!.filter((p) => p.band === b));
       const fill = parts.length ? ctx?.fills.find((f) => parts.every((p) => centerIn(f, (p.x + p.x2) / 2, p.y + p.h / 2)))?.fill : undefined;
-      // Text in a column wraps where its longest line ends.
-      return cellOf(parts, fill, bands[b].x1);
+      return cellOf(parts, fill, wrapAt[b]);
     }),
   );
   const filled = cells.flat().filter((c) => c.paras.length).length;
   if (filled / (cells.length * bands.length) < 0.35) return null;
+  // Text set across several columns spans them: a heading over columns, or a group's name on
+  // its own band across the whole table.
+  groups.forEach((g, ri) => {
+    for (const p of g.flatMap((k) => placed.get(k)!)) {
+      if (!p.span) continue;
+      // (Columns meet halfway across the space between their text.)
+      let n = 1;
+      while (p.band + n < bands.length && (bands[p.band + n - 1].x1 + bands[p.band + n].x0) / 2 < p.x2 - 3) n++;
+      if (n > 1 && cells[ri].slice(p.band + 1, p.band + n).every((c) => !c.paras.length)) cells[ri][p.band].span = n;
+    }
+    const used = cells[ri].filter((c) => c.paras.length);
+    if (used.length === 1 && cells[ri][0].paras.length && g.length === 1 && acrossTable(lines[g[0]], tx0, tx1)) cells[ri][0].span = bands.length;
+  });
   // Text set in the middle (or at the foot) of a row made taller by another cell.
   groups.forEach((g, ri) => {
     const all = g.flatMap((k) => placed.get(k)!);
@@ -2744,7 +3167,8 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
   });
   const head = groups[0].flatMap((k) => placed.get(k)!);
   const headChars = head.reduce((n, p) => n + p.text.length, 0) || 1;
-  const header = head.filter((p) => p.bold).reduce((n, p) => n + p.text.length, 0) / headChars >= 0.6;
+  // A header row: its text bold, every cell of it (a bold name beside a plain label is a row like the others).
+  const header = head.filter((p) => p.bold).reduce((n, p) => n + p.text.length, 0) / headChars >= 0.6 && head.every((p) => p.bold);
   const gutter = bands.length > 1 ? median(bands.slice(1).map((b, k) => b.x0 - bands[k].x1)) : 0;
   const top = lines[region[0]].y;
   const bottomY = Math.max(...groups[groups.length - 1].map((k) => lines[k].y + lines[k].h));
@@ -2787,7 +3211,8 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
   // text close to the right edge is flush right (when the text alone couldn't tell).
   if (gridded) {
     bands.forEach((_, b) => {
-      if (cells.some((row) => row[b].align)) return;
+      // (The last column's far edge unknown, its text would seem flush with it.)
+      if (cells.some((row) => row[b].align) || cuts[b + 1] - bands[b].x1 < 1) return;
       const ps = groups.flatMap((g) => g.flatMap((k) => placed.get(k)!.filter((p) => p.band === b && !p.span)));
       if (!ps.length) return;
       const lg = median(ps.map((p) => p.x - cuts[b]));
@@ -2796,6 +3221,16 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
       if (align) cells.forEach((row) => row[b].text && (row[b].align = align));
     });
   }
+  // Text set further in than the rest of its column (items under their group's name).
+  groups.forEach((g, ri) =>
+    bands.forEach((band, b) => {
+      const c = cells[ri][b];
+      if (!c.paras.length || c.align || c.span) return;
+      const x = Math.min(...g.flatMap((k) => placed.get(k)!.filter((p) => p.band === b).map((p) => p.x)));
+      const ind = x - band.x0;
+      if (ind >= 4 && ind < (band.x1 - band.x0) * 0.5) c.indent = Math.round(ind * 10) / 10;
+    }),
+  );
   const raw = cuts.slice(1).map((c, k) => Math.max(1, c - cuts[k]));
   const total = raw.reduce((a, b) => a + b, 0);
   const floored = raw.map((w) => Math.max(w / total, 0.05));
@@ -2841,7 +3276,8 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
       grew = true;
     }
   }
-  return { end, cells, header, widths: floored.map((w) => w / sum), span, pad, inset, leading: steps.length ? median(steps) : undefined, rules, ...(extra.some((e) => e > 4) ? { rowSpace: extra } : {}), ...drawn };
+  const twoTier = header && tiers === 2 && groups[1].flatMap((k) => placed.get(k)!).every((p) => p.bold) ? { head: 2 } : {};
+  return { end, cells, header, ...twoTier, widths: floored.map((w) => w / sum), bands, span, pad, inset, leading: steps.length ? median(steps) : undefined, rules, ...(extra.some((e) => e > 4) ? { rowSpace: extra } : {}), ...drawn };
 }
 
 const p0size = (ps: Placed[]) => (ps.length ? median(ps.map((p) => p.size)) : 10);

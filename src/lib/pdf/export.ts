@@ -6,7 +6,7 @@ import { imagesByPage, placementOf, viewTransform, walkImages } from "./contents
 import { open, withZip, type Src } from "./pages";
 import { decodePixels, jpegBytes, listImages, pixelsToCanvas } from "./pdfimages";
 import { extractPages, linesToText, renderPage, toLines, withPdfjs, type PageText, type Pic } from "./pdfjs";
-import { analyzeDoc, listLabel, luminance, pageGrid, runsText, type BodyStyle, type Cell, type Family, type Furniture, type FurnitureLine, type Geo, type ListFormat, type PageLayout, type Run, type SBlock, type Under } from "./structure";
+import { analyzeDoc, listLabel, luminance, runsText, type BodyStyle, type Cell, type Family, type Furniture, type FurnitureLine, type Geo, type ListFormat, type PageLayout, type Run, type SBlock, type Under } from "./structure";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -337,12 +337,25 @@ function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>, ima
       const cell = (bl: TableBlock, ri: number, ci: number, tag: string) => {
         const c = bl.cells[ri]?.[ci];
         const html = c?.blocks?.length ? inner(c.blocks) : (c?.paras ?? []).map(htmlRuns).join("<br>");
-        const style = [c?.align ? `text-align:${c.align}` : "", c?.valign ? `vertical-align:${c.valign === "center" ? "middle" : "bottom"}` : ""].filter(Boolean).join(";");
+        const style = [c?.align ? `text-align:${c.align}` : "", c?.valign ? `vertical-align:${c.valign === "center" ? "middle" : "bottom"}` : "", c?.indent ? `padding-left:calc(.5rem + ${Math.round(c.indent)}pt)` : ""].filter(Boolean).join(";");
         return `<${tag}${style ? ` style="${style}"` : ""}>${html}</${tag}>`;
       };
-      const row = (ri: number, tag: string) => `<tr>${b.rows[ri].map((_, ci) => cell(b, ri, ci, tag)).join("")}</tr>`;
-      const head = b.header ? `<thead>${row(0, "th")}</thead>` : "";
-      out.push(`<table>${head}<tbody>${b.rows.map((_, ri) => (b.header && ri === 0 ? "" : row(ri, "td"))).join("")}</tbody></table>`);
+      const row = (ri: number, tag: string) => {
+        // A cell across several columns covers the ones after it.
+        let skip = 0;
+        return `<tr>${b.rows[ri]
+          .map((_, ci) => {
+            if (skip > 0) return (skip--, "");
+            const n = b.cells[ri]?.[ci]?.span ?? 1;
+            skip = n - 1;
+            const html = cell(b, ri, ci, tag);
+            return n > 1 ? html.replace(/^<(t[hd])/, `<$1 colspan="${n}"`) : html;
+          })
+          .join("")}</tr>`;
+      };
+      const heads = b.head ?? (b.header ? 1 : 0);
+      const head = heads ? `<thead>${b.rows.slice(0, heads).map((_, ri) => row(ri, "th")).join("")}</thead>` : "";
+      out.push(`<table>${head}<tbody>${b.rows.map((_, ri) => (ri < heads ? "" : row(ri, "td"))).join("")}</tbody></table>`);
     } else if (b.kind === "image" && images) {
       const pics = b.pics.flatMap((p) => (images.has(p.id) ? [htmlPic(p, images.get(p.id)!)] : []));
       if (pics.length) out.push(`<figure${pics.length > 1 ? ' class="row"' : ""}>${pics.join("")}</figure>`);
@@ -1043,7 +1056,7 @@ class WordWriter {
       const after = pi < ps.length - 1 ? this.after(l, c?.geo?.gaps[pi] ?? 2, c?.geo?.sizes[pi + 1]) : Math.round(below * 20);
       const alignment = c?.align === "right" ? d.AlignmentType.RIGHT : c?.align === "center" ? d.AlignmentType.CENTER : undefined;
       // A label with its text hanging after it (options in a grid).
-      const hang = c?.hang ? { indent: { left: Math.round(c.hang * 20), hanging: Math.round(c.hang * 20) } } : {};
+      const hang = c?.hang ? { indent: { left: Math.round(c.hang * 20), hanging: Math.round(c.hang * 20) } } : c?.indent ? { indent: { left: Math.round(c.indent * 20) } } : {};
       return new d.Paragraph({ children: this.runs(p, this.body, bg), ...this.mark(l, this.body), ...this.tabStops(p, width), ...hang, spacing: this.spacing(l, after), keepNext: keep, alignment });
     });
   }
@@ -1108,15 +1121,21 @@ class WordWriter {
       if (ri > 0 && (b.cardRowGaps?.[ri - 1] ?? 0) >= 3) {
         rows.push(new d.TableRow({ height: { value: Math.round(b.cardRowGaps![ri - 1] * 20), rule: d.HeightRule.EXACT }, children: [new d.TableCell({ columnSpan: slots.length, borders: noEdges, margins: { top: 0, bottom: 0, left: 0, right: 0 }, children: [empty()] })] }));
       }
+      // Columns a spanning cell covers (a group's name across the table).
+      const covered = new Set<number>();
+      if (!spaced) r.forEach((c, ci) => Array.from({ length: (c?.span ?? 1) - 1 }, (_, k) => covered.add(ci + k + 1)));
       rows.push(
         new d.TableRow({
-          tableHeader: b.header && ri === 0,
+          tableHeader: ri < (b.head ?? (b.header ? 1 : 0)),
           cantSplit: !b.broken && r.every((c) => (c?.paras.length ?? 0) <= 6),
           // A sidebar as tall as in the PDF (no taller than the page's text area).
           ...(b.layout?.h && !at.cell ? { height: { value: Math.round(Math.min(b.layout.h, this.layout.height - this.layout.top - this.layout.bottom - 14) * 20), rule: d.HeightRule.ATLEAST } } : {}),
-          children: slots.map(({ w, ci }, si) => {
-            if (ci === undefined) return spacer(w);
+          children: slots.flatMap(({ w: w1, ci }, si) => {
+            if (ci === undefined) return spacer(w1);
+            if (covered.has(ci)) return [];
             const c = r[ci];
+            const span = !spaced && c?.span && c.span > 1 ? Math.min(c.span, slots.length - si) : 1;
+            const w = span > 1 ? slots.slice(si, si + span).reduce((a, sl) => a + sl.w, 0) : w1;
             const fill = c?.fill;
             const bg = fill ?? at.bg;
             // Word keeps a table on one page when every row but the last keeps with the next.
@@ -1148,6 +1167,7 @@ class WordWriter {
             }
             return new d.TableCell({
               width: { size: w, type: d.WidthType.DXA },
+              ...(span > 1 ? { columnSpan: span } : {}),
               ...(m ? { margins: m } : {}),
               ...(c?.valign ? { verticalAlign: c.valign === "center" ? d.VerticalAlignTable.CENTER : d.VerticalAlignTable.BOTTOM } : {}),
               children: kids,
@@ -1412,53 +1432,35 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
 
 /* ---------------------------------------------------------- excel / csv */
 
-const NUMERIC = /^[-+(]?\s?[₹$€£]?\s?\d{1,3}(?:[,\s]\d{2,3})*(?:\.\d+)?\)?$|^[-+]?\d+(?:\.\d+)?$/;
-function asNumber(s: string): number | string {
-  const t = s.trim();
-  if (!t || !NUMERIC.test(t)) return s;
-  const neg = /^\(.*\)$/.test(t) || t.startsWith("-");
-  const n = Number(t.replace(/[^\d.]/g, ""));
-  return Number.isFinite(n) ? (neg ? -n : n) : s;
-}
-
 export async function pdfToExcel(src: Src, o: { oneSheet?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
-  const XLSX = await import("xlsx");
-  const pages = await extractPages(src.bytes, { password: src.password, onProgress });
-  if (!pages.some((p) => p.items.some((i) => i.str.trim()))) throw new Error("No text found. This PDF is probably scanned; run Searchable PDF (OCR) first.");
-  const wb = XLSX.utils.book_new();
-  const all: (string | number)[][] = [];
-  pages.forEach((p, i) => {
-    const rows = pageGrid(p).map((r) => r.map(asNumber));
-    if (o.oneSheet) {
-      if (i) all.push([]);
-      all.push(...rows);
-    } else {
-      const ws = XLSX.utils.aoa_to_sheet(rows.length ? rows : [[""]]);
-      ws["!cols"] = colWidths(rows);
-      XLSX.utils.book_append_sheet(wb, ws, `Page ${i + 1}`);
-    }
-  });
-  if (o.oneSheet) {
-    const ws = XLSX.utils.aoa_to_sheet(all);
-    ws["!cols"] = colWidths(all);
-    XLSX.utils.book_append_sheet(wb, ws, "Data");
-  }
-  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
-  return { filename: `${stem(src.name)}.xlsx`, bytes: new Uint8Array(out), mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", note: o.oneSheet ? "All pages on one sheet" : `${pages.length} sheet${pages.length === 1 ? "" : "s"}` };
-}
-
-function colWidths(rows: (string | number)[][]) {
-  const w: number[] = [];
-  for (const r of rows) r.forEach((c, i) => (w[i] = Math.min(60, Math.max(w[i] ?? 6, String(c).length + 2))));
-  return w.map((wch) => ({ wch }));
+  const [{ sheetsOf }, { writeXlsx }] = await Promise.all([import("./tosheet"), import("./xlsx")]);
+  const r = await readStructured(src, onProgress);
+  const font = wordFont(r.body.face, r.body.family);
+  const name = stem(src.name);
+  const sheets = sheetsOf(r.blocks, r.body, r.furniture, { oneSheet: o.oneSheet, name, font, fontOf: wordFont, landscape: r.layout.width > r.layout.height, letter: Math.abs(Math.min(r.layout.width, r.layout.height) - 612) < 4 });
+  const bytes = writeXlsx(sheets, { font, size: 10, title: name });
+  return {
+    filename: `${name}.xlsx`,
+    bytes,
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    note: o.oneSheet ? "All pages on one sheet" : `${sheets.length} sheet${sheets.length === 1 ? "" : "s"}, one per page`,
+  };
 }
 
 export async function pdfToCsv(src: Src, onProgress?: ProgressFn): Promise<OutFile> {
-  const pages = await extractPages(src.bytes, { password: src.password, onProgress });
-  const rows = pages.flatMap((p, i) => [...(i ? [[]] : []), ...pageGrid(p)]);
-  if (!rows.some((r) => r.some((c) => c.trim()))) throw new Error("No text found. This PDF is probably scanned; run Searchable PDF (OCR) first.");
-  const csv = rows.map((r) => r.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",")).join("\r\n");
-  return { filename: `${stem(src.name)}.csv`, bytes: new TextEncoder().encode("﻿" + csv + "\r\n"), mime: "text/csv" };
+  const { sheetsOf, csvValue } = await import("./tosheet");
+  const r = await readStructured(src, onProgress);
+  const font = wordFont(r.body.face, r.body.family);
+  // Everything on one sheet (a table carried across pages is one table), as plain values:
+  // figures without grouping, dates as year-month-day.
+  const [sheet] = sheetsOf(r.blocks, r.body, r.furniture, { oneSheet: true, name: stem(src.name), font, fontOf: wordFont });
+  const field = (c: string) => (/[",\n\r]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c);
+  const lines = sheet.rows.map((row) => {
+    const cells = row.map((c) => (c ? csvValue(c) : ""));
+    while (cells.length && !cells[cells.length - 1]) cells.pop();
+    return cells.map(field).join(",");
+  });
+  return { filename: `${stem(src.name)}.csv`, bytes: new TextEncoder().encode("﻿" + lines.join("\r\n") + "\r\n"), mime: "text/csv" };
 }
 
 /* ---------------------------------------------------------------- pptx */
