@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- An invoice as billing tools print it: the seller's details on the left and the invoice
+     number and dates on the right, billing and shipping addresses side by side, a line-item
+     table with a shaded header and amounts set flush right, totals under the amount column,
+     and payment terms. PDF to Word must keep the item table whole, the amounts flush right
+     and the two address blocks as two columns. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 18mm; }
+body { font-family: Arial, "Liberation Sans", sans-serif; font-size: 9.5pt; line-height: 1.4; color: #222; margin: 0; }
+.top { display: flex; justify-content: space-between; align-items: flex-start; }
+.seller b { font-size: 14pt; display: block; margin-bottom: 2pt; }
+.title { font-size: 22pt; font-weight: 700; color: #2a5d84; text-align: right; margin: 0 0 6pt; }
+table.meta { border-collapse: collapse; margin-left: auto; }
+table.meta td { padding: 1pt 0 1pt 14pt; }
+table.meta td:first-child { color: #666; }
+.addr { display: flex; gap: 40pt; margin: 18pt 0 14pt; }
+.addr div { flex: 1; }
+.addr h4 { margin: 0 0 3pt; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.08em; color: #2a5d84; }
+table.items { width: 100%; border-collapse: collapse; }
+table.items th { background: #2a5d84; color: #fff; text-align: left; padding: 5pt 6pt; font-weight: 700; }
+table.items td { padding: 5pt 6pt; border-bottom: 1px solid #d5dbe1; vertical-align: top; }
+table.items .r { text-align: right; }
+table.tot { border-collapse: collapse; margin: 8pt 0 0 auto; width: 46%; }
+table.tot td { padding: 3pt 6pt; }
+table.tot td.r { text-align: right; }
+table.tot tr.grand td { font-weight: 700; font-size: 11pt; border-top: 1.5px solid #222; padding-top: 5pt; }
+.terms { margin-top: 22pt; }
+.terms h4 { margin: 0 0 3pt; font-size: 10pt; }
+p { margin: 0 0 4pt; }
+</style></head><body>
+<div class="top">
+<div class="seller"><b>Brightline Studio</b>14 Canal Street, Unit 3<br>Pune 411001, Maharashtra<br>GSTIN 27ABCDE1234F1Z5<br>hello@brightline.example</div>
+<div><p class="title">INVOICE</p>
+<table class="meta"><tr><td>Invoice no.</td><td>BL-2026-0147</td></tr><tr><td>Invoice date</td><td>12 September 2026</td></tr><tr><td>Due date</td><td>12 October 2026</td></tr></table></div>
+</div>
+<div class="addr">
+<div><h4>Bill to</h4>Kestrel Foods Pvt. Ltd.<br>Attn: Accounts Payable<br>2nd Floor, Orchid Tower, MG Road<br>Bengaluru 560001, Karnataka</div>
+<div><h4>Ship to</h4>Kestrel Foods Warehouse<br>Plot 22, Industrial Area Phase 2<br>Hosur 635126, Tamil Nadu</div>
+</div>
+<table class="items">
+<tr><th style="width:6%">#</th><th>Description</th><th class="r" style="width:10%">Qty</th><th class="r" style="width:15%">Rate (₹)</th><th class="r" style="width:16%">Amount (₹)</th></tr>
+<tr><td>1</td><td>Packaging design for the new snack range, three flavours, print-ready files</td><td class="r">3</td><td class="r">18,000.00</td><td class="r">54,000.00</td></tr>
+<tr><td>2</td><td>Product photography, half-day studio session</td><td class="r">1</td><td class="r">12,500.00</td><td class="r">12,500.00</td></tr>
+<tr><td>3</td><td>Social media launch kit (12 posts)</td><td class="r">12</td><td class="r">1,200.00</td><td class="r">14,400.00</td></tr>
+<tr><td>4</td><td>Revisions after client review</td><td class="r">4</td><td class="r">2,000.00</td><td class="r">8,000.00</td></tr>
+</table>
+<table class="tot">
+<tr><td>Subtotal</td><td class="r">88,900.00</td></tr>
+<tr><td>CGST 9%</td><td class="r">8,001.00</td></tr>
+<tr><td>SGST 9%</td><td class="r">8,001.00</td></tr>
+<tr class="grand"><td>Total due</td><td class="r">₹1,04,902.00</td></tr>
+</table>
+<div class="terms"><h4>Payment terms</h4>
+<p>Please pay within 30 days by bank transfer to Brightline Studio, account 000123456789, IFSC TEST0000123. Quote the invoice number with your payment.</p>
+<p>Thank you for your business.</p></div>
+</body></html>

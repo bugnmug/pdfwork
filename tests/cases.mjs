@@ -41,6 +41,16 @@ print(json.dumps({"landscape":s.page_width>s.page_height,"body":[p.text for p in
     ),
   );
 }
+/** A .docx as structure (see docx-dump.py): body blocks in order, header and footer. */
+const docxDump = (h, path) => JSON.parse(h.sh("python3", [new URL("./docx-dump.py", import.meta.url).pathname, path]).out);
+/** Every paragraph, in reading order, including those inside tables. */
+const parasIn = (blocks) => blocks.flatMap((b) => (b.t === "p" ? [b] : b.rows.flatMap((r) => r.flatMap((c) => parasIn(c.blocks)))));
+/** Every table, outer ones first, including tables nested in cells. */
+const tablesIn = (blocks) => blocks.flatMap((b) => (b.t === "table" ? [b, ...b.rows.flatMap((r) => r.flatMap((c) => tablesIn(c.blocks)))] : []));
+const cellText = (c) => parasIn(c.blocks).map((p) => p.text).join(" / ");
+const shape = (t) => `${t.rows.length}x${Math.max(...t.rows.map((r) => r.length))}`;
+/** A check: "label" when it holds, "✗ label" when it doesn't. */
+const expect = (ok, label) => (ok ? label : `✗ ${label}`);
 const imgCount = (h, p) => Math.max(0, h.sh("pdfimages", ["-list", p]).out.trim().split("\n").length - 2);
 
 export const CASES = [
@@ -221,6 +231,124 @@ export const CASES = [
         d.tables[3]?.cells[0]?.[1] === "2025 results overall / Deals" ? "grouped header" : "✗ grouped header",
         d.body.some((p) => p.startsWith("Paragraph after table A")) ? "paragraph after table" : "✗ paragraph swallowed",
         d.body.some((p) => p.startsWith("Figures in rupees")) ? "note after table" : "✗ note swallowed",
+      ]);
+  } },
+  // Designed documents of the kinds people convert, printed from html/ by Chromium.
+  { id: "pdf-to-word-brief", slug: "pdf-to-word", files: ["brief.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const ps = parasIn(d.body);
+      const ts = tablesIn(d.body);
+      const text = ps.map((p) => p.text).join("\n");
+      const h1 = ps.filter((p) => p.style === "Heading1");
+      const checks = ps.filter((p) => p.list?.format === "bullet" && p.list.text === "☐");
+      const qs = ps.filter((p) => p.list?.format === "decimal" && p.list.level === 0 && /^(Which|If we|What)/.test(p.text));
+      const grid = ts.find((t) => cellText(t.rows[0][0]).startsWith("a\tThe support rota"));
+      const sources = ps.filter((p) => p.list && /^(Sprint review|Bug tracker|Support rota, March|Partner status|Payment test|Campaign brief|Customer survey)/.test(p.text));
+      const kv = ts[0];
+      const cards = ts.find((t) => cellText(t.rows[0][0]).startsWith("READING B"));
+      const frame = ts.find((t) => t.rows.length === 1 && t.rows[0].length === 1 && cellText(t.rows[0][0]).startsWith("OPTION 2"));
+      const options = ts.find((t) => cellText(t.rows[0][0]) === "OPTION");
+      return ok([
+        expect(!/[-ʼ�]/.test(text), "no stand-in characters"),
+        expect(ps.some((p) => p.text === "LAUNCH REVIEW · FIRST DRAFT"), "letter-spaced label reads as words"),
+        expect(h1.length === 1 && h1[0].text.replace(/\s+/g, " ") === "A first look at the spring launch", "one title"),
+        expect(ps.some((p) => p.style === "Heading2" && p.text === "07 Five questions for the team"), "section headings"),
+        expect(kv && shape(kv) === "4x2" && cellText(kv.rows[0][1]).startsWith("The product is ready"), "summary table 4x2"),
+        expect(cards && cards.rows[0].length === 3 && cards.rows[0][0].fill === "F6F8F9" && cellText(cards.rows[0][2]).endsWith("the only story anyone remembers."), "cards side by side, the one cut by the page joined"),
+        expect(options && shape(options) === "5x4", "options table 5x4"),
+        expect(frame && tablesIn(frame.rows[0][0].blocks).some((t) => shape(t) === "3x2"), "framed card with its table inside"),
+        expect(ts.some((t) => t.rows[0][0].fill === "0E4A54"), "dark callout"),
+        expect(checks.length === 3 && checks[0].text.startsWith("Confirm the partner date"), "check list of 3"),
+        expect(qs.length === 5 && !!grid && shape(grid) === "2x2" && cellText(grid.rows[1][1]) === "d\tThe second campaign", "five questions, options in a grid"),
+        expect(sources.length === 9, "9 sources"),
+        expect(ps.some((p) => p.text.startsWith("1 As reported by the partner")), "footnote kept"),
+        expect(d.footer.page && d.footer.text.startsWith("Team Atlas"), "footer with page numbers"),
+      ]);
+  } },
+  { id: "pdf-to-word-resume", slug: "pdf-to-word", files: ["resume.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const ps = parasIn(d.body);
+      const bullets = ps.filter((p) => p.list?.format === "bullet");
+      const heads = ps.filter((p) => /^Heading/.test(p.style ?? ""));
+      return ok([
+        expect(ps.some((p) => p.style === "Heading1" && p.text === "Jordan Ellis" && p.align === "center"), "name centred"),
+        expect(ps.some((p) => p.text === "Lead Product Designer\tMarch 2021 – Present" && p.tabs?.includes("right")), "dates flush right on a tab"),
+        expect(bullets.length === 6, `${bullets.length} bullets`),
+        expect(heads.filter((p) => p.border?.includes("bottom")).length >= 4, "section rules under headings"),
+        expect(!ps.some((p) => p.text.split("\n").some((l) => l.includes("Design:") && l.includes("Tools:"))), "skills lines kept apart"),
+        expect(!d.body.some((b) => b.t === "table"), "no tables"),
+      ]);
+  } },
+  { id: "pdf-to-word-exam", slug: "pdf-to-word", files: ["exam.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const ps = parasIn(d.body);
+      const roman = ps.filter((p) => p.list?.format === "lowerRoman");
+      const qs = ps.filter((p) => p.list?.format === "decimal" && /\t\[1\]$/.test(p.text));
+      const marks = tablesIn(d.body).find((t) => cellText(t.rows[0][0]) === "Marks");
+      return ok([
+        expect(ps.some((p) => p.text === "Greenfield Public School" && p.align === "center"), "title centred"),
+        expect(ps.some((p) => p.text === "Time allowed: 3 hours\tMaximum marks: 80" && p.border?.includes("bottom")), "time and marks at either end, ruled"),
+        expect(roman.length === 4, "instructions (i) to (iv)"),
+        expect(qs.length === 4, "questions numbered, marks flush right"),
+        expect(ps.some((p) => p.text === "(a) 2⁵\t(b) 2⁶") && ps.some((p) => p.text === "(a) 1\t(b) 2\t(c) 3\t(d) 4"), "options in rows"),
+        expect(ps.some((p) => p.text === "OR" && p.align === "center"), "OR between alternatives"),
+        expect(marks && shape(marks) === "2x5", "marks table 2x5"),
+        expect(ps.filter((p) => p.list?.format === "lowerLetter").length === 2, "sub-parts (a) and (b)"),
+        expect(d.footer.page && d.footer.pages, "page x of y in the footer"),
+      ]);
+  } },
+  { id: "pdf-to-word-invoice", slug: "pdf-to-word", files: ["invoice.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const top = d.body.find((b) => b.t === "table");
+      const ts = tablesIn(d.body);
+      const items = ts.find((t) => cellText(t.rows[0][1]) === "Description");
+      const totals = ts.find((t) => cellText(t.rows[0][0]) === "Subtotal");
+      const ps = parasIn(d.body);
+      return ok([
+        expect(top && top.rows.length === 1 && cellText(top.rows[0][0]).startsWith("Brightline Studio") && cellText(top.rows[0][1]).startsWith("INVOICE"), "letterhead and invoice details side by side"),
+        expect(top && cellText(top.rows[0][0]).includes("BILL TO") && cellText(top.rows[0][1]).includes("SHIP TO"), "billing and shipping side by side"),
+        expect(items && shape(items) === "5x5" && items.rows[0][0].fill === "2A5D84", "item table 5x5 with its shaded header"),
+        expect(ps.some((p) => p.text === "54,000.00" && p.align === "right"), "amounts flush right"),
+        expect(totals && shape(totals) === "4x2" && cellText(totals.rows[3][1]) === "₹1,04,902.00", "totals"),
+        expect(ps.some((p) => p.text === "Payment terms"), "terms after the tables"),
+      ]);
+  } },
+  { id: "pdf-to-word-contract", slug: "pdf-to-word", files: ["contract.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const ps = parasIn(d.body);
+      const clauses = ps.filter((p) => /^\d\.\d\t/.test(p.text));
+      const subs = ps.filter((p) => p.list?.format === "lowerLetter");
+      const sig = tablesIn(d.body).find((t) => cellText(t.rows[0][0]).startsWith("Signed for Harbour"));
+      return ok([
+        expect(ps.some((p) => p.text === "SERVICES AGREEMENT" && p.align === "center"), "title centred"),
+        expect(["1. Definitions", "2. Term", "6. Termination"].every((t) => ps.some((p) => p.text === t && /^Heading/.test(p.style ?? ""))), "numbered headings"),
+        expect(clauses.length === 12, `${clauses.length} clauses with their numbers`),
+        expect(clauses.filter((p) => p.align === "both").length >= 10, "clauses justified"),
+        expect(subs.length === 3, "sub-clauses (a) to (c)"),
+        expect(sig && sig.rows[0].length === 2, "signature blocks side by side"),
+        expect(d.header.text.includes("Services Agreement"), "running header"),
+      ]);
+  } },
+  { id: "pdf-to-word-letter", slug: "pdf-to-word", files: ["letter.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const ps = parasIn(d.body);
+      return ok([
+        expect(ps.some((p) => p.align === "right" && p.text === "Flat 4, Rosewood Apartments\n17 Hill Road, Bandra West\nMumbai 400050\nasha.menon@example.com"), "sender's address flush right, line by line"),
+        expect(ps.some((p) => p.text === "The Branch Manager\nCoastal Co-operative Bank\nLinking Road Branch\nMumbai 400052"), "recipient's address line by line"),
+        expect(ps.filter((p) => p.list?.format === "bullet").length === 3, "3 bullets"),
+        expect(!d.body.some((b) => b.t === "table"), "no tables"),
+      ]);
+  } },
+  { id: "pdf-to-word-cv-sidebar", slug: "pdf-to-word", files: ["cv-sidebar.pdf"], check: (s, h) => {
+      const d = docxDump(h, first(s, ".docx").path);
+      const t = d.body.find((b) => b.t === "table");
+      const side = t?.rows[0][0];
+      const main = t?.rows[0][1];
+      return ok([
+        expect(t && t.rows.length === 1 && t.rows[0].length === 2, "sidebar beside the main column"),
+        expect(side?.fill === "24364B" && cellText(side).startsWith("Rohan Iyer"), "sidebar keeps its colour"),
+        expect(side && parasIn(side.blocks).filter((p) => p.list?.format === "bullet").length === 6, "skills list in the sidebar"),
+        expect(main && parasIn(main.blocks).some((p) => p.text === "Senior Data Engineer\t2023 – now"), "experience with dates in the main column"),
       ]);
   } },
   { id: "pdf-to-excel-wrapped-table", slug: "pdf-to-excel", files: ["partners.pdf"], check: (s, h) => {

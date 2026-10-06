@@ -1,0 +1,64 @@
+<!doctype html>
+<!-- A school question paper: centred titles, time and marks at either end of one line, general
+     instructions numbered (i), (ii), sections, numbered questions with their marks flush right,
+     multiple-choice options in a 2 x 2 grid and in one row, an "OR" between alternatives,
+     sub-parts (a) and (b), and a small ruled table. PDF to Word must keep the numbering,
+     the marks flush right and the options in order. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 15mm 17mm 18mm;
+  @bottom-center { content: "Page " counter(page) " of " counter(pages); font: 9pt "Times New Roman", serif; } }
+body { font-family: "Times New Roman", Tinos, "Liberation Serif", serif; font-size: 11.5pt; line-height: 1.35; color: #000; margin: 0; }
+.c { text-align: center; margin: 0; }
+.school { font-size: 15pt; font-weight: 700; }
+.exam { font-size: 12.5pt; font-weight: 700; margin-top: 2pt; }
+.meta { display: flex; justify-content: space-between; font-weight: 700; margin: 10pt 0 4pt; padding-bottom: 4pt; border-bottom: 1.5px solid #000; }
+h3 { font-size: 11.5pt; margin: 8pt 0 4pt; }
+.inst { margin: 0 0 6pt; padding: 0; list-style: none; }
+.inst li { display: flex; gap: 6pt; margin: 0 0 2pt; }
+.inst li span:first-child { flex: none; width: 22pt; }
+.sec { text-align: center; font-weight: 700; margin: 12pt 0 6pt; }
+.q { display: flex; gap: 8pt; margin: 0 0 7pt; }
+.q .n { flex: none; width: 20pt; }
+.q .body { flex: 1; }
+.q .m { flex: none; width: 26pt; text-align: right; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; row-gap: 2pt; column-gap: 20pt; margin-top: 3pt; }
+.opts4 { display: grid; grid-template-columns: repeat(4, 1fr); column-gap: 12pt; margin-top: 3pt; }
+.or { text-align: center; font-weight: 700; margin: 2pt 0 6pt; }
+table { border-collapse: collapse; margin: 4pt 0 2pt; }
+td, th { border: 1px solid #000; padding: 2pt 10pt; text-align: center; }
+p { margin: 0; }
+</style></head><body>
+<p class="c school">Greenfield Public School</p>
+<p class="c exam">Half-Yearly Examination 2026–27</p>
+<p class="c">Class IX · Mathematics</p>
+<div class="meta"><span>Time allowed: 3 hours</span><span>Maximum marks: 80</span></div>
+
+<h3>General instructions</h3>
+<ul class="inst">
+<li><span>(i)</span><span>This question paper has 20 questions in two sections, A and B. All questions are compulsory.</span></li>
+<li><span>(ii)</span><span>Section A has multiple-choice questions of 1 mark each. Write only the letter of the correct option.</span></li>
+<li><span>(iii)</span><span>Section B has questions of 3 marks each. Show your working; marks are given for method.</span></li>
+<li><span>(iv)</span><span>Use of calculators is not allowed.</span></li>
+</ul>
+
+<p class="sec">SECTION A</p>
+<div class="q"><span class="n">1.</span><div class="body">The value of 2³ × 2² is:
+<div class="opts"><span>(a) 2⁵</span><span>(b) 2⁶</span><span>(c) 4⁵</span><span>(d) 4⁶</span></div></div><span class="m">[1]</span></div>
+<div class="q"><span class="n">2.</span><div class="body">Which of these numbers is irrational?
+<div class="opts"><span>(a) 0.25</span><span>(b) √16</span><span>(c) √2</span><span>(d) 22/7</span></div></div><span class="m">[1]</span></div>
+<div class="q"><span class="n">3.</span><div class="body">The degree of the polynomial 4x³ − 2x + 7 is:
+<div class="opts4"><span>(a) 1</span><span>(b) 2</span><span>(c) 3</span><span>(d) 4</span></div></div><span class="m">[1]</span></div>
+<div class="q"><span class="n">4.</span><div class="body">A point on the x-axis has coordinates:
+<div class="opts4"><span>(a) (0, 3)</span><span>(b) (3, 0)</span><span>(c) (3, 3)</span><span>(d) (−3, 3)</span></div></div><span class="m">[1]</span></div>
+
+<p class="sec">SECTION B</p>
+<div class="q"><span class="n">5.</span><div class="body">Simplify (√5 + √2)(√5 − √2) and say whether the result is rational.</div><span class="m">[3]</span></div>
+<p class="or">OR</p>
+<div class="q"><span class="n"></span><div class="body">Find two irrational numbers between 0.5 and 0.6.</div><span class="m">[3]</span></div>
+<div class="q"><span class="n">6.</span><div class="body">The table shows the marks scored by a group of students.
+<table><tr><th>Marks</th><td>10</td><td>20</td><td>30</td><td>40</td></tr><tr><th>Students</th><td>4</td><td>7</td><td>9</td><td>5</td></tr></table>
+Find the mean marks of the group.</div><span class="m">[3]</span></div>
+<div class="q"><span class="n">7.</span><div class="body">Answer both parts.
+<p>(a) Factorise x² + 5x + 6.</p>
+<p>(b) Find the remainder when x³ + 1 is divided by x + 1.</p></div><span class="m">[3]</span></div>
+</body></html>

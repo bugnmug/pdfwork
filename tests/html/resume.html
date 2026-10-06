@@ -1,0 +1,69 @@
+<!doctype html>
+<!-- A one-column CV as word processors and resume builders print it: a centred name and
+     contact line, section rules, job titles with dates set flush right on the same line,
+     company and place on the next, bulleted achievements, and skills as label: value lines.
+     PDF to Word must keep the dates flush right (a tab), the bullets as a list, and the rules. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 16mm 18mm 16mm; }
+body { font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.3; color: #1f1f1f; margin: 0; }
+.name { text-align: center; font-size: 22pt; font-weight: 700; letter-spacing: 0.02em; margin: 0; }
+.role { text-align: center; font-size: 11pt; color: #444; margin: 2pt 0 4pt; }
+.contact { text-align: center; font-size: 9.5pt; color: #333; margin: 0 0 10pt; }
+h2 { font-size: 11pt; text-transform: uppercase; letter-spacing: 0.06em; color: #1d3c6e; border-bottom: 1px solid #1d3c6e; padding-bottom: 2pt; margin: 12pt 0 6pt; }
+.row { display: flex; justify-content: space-between; }
+.job { margin: 0 0 8pt; }
+.job .title { font-weight: 700; }
+.job .dates { font-weight: 400; color: #333; }
+.job .org { font-style: italic; color: #333; }
+ul { margin: 3pt 0 0; padding-left: 14pt; }
+li { margin: 0 0 2pt; }
+p { margin: 0 0 5pt; }
+.skills p { margin: 0 0 3pt; }
+.skills b { font-weight: 700; }
+</style></head><body>
+<p class="name">Jordan Ellis</p>
+<p class="role">Senior Product Designer</p>
+<p class="contact">jordan.ellis@example.com · +44 20 7946 0123 · London, United Kingdom · portfolio.example.com</p>
+
+<h2>Profile</h2>
+<p>Product designer with nine years in consumer fintech and health apps. I lead research, interaction design and design systems, and work closely with engineering to ship small, measurable improvements every week.</p>
+
+<h2>Experience</h2>
+<div class="job">
+<div class="row"><span class="title">Lead Product Designer</span><span class="dates">March 2021 – Present</span></div>
+<div class="row"><span class="org">Northwind Money</span><span class="org">London</span></div>
+<ul>
+<li>Redesigned the onboarding flow, raising completed sign-ups from 41% to 58% in two quarters.</li>
+<li>Built and maintain the company design system: 120 components used by six product teams.</li>
+<li>Run a fortnightly research programme with customers, shared as short video summaries.</li>
+</ul>
+</div>
+<div class="job">
+<div class="row"><span class="title">Product Designer</span><span class="dates">June 2017 – February 2021</span></div>
+<div class="row"><span class="org">Brightpath Health</span><span class="org">Manchester</span></div>
+<ul>
+<li>Designed appointment booking for the mobile app, used by 300,000 patients a month.</li>
+<li>Introduced accessibility reviews; every release now meets WCAG 2.1 AA.</li>
+</ul>
+</div>
+<div class="job">
+<div class="row"><span class="title">Junior Designer</span><span class="dates">September 2015 – May 2017</span></div>
+<div class="row"><span class="org">Studio Lark</span><span class="org">Leeds</span></div>
+<ul>
+<li>Delivered websites and brand work for more than twenty small businesses.</li>
+</ul>
+</div>
+
+<h2>Education</h2>
+<div class="job">
+<div class="row"><span class="title">BA (Hons) Graphic Communication</span><span class="dates">2012 – 2015</span></div>
+<div class="row"><span class="org">University of Leeds</span><span class="org">First class</span></div>
+</div>
+
+<h2>Skills</h2>
+<div class="skills">
+<p><b>Design:</b> user research, interaction design, prototyping, design systems, accessibility</p>
+<p><b>Tools:</b> Figma, FigJam, Maze, Dovetail, Notion, basic HTML and CSS</p>
+<p><b>Languages:</b> English (native), French (professional), Hindi (conversational)</p>
+</div>
+</body></html>

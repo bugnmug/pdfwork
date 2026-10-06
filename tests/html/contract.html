@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- An agreement as a word processor prints it: a centred title, justified clauses numbered
+     1., 1.1 and (a) with hanging indents, defined terms in bold, a running header, page numbers
+     and signature blocks side by side. PDF to Word must keep the clause numbers (as numbers or
+     text), the hanging indents, justification and the two signature columns. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: Letter; margin: 1in 1in 0.9in;
+  @top-right { content: "Services Agreement · Confidential"; font: italic 8.5pt Georgia, serif; color: #555; }
+  @bottom-center { content: counter(page); font: 9pt Georgia, serif; } }
+body { font-family: Georgia, "DejaVu Serif", serif; font-size: 10.5pt; line-height: 1.45; color: #111; margin: 0; text-align: justify; }
+h1 { text-align: center; font-size: 15pt; letter-spacing: 0.08em; margin: 0 0 4pt; }
+.sub { text-align: center; font-style: italic; margin: 0 0 16pt; }
+h2 { font-size: 11pt; margin: 14pt 0 5pt; }
+.cl { display: flex; margin: 0 0 6pt; }
+.cl .n { flex: none; width: 34pt; }
+.cl .t { flex: 1; }
+.sub2 { display: flex; margin: 0 0 4pt 34pt; }
+.sub2 .n { flex: none; width: 24pt; }
+.sub2 .t { flex: 1; }
+p { margin: 0 0 8pt; }
+.sig { display: flex; gap: 48pt; margin-top: 30pt; text-align: left; break-inside: avoid; }
+.sig div { flex: 1; }
+.sig .line { border-bottom: 1px solid #111; height: 30pt; margin-bottom: 4pt; }
+</style></head><body>
+<h1>SERVICES AGREEMENT</h1>
+<p class="sub">Effective 1 October 2026</p>
+<p>This Services Agreement (the <b>“Agreement”</b>) is made between <b>Harbour Analytics Ltd</b>, a company registered in England (the <b>“Supplier”</b>), and <b>Meridian Retail plc</b> (the <b>“Customer”</b>), each a <b>“Party”</b>.</p>
+
+<h2>1. Definitions</h2>
+<div class="cl"><span class="n">1.1</span><span class="t"><b>“Services”</b> means the data analysis and reporting services described in Schedule 1, as changed from time to time under clause 4.</span></div>
+<div class="cl"><span class="n">1.2</span><span class="t"><b>“Deliverables”</b> means all reports, dashboards and other materials the Supplier provides to the Customer in performing the Services.</span></div>
+<div class="cl"><span class="n">1.3</span><span class="t"><b>“Business Day”</b> means a day other than a Saturday, Sunday or public holiday in England.</span></div>
+
+<h2>2. Term</h2>
+<div class="cl"><span class="n">2.1</span><span class="t">This Agreement starts on the effective date and continues for twelve months, unless ended earlier under clause 6.</span></div>
+<div class="cl"><span class="n">2.2</span><span class="t">The Parties may extend the term by written agreement at least thirty Business Days before it ends.</span></div>
+
+<h2>3. Fees and payment</h2>
+<div class="cl"><span class="n">3.1</span><span class="t">The Customer shall pay the fees set out in Schedule 2. The Supplier shall invoice monthly in arrears.</span></div>
+<div class="cl"><span class="n">3.2</span><span class="t">Invoices are payable within thirty days of receipt. If the Customer disputes an invoice in good faith, it shall:</span></div>
+<div class="sub2"><span class="n">(a)</span><span class="t">tell the Supplier in writing within ten Business Days, giving reasons;</span></div>
+<div class="sub2"><span class="n">(b)</span><span class="t">pay the part of the invoice that is not disputed; and</span></div>
+<div class="sub2"><span class="n">(c)</span><span class="t">work with the Supplier in good faith to resolve the dispute promptly.</span></div>
+<div class="cl"><span class="n">3.3</span><span class="t">Late payments carry interest at four per cent a year above the Bank of England base rate, from the due date until payment.</span></div>
+
+<h2>4. Changes</h2>
+<div class="cl"><span class="n">4.1</span><span class="t">Either Party may propose a change to the Services. No change takes effect until both Parties sign a written change note that sets out the effect on the fees and timetable.</span></div>
+
+<h2>5. Confidentiality</h2>
+<div class="cl"><span class="n">5.1</span><span class="t">Each Party shall keep the other’s confidential information secret and use it only to perform this Agreement. This clause survives for three years after the Agreement ends.</span></div>
+
+<h2>6. Termination</h2>
+<div class="cl"><span class="n">6.1</span><span class="t">Either Party may end this Agreement by written notice if the other commits a material breach that is not remedied within twenty Business Days of notice of the breach.</span></div>
+<div class="cl"><span class="n">6.2</span><span class="t">On termination the Customer shall pay for all Services performed up to the date of termination.</span></div>
+
+<div class="sig">
+<div><p><b>Signed for Harbour Analytics Ltd</b></p><div class="line"></div><p>Name: ____________________</p><p>Title: Director</p><p>Date:</p></div>
+<div><p><b>Signed for Meridian Retail plc</b></p><div class="line"></div><p>Name: ____________________</p><p>Title: Chief Operating Officer</p><p>Date:</p></div>
+</div>
+</body></html>

@@ -1,0 +1,62 @@
+<!doctype html>
+<!-- A two-column CV from a resume builder: a shaded sidebar down the left (name, contact,
+     skills, languages) and the main column on the right (profile, experience with dates,
+     education). PDF to Word must keep the two columns side by side and read each one
+     top to bottom, not interleave their lines. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; line-height: 1.4; color: #222; margin: 0; }
+.page { display: flex; min-height: 297mm; }
+.side { width: 64mm; background: #24364b; color: #e9eef3; padding: 16mm 7mm 12mm 9mm; box-sizing: border-box; }
+.main { flex: 1; padding: 16mm 12mm 12mm 10mm; }
+.side h1 { font-size: 19pt; line-height: 1.15; color: #fff; margin: 0 0 4pt; }
+.side .role { color: #9fc3e6; margin: 0 0 14pt; }
+.side h3 { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.1em; color: #9fc3e6; margin: 14pt 0 5pt; }
+.side p { margin: 0 0 3pt; }
+.side ul { margin: 0; padding-left: 11pt; }
+.side li { margin: 0 0 2pt; }
+.main h2 { font-size: 12pt; text-transform: uppercase; letter-spacing: 0.06em; color: #24364b; margin: 0 0 6pt; padding-bottom: 3pt; border-bottom: 1.5px solid #24364b; }
+.main section { margin: 0 0 14pt; }
+.main .job { margin: 0 0 9pt; }
+.main .head { display: flex; justify-content: space-between; font-weight: 700; }
+.main .head span:last-child { font-weight: 400; color: #555; }
+.main .org { color: #2f6ea5; margin: 0 0 3pt; }
+.main ul { margin: 2pt 0 0; padding-left: 13pt; }
+.main li { margin: 0 0 2pt; }
+p { margin: 0 0 5pt; }
+</style></head><body><div class="page">
+<div class="side">
+<h1>Rohan Iyer</h1>
+<p class="role">Data Engineer</p>
+<h3>Contact</h3>
+<p>rohan.iyer@example.com</p>
+<p>+91 98765 00000</p>
+<p>Chennai, India</p>
+<h3>Skills</h3>
+<ul><li>Python and SQL</li><li>Apache Spark</li><li>Airflow and dbt</li><li>AWS and GCP</li><li>Data modelling</li><li>Kafka streaming</li></ul>
+<h3>Languages</h3>
+<p>English: fluent</p>
+<p>Tamil: native</p>
+<p>Hindi: conversational</p>
+<h3>Certifications</h3>
+<p>Cloud Data Engineer, 2024</p>
+<p>Streaming Systems, 2023</p>
+</div>
+<div class="main">
+<section><h2>Profile</h2>
+<p>Data engineer with six years building batch and streaming pipelines for retail and logistics companies. I care about clean data models, tests that catch problems before dashboards do, and pipelines that are cheap to run.</p></section>
+<section><h2>Experience</h2>
+<div class="job"><div class="head"><span>Senior Data Engineer</span><span>2023 – now</span></div>
+<p class="org">Lotus Logistics, Chennai</p>
+<ul><li>Moved 140 nightly jobs from cron scripts to Airflow, cutting failed runs by 80%.</li><li>Built a Kafka pipeline that tracks 2 million parcel events a day in near real time.</li><li>Mentor three junior engineers and run the team’s design reviews.</li></ul></div>
+<div class="job"><div class="head"><span>Data Engineer</span><span>2020 – 2023</span></div>
+<p class="org">Saffron Retail, Bengaluru</p>
+<ul><li>Designed the sales data warehouse used by finance, buying and store teams.</li><li>Reduced monthly cloud costs by a third by partitioning and compacting tables.</li></ul></div>
+<div class="job"><div class="head"><span>Analyst</span><span>2018 – 2020</span></div>
+<p class="org">Northstar Consulting, Mumbai</p>
+<ul><li>Built reporting for retail clients in SQL and Python.</li></ul></div></section>
+<section><h2>Education</h2>
+<div class="job"><div class="head"><span>B.Tech, Computer Science</span><span>2014 – 2018</span></div>
+<p class="org">Anna University, Chennai</p></div></section>
+</div>
+</div></body></html>

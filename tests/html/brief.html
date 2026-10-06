@@ -1,0 +1,153 @@
+<!doctype html>
+<!-- A designed report, the kind AI tools and web apps print from Chrome: letter-spaced labels,
+     ruled tables, cards, callout boxes, a check list, hanging-number questions with options in
+     two columns, sources in two columns, footnote markers and a running footer. PDF to Word
+     must rebuild each of these. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 17mm 18mm 20mm;
+  @bottom-left { content: "Team Atlas · Launch readiness review"; font: 7.5pt Helvetica, Arial, sans-serif; color: #40444a; }
+  @bottom-right { content: counter(page) " / " counter(pages); font: 7.5pt Helvetica, Arial, sans-serif; color: #40444a; } }
+body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; line-height: 1.55; color: #2b313c; margin: 0; }
+.serif { font-family: Georgia, "Times New Roman", serif; }
+.eyebrow { font-size: 7.6pt; letter-spacing: 0.14em; text-transform: uppercase; color: #135e6b; font-weight: 600; margin: 0 0 8pt; }
+h1 { font-family: Georgia, serif; font-size: 28pt; line-height: 1.12; color: #1b1f27; margin: 0 0 12pt; max-width: 260pt; }
+.meta { color: #5a6372; margin: 0 0 6pt; }
+.meta b { color: #1b1f27; }
+.small { font-size: 8.5pt; color: #5a6372; }
+table.kv { width: 100%; border-collapse: collapse; border-top: 1px solid #1b1f27; margin: 14pt 0 20pt; }
+table.kv td { padding: 9pt 0; border-bottom: 1px solid #e3e6ea; vertical-align: top; font-size: 10.5pt; color: #1b1f27; }
+table.kv td.k { width: 26%; font-size: 7.5pt; letter-spacing: 0.12em; text-transform: uppercase; color: #5a6372; font-weight: 600; padding-top: 11pt; }
+h2 { font-family: Georgia, serif; font-size: 16pt; color: #1b1f27; margin: 22pt 0 8pt; font-weight: 600; }
+h2 .n { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #135e6b; margin-right: 6pt; font-weight: 600; }
+.sub { font-family: Georgia, serif; font-style: italic; font-size: 10pt; color: #5a6372; margin: -4pt 0 10pt; }
+p { margin: 0 0 7pt; }
+sup { font-size: 6.3pt; color: #135e6b; font-weight: 600; }
+.quote { border-left: 3px solid #135e6b; padding: 2pt 0 2pt 14pt; margin: 12pt 0; }
+.quote .label { font-size: 7.3pt; letter-spacing: 0.12em; text-transform: uppercase; color: #135e6b; font-weight: 600; margin: 0 0 4pt; }
+.quote .big { font-family: Georgia, serif; font-size: 14pt; color: #0e4a54; line-height: 1.35; margin: 0; }
+.cards { display: flex; gap: 14pt; margin: 8pt 0 12pt; }
+.card { flex: 1; background: #f6f8f9; border: 1px solid #e3e6ea; border-radius: 4px; padding: 11pt 12pt 14pt; }
+.card .label { font-size: 7.3pt; letter-spacing: 0.12em; text-transform: uppercase; color: #5a6372; font-weight: 600; margin: 0 0 5pt; }
+.card .title { font-weight: 600; color: #1b1f27; margin: 0 0 4pt; }
+.card .text { font-size: 9pt; margin: 0; }
+.steps { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24pt; row-gap: 18pt; margin: 10pt 0 14pt; }
+.step { border-top: 2px solid #0e4a54; padding-top: 8pt; }
+.step .label { font-size: 7.3pt; letter-spacing: 0.12em; text-transform: uppercase; color: #135e6b; font-weight: 600; margin: 0 0 4pt; }
+.step .title { font-size: 10.5pt; font-weight: 600; color: #1b1f27; margin: 0 0 4pt; }
+.step .text { font-size: 9pt; margin: 0; }
+table.opts { width: 100%; border-collapse: collapse; margin: 8pt 0 10pt; font-size: 8.6pt; line-height: 1.4; }
+table.opts th { text-align: left; font-size: 7.2pt; letter-spacing: 0.12em; text-transform: uppercase; color: #5a6372; font-weight: 600; padding: 0 8pt 9pt 0; border-bottom: 1.5px solid #1b1f27; }
+table.opts td { padding: 9pt 8pt 9pt 0; border-bottom: 1px solid #e3e6ea; vertical-align: top; }
+table.opts td.name { font-weight: 600; color: #1b1f27; width: 26%; }
+.badge { display: inline-block; font-size: 7.2pt; font-weight: 600; border-radius: 9pt; padding: 1pt 7pt; background: #dcebed; color: #0e4a54; }
+.badge.dark { background: #135e6b; color: #fff; }
+.frame { border: 1px solid #e3e6ea; border-radius: 4px; padding: 12pt 14pt 6pt; margin: 0 0 14pt; break-inside: avoid; }
+.frame .top { display: flex; justify-content: space-between; align-items: center; }
+.frame .label { font-size: 7.3pt; letter-spacing: 0.12em; text-transform: uppercase; color: #135e6b; font-weight: 600; }
+.frame .title { font-family: Georgia, serif; font-size: 12.5pt; font-weight: 600; color: #1b1f27; margin: 2pt 0 8pt; padding-bottom: 8pt; border-bottom: 1px solid #e3e6ea; }
+.frame table { width: 100%; border-collapse: collapse; }
+.frame td { padding: 0 0 9pt; vertical-align: top; }
+.frame td.k { width: 22%; font-size: 7.3pt; letter-spacing: 0.12em; text-transform: uppercase; color: #5a6372; font-weight: 600; padding-top: 1.5pt; }
+.call { background: #0e4a54; color: #dcebed; border-radius: 4px; padding: 14pt 16pt 16pt; margin: 18pt 0; break-inside: avoid; }
+.call .label { font-size: 7.6pt; letter-spacing: 0.14em; text-transform: uppercase; color: #a6d5da; font-weight: 600; margin: 0 0 6pt; }
+.call .big { font-family: Georgia, serif; font-size: 16pt; font-weight: 600; color: #fff; margin: 0 0 6pt; }
+.check { display: flex; gap: 12pt; padding: 0 0 9pt; margin: 0 0 9pt; border-bottom: 1px solid #e3e6ea; }
+.check .box { flex: none; width: 7pt; height: 7pt; border: 1.2px solid #135e6b; border-radius: 1.5px; margin-top: 2.5pt; }
+.check b { color: #1b1f27; }
+.q { display: flex; gap: 14pt; padding: 0 0 10pt; margin: 0 0 10pt; border-bottom: 1px solid #e3e6ea; color: #1b1f27; }
+.q .num { flex: none; width: 16pt; font-family: Georgia, serif; font-size: 16pt; font-weight: 600; color: #135e6b; line-height: 1; }
+.q .opts { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14pt; row-gap: 5pt; margin-top: 5pt; font-size: 9pt; color: #2b313c; }
+.q .opts b { color: #135e6b; margin-right: 6pt; }
+.next { background: #edf4f5; border: 1px solid #dcebed; padding: 10pt 14pt; margin: 14pt 0 20pt; }
+.next b { color: #1b1f27; }
+.srclabel { font-size: 7.3pt; letter-spacing: 0.14em; text-transform: uppercase; color: #1b1f27; font-weight: 600; margin: 0 0 3pt; }
+.srcs { columns: 2; column-gap: 24pt; font-size: 7.8pt; margin: 6pt 0 0; padding: 0; list-style: none; }
+.srcs li { margin: 0 0 3pt; color: #135e6b; }
+.srcs li b { display: inline-block; width: 12pt; color: #5a6372; }
+</style></head><body>
+
+<p class="eyebrow">Launch review · First draft</p>
+<h1>A first look at the spring launch</h1>
+<p class="meta">Prepared for <b>Team Atlas</b> · 4 March 2026</p>
+<p class="small">Based on the project plan, the support backlog and the last three sprint reviews. Marketing figures weren’t final, so they aren’t covered here.</p>
+
+<table class="kv">
+<tr><td class="k">The read</td><td>The product is ready, but the support team isn’t staffed for the first month.</td></tr>
+<tr><td class="k">What could slip</td><td>Payment setup in two regions, which depends on a partner we don’t control.</td></tr>
+<tr><td class="k">Our bet</td><td>Launch in the north first, then the south six weeks later.</td></tr>
+<tr><td class="k">Your move</td><td>Answer the five questions at the end. Your answers set the date.</td></tr>
+</table>
+
+<h2><span class="n">01</span>Where things stand</h2>
+<p>On paper the launch is “on track”: every feature in the plan is built, tested and documented. The real picture is more mixed, because the partner’s payment work is two weeks behind<sup>1</sup> and the support rota still has gaps on weekends.</p>
+<p>What the team has done well is ship on time for four sprints in a row, with fewer than ten open bugs at any point. That record is the strongest reason to keep the date rather than move it.</p>
+<p>The plan doesn’t yet say who answers customers in the first week. Without that, a smooth launch can still feel rough to the people using it.</p>
+
+<h2><span class="n">02</span>What could go wrong</h2>
+<p class="sub">A forecast, not a verdict. Push back where it’s wrong.</p>
+<p>Look at the pattern in the sprint reviews: delays came from outside the team, never from the work itself. The risk is concentrated in two places, the payment partner and support cover, and both can be managed.</p>
+<div class="quote"><p class="label">Reading A · Most likely</p><p class="big">The launch goes well in the north and exposes the support gap before the south follows.</p></div>
+<p>Two other readings fit the same facts:</p>
+<div class="cards">
+<div class="card"><p class="label">Reading B</p><p class="title">The partner slips again</p><p class="text">Then the south waits, and nothing else changes.</p></div>
+<div class="card"><p class="label">Reading C</p><p class="title">Demand beats every forecast</p><p class="text">And the support gap becomes the only story anyone remembers.</p></div>
+</div>
+<p class="small">The questions at the end are meant to tell these apart.</p>
+
+<h2><span class="n">03</span>How we decide</h2>
+<div class="steps">
+<div class="step"><p class="label">Step 1</p><p class="title">Check the numbers</p><p class="text">Pull the last four weeks of bug and ticket counts and compare them with the targets agreed in January.</p></div>
+<div class="step"><p class="label">Step 2</p><p class="title">Ask the partner</p><p class="text">Get a written date for the payment work and what it depends on.</p></div>
+<div class="step"><p class="label">Step 3</p><p class="title">Staff the first month</p><p class="text">Fill every weekend shift for four weeks, including cover for illness and leave.</p></div>
+<div class="step"><p class="label">Step 4</p><p class="title">Set the date</p><p class="text">Pick the launch day only after steps one to three are done and signed off.</p></div>
+</div>
+
+<h2><span class="n">04</span>Options, cheapest first</h2>
+<p class="sub">Cost is what each option adds to the launch budget.</p>
+<table class="opts">
+<tr><th>Option</th><th>Cost</th><th>What we get</th><th>Main risk</th></tr>
+<tr><td class="name">1. Launch everywhere on the planned date</td><td><span class="badge dark">Lowest</span></td><td>One launch, one campaign, the date we promised</td><td>Support overload and payment failures in the south</td></tr>
+<tr><td class="name">2. North first, south later</td><td><span class="badge">Medium</span></td><td>Time to fix what the first region finds</td><td>Two campaigns to run</td></tr>
+<tr><td class="name">3. Delay both regions</td><td><span class="badge">High</span></td><td>Everything ready on day one</td><td>Lost momentum and a missed promise</td></tr>
+<tr><td class="name">4. Soft launch to invited users</td><td><span class="badge">Medium</span></td><td>Real usage with a small audience</td><td>Feedback arrives too late to change the plan</td></tr>
+</table>
+
+<div class="frame" style="break-before: page">
+<div class="top"><span class="label">Option 2</span><span class="badge">Medium</span></div>
+<p class="title">North first, south later</p>
+<table>
+<tr><td class="k">What it needs</td><td>A second campaign plan and a support rota for the north only.</td></tr>
+<tr><td class="k">Why it works</td><td>The north has no payment dependency, and its support volume is easier to predict.</td></tr>
+<tr><td class="k">Watch out</td><td>Customers in the south may sign up early and hit errors. Show them a waiting list instead.</td></tr>
+</table>
+</div>
+
+<div class="call">
+<p class="label">05 · The recommendation, before your answers</p>
+<p class="big">Option 2, starting in the north.</p>
+<p>It uses the team’s strongest record, it keeps the promised date for most customers, and it buys six weeks for the partner. The south follows once payments pass a full test.</p>
+</div>
+
+<h2><span class="n">06</span>Do this week</h2>
+<div class="check"><span class="box"></span><div><b>Confirm the partner date:</b> a written commitment for the payment work, with the steps it depends on.</div></div>
+<div class="check"><span class="box"></span><div><b>Fill the weekend rota</b> for the first four weeks, with a named backup for every shift.</div></div>
+<div class="check"><span class="box"></span><div><b>Draft the waiting-list page</b> for customers in the south, in both languages.</div></div>
+
+<h2><span class="n">07</span>Five questions for the team</h2>
+<p class="sub">A few honest lines each beats a long reply.</p>
+<div class="q"><span class="num">1</span><div>Which part of the launch worries you most, and what would make it worry you less?</div></div>
+<div class="q"><span class="num">2</span><div>If we launch in the north first, who should own each of these?
+<div class="opts"><div><b>a</b>The support rota and its backups</div><div><b>b</b>The waiting list and messages to customers in the south</div><div><b>c</b>The partner and the payment tests</div><div><b>d</b>The second campaign</div></div></div></div>
+<div class="q"><span class="num">3</span><div>What would change your mind about the date, and how soon would we know?</div></div>
+<div class="q"><span class="num">4</span><div>Which promise to customers matters more: the date, or a smooth first week?</div></div>
+<div class="q"><span class="num">5</span><div>What should we stop doing to make room for the launch work?</div></div>
+
+<div class="next"><b>What happens next.</b> Once you answer, we’ll fix the date and share the plan: owners, the support rota, the campaign calendar and the test schedule.</div>
+
+<p class="srclabel">Sources</p>
+<p class="small">Figures come from the team’s trackers in late February and change weekly; check them before quoting.</p>
+<ul class="srcs">
+<li><b>1</b>Sprint review: week 6</li><li><b>2</b>Sprint review: week 8</li><li><b>3</b>Sprint review: week 10</li><li><b>4</b>Bug tracker export, February</li><li><b>5</b>Support rota, March draft</li><li><b>6</b>Partner status note</li><li><b>7</b>Payment test plan</li><li><b>8</b>Campaign brief, north</li><li><b>9</b>Customer survey, autumn</li>
+</ul>
+<p class="small" style="margin-top:8pt"><sup>1</sup> As reported by the partner on 28 February.</p>
+</body></html>

@@ -193,6 +193,8 @@ export type TextItem = {
   color?: string;
   /** Font family name from the PDF (see fontFace), when known. */
   face?: string;
+  /** Letter-spacing: extra space after each character, as a fraction of the font size (tracked-out labels). */
+  track?: number;
 };
 
 /** A filled or stroked shape (rectangle, rule, box), as its bounding box in the visual frame; `round` when drawn with curves. */
@@ -219,7 +221,13 @@ const INFERRED = /\u0091([\uE000-\uEFFF])/g;
  * fonts report for curly quotes.
  */
 export function cleanItemText(str: string): string {
+  return settleItemText(str).str;
+}
+
+/** cleanItemText, also giving the letter-spacing of tracked-out text (a fraction of the font size). */
+export function settleItemText(str: string): { str: string; track?: number } {
   let out = str;
+  let track: number | undefined;
   if (out.includes("\u0091")) {
     const gaps = [...out.matchAll(INFERRED)].map((m) => (m[1].charCodeAt(0) - 0xe000) / 1000);
     const letters = out.replace(INFERRED, "").replace(/\s+/g, "").length;
@@ -228,10 +236,12 @@ export function cleanItemText(str: string): string {
       // Tracking is the common, smallest gap; a word break adds roughly a space to it.
       const sorted = [...gaps].sort((a, b) => a - b);
       word = sorted[Math.floor(sorted.length * 0.25)] + 0.12;
+      const within = sorted.filter((g) => g <= word);
+      track = within.length ? within[Math.floor(within.length / 2)] : undefined;
     }
     out = out.replace(INFERRED, (_, g: string) => ((g.charCodeAt(0) - 0xe000) / 1000 > word ? " " : ""));
   }
-  return out.replace(/\u02BC/g, "\u2019").replace(/\u02EE/g, "\u201D");
+  return { str: out.replace(/\u02BC/g, "\u2019").replace(/\u02EE/g, "\u201D"), ...(track && track > 0.02 ? { track } : {}) };
 }
 
 /** Text items with geometry in the visual frame (handles /Rotate, crop offsets and rotated text). */
@@ -243,7 +253,8 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
   for (const raw of content.items) {
     if (!("str" in raw)) continue;
     const item = raw as { str: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean; color?: string };
-    item.str = cleanItemText(item.str);
+    const settled = settleItemText(item.str);
+    item.str = settled.str;
     if (!item.str) continue;
     const m = multiply(viewport.transform, item.transform);
     const fontSize = Math.hypot(m[2], m[3]) || item.height || 1;
@@ -294,6 +305,7 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
       italic: /italic|oblique/i.test(fam),
       hasEOL: item.hasEOL,
       ...(item.color && /^#[0-9a-f]{6}$/.test(item.color) ? { color: item.color } : {}),
+      ...(settled.track ? { track: settled.track } : {}),
     });
   }
   return { page: page.pageNumber, width: viewport.width, height: viewport.height, items };
@@ -564,12 +576,15 @@ function finishLine(l: Line) {
     prevEnd = it.x + it.w;
   }
   l.text = text.replace(/\s+/g, " ").trim();
-  const x0 = Math.min(...l.items.map((i) => i.x));
-  const x1 = Math.max(...l.items.map((i) => i.x + i.w));
+  // Extents from the visible text: a space PDF.js puts in a wide gap can be far wider than the gap.
+  const ink = l.items.filter((i) => i.str.trim());
+  const shown = ink.length ? ink : l.items;
+  const x0 = Math.min(...shown.map((i) => i.x));
+  const x1 = Math.max(...shown.map((i) => i.x + i.w));
   l.x = x0;
   l.w = x1 - x0;
-  l.y = Math.min(...l.items.map((i) => i.y));
-  l.h = Math.max(...l.items.map((i) => i.y + i.h)) - l.y;
+  l.y = Math.min(...shown.map((i) => i.y));
+  l.h = Math.max(...shown.map((i) => i.y + i.h)) - l.y;
   l.base = l.items.reduce((s, i) => s + i.base, 0) / l.items.length;
   const weight = (pred: (i: TextItem) => boolean) => l.items.filter(pred).reduce((n, i) => n + i.str.length, 0);
   const total = weight(() => true) || 1;

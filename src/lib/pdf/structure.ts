@@ -23,8 +23,16 @@ export type Run = {
   sup?: boolean;
   /** Background drawn behind the text (a badge or highlight), #rrggbb. */
   bg?: string;
+  /** Letter-spacing: extra space after each character (points). */
+  track?: number;
   /** Starts a new line (a line break the author set, inside a heading). */
   br?: boolean;
+  /**
+   * Follows a tab: "right", set flush right at the end of the line (a date across from a title);
+   * "next", to the next stop (the text after a clause number, at the hanging indent); a number,
+   * to a stop that many points in from the left edge of the text (options set in columns).
+   */
+  tab?: "right" | "next" | number;
 };
 /** One table cell: its paragraphs (each a list of styled runs) and the plain text. Cards also carry their blocks. */
 export type Cell = {
@@ -37,16 +45,21 @@ export type Cell = {
   geo?: { gaps: number[]; leadings: (number | undefined)[]; sizes: number[] };
   /** Text set flush right or centred in its column. */
   align?: "right" | "center";
+  /** Space around the text inside the cell (points), where it differs from the table's. */
+  margins?: { left: number; right: number; top: number; bottom: number };
+  /** Its paragraphs hang this far after their first word (a label), in points. */
+  hang?: number;
 };
 /**
  * Where a block sits, in points: the top of its first line (or its box) and the bottom of its
  * last, the sizes of those lines (0 for a box or table edge), baseline-to-baseline spacing
  * inside it, and the gap below it, to the next block or to the edge of the box it is in.
  */
-export type Geo = { top: number; bottom: number; first: number; last: number; leading?: number; gap?: number; next?: number };
+export type Geo = { top: number; bottom: number; first: number; last: number; leading?: number; gap?: number; next?: number; /** Left and right edges (boxes). */ left?: number; right?: number };
 /** How a list level is numbered: Word's number format, the text around the number, and the first value. */
 export type ListFormat = {
-  kind: "bullet" | "check" | "decimal" | "lowerLetter" | "upperLetter" | "lowerRoman" | "upperRoman";
+  /** "none": no number from Word; the item's text carries its own label (a clause number like 2.1, or options set in a row). */
+  kind: "bullet" | "check" | "decimal" | "lowerLetter" | "upperLetter" | "lowerRoman" | "upperRoman" | "none";
   before: string;
   after: string;
   start: number;
@@ -58,7 +71,7 @@ export type ListFormat = {
   indent?: { left: number; hanging: number };
 };
 export type SBlock =
-  | { kind: "heading"; level: 1 | 2 | 3; text: string; runs: Run[]; size: number; page: number; geo?: Geo }
+  | { kind: "heading"; level: 1 | 2 | 3; text: string; runs: Run[]; size: number; page: number; align?: "center" | "right"; under?: Under; geo?: Geo }
   | {
       kind: "para";
       runs: Run[];
@@ -68,6 +81,7 @@ export type SBlock =
       indent?: { left: number; first: number; right?: number };
       bar?: string;
       keep?: boolean;
+      under?: Under;
       geo?: Geo;
     }
   | {
@@ -84,6 +98,8 @@ export type SBlock =
       gaps?: number[];
       /** A rule drawn below an item: its colour and how far below the item's text it runs (points). */
       rules?: ({ color: string; at: number; h: number } | null)[];
+      /** Items set justified. */
+      align?: "justify";
       page: number;
       geo?: Geo;
     }
@@ -96,6 +112,8 @@ export type SBlock =
       header: boolean;
       /** Relative column widths, summing to 1. */
       widths: number[];
+      /** Where the table sits: its left edge from the left edge of the text around it, and its width (points). */
+      span?: { x: number; w: number };
       /** Lines drawn in the PDF: rules between rows, a full grid, or separate cards. Missing: none drawn. */
       lines?: "rows" | "grid" | "cards";
       lineColor?: string;
@@ -103,24 +121,40 @@ export type SBlock =
       rowRules?: (string | null)[];
       /** Space between a cell's edge and its text, and baseline-to-baseline spacing of cell text (points). */
       pad?: { x: number; y: number };
+      /** Space below each row beyond its padding (all but the last), where rows sit further apart than usual (points). */
+      rowSpace?: number[];
+      /** How far the first column's text sits in from the table's left edge, where no lines are drawn down the side (points). */
+      inset?: number;
       leading?: number;
       /** Keep the table on one page (and with what follows), as the box it came in. */
       keep?: boolean;
+      /** A page break cut it in the PDF: it may break across pages in Word too. */
+      broken?: boolean;
+      /** A table that only sets content side by side (a sidebar beside the main text): where its left edge sits on the page, and its width (points). */
+      layout?: { x: number; w: number; h?: number };
+      /** For cards: where each card's box sits across the page, and the space below each row of cards but the last. */
+      cardCols?: { x: number; w: number }[];
+      cardRowGaps?: number[];
       page: number;
       geo?: Geo;
     }
-  | { kind: "box"; blocks: SBlock[]; fill?: string; stroke?: string; pad?: { x: number; y: number }; page: number; geo?: Geo }
+  | { kind: "box"; blocks: SBlock[]; fill?: string; stroke?: string; pad?: { x: number; y: number }; page: number; geo?: Geo; broken?: boolean }
   /** Text set in columns, read down each column in turn (`starts`: where each column begins on the page). */
   | { kind: "columns"; count: number; blocks: SBlock[]; page: number; geo?: Geo; starts?: number[] }
   /** `deliberate`: the page ended early on purpose (a new chapter), not because it was full. */
-  | { kind: "pagebreak"; page: number; deliberate?: boolean };
+  | { kind: "pagebreak"; page: number; deliberate?: boolean }
+  /** A line drawn across the page between blocks; `inset`: how far in from the edges of the text it stops (points). */
+  | { kind: "rule"; color: string; h: number; inset: { left: number; right: number }; page: number; geo?: Geo };
+
+/** A line drawn under a heading or paragraph across the text: its colour, thickness, and distance below the text (points). */
+export type Under = { color: string; h: number; at: number };
 
 /** The document's running text: size, face and colour, line spacing and space between paragraphs (points). */
 export type BodyStyle = { size: number; face?: string; family?: Family; color?: string; leading?: number; paraGap?: number };
 /** Page size and the margins around the content, in points. */
 export type PageLayout = { width: number; height: number; top: number; right: number; bottom: number; left: number };
 /** One line of a running header or footer: its pieces by position ("{PAGE}" and "{PAGES}" stand for page numbers), and its look. */
-export type FurnitureLine = { parts: { text: string; at: "left" | "center" | "right" }[]; size: number; color?: string; face?: string; family?: Family; bold: boolean; /** Distance from the top of the page (header) or the bottom (footer), points. */ edge: number };
+export type FurnitureLine = { parts: { text: string; at: "left" | "center" | "right" }[]; size: number; color?: string; face?: string; family?: Family; bold: boolean; italic?: boolean; /** Distance from the top of the page (header) or the bottom (footer), points. */ edge: number };
 /** Running header and footer lines, as they appear on the pages. */
 export type Furniture = { header: FurnitureLine[]; footer: FurnitureLine[] };
 
@@ -192,12 +226,13 @@ function mode<T>(entries: Iterable<[T, number]>): T | undefined {
 const tally = <T>(m: Map<T, number>, k: T, n: number) => m.set(k, (m.get(k) ?? 0) + n);
 
 type Rect = { x: number; y: number; w: number; h: number };
-type Rule = Rect & { color?: string };
+/** A horizontal or vertical line; `src` is the rule a moved copy (text in columns) was made from. */
+type Rule = Rect & { color?: string; src?: Rule };
 type Box = Rect & { fill?: string; stroke?: string };
 /** A drawn list marker: an empty square (check box), or a bullet (a dot, ring or small square). */
-type Mark = Rect & { check: boolean; bullet: string };
+type Mark = Rect & { check: boolean; bullet: string; color?: string };
 /** A text item as used here: may be raised (superscript) or sit on a drawn badge. */
-type Item = TextItem & { sup?: boolean; bg?: string };
+type Item = TextItem & { sup?: boolean; bg?: string; /** Right edge of the badge it sits on. */ bgRight?: number };
 type SLine = Omit<Line, "items"> & { items: Item[]; dom: number; domBase: number; /** Column it was read from, for text set in columns. */ col?: number };
 
 const centerIn = (r: Rect, x: number, y: number, pad = 1) => x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad;
@@ -230,10 +265,13 @@ function relayout(l: SLine) {
     prevEnd = Math.max(prevEnd, it.x + it.w);
   }
   l.text = text.replace(/\s+/g, " ").trim();
-  const main = l.items.filter((i) => !i.sup);
-  const base = main.length ? main : l.items;
-  l.x = Math.min(...l.items.map((i) => i.x));
-  l.w = Math.max(...l.items.map((i) => i.x + i.w)) - l.x;
+  // Extents from the visible text (see finishLine in pdfjs.ts); height from the text that isn't raised.
+  const ink = l.items.filter((i) => i.str.trim());
+  const shown = ink.length ? ink : l.items;
+  const main = shown.filter((i) => !i.sup);
+  const base = main.length ? main : shown;
+  l.x = Math.min(...shown.map((i) => i.x));
+  l.w = Math.max(...shown.map((i) => i.x + i.w)) - l.x;
   l.y = Math.min(...base.map((i) => i.y));
   l.h = Math.max(...base.map((i) => i.y + i.h)) - l.y;
   l.base = base.reduce((s, i) => s + i.base, 0) / base.length;
@@ -303,11 +341,12 @@ function itemRun(it: Item, text: string, dom?: number): Run {
   r.family = it.family;
   if (it.sup) r.sup = true;
   if (it.bg) r.bg = it.bg;
+  if (it.track) r.track = Math.round(it.track * it.fontSize * 10) / 10;
   return r;
 }
 
 const sameStyle = (a: Run, b: Run) =>
-  a.bold === b.bold && a.italic === b.italic && a.size === b.size && a.color === b.color && a.face === b.face && a.family === b.family && !!a.sup === !!b.sup && a.bg === b.bg && !b.br;
+  a.bold === b.bold && a.italic === b.italic && a.size === b.size && a.color === b.color && a.face === b.face && a.family === b.family && !!a.sup === !!b.sup && a.bg === b.bg && a.track === b.track && !b.br && b.tab === undefined;
 
 /** Styled runs of a sequence of items (one line or part of one), with spaces where the gaps are. */
 function itemsRuns(items: Item[], dom?: number): Run[] {
@@ -363,6 +402,33 @@ function joinRuns(target: Run[], add: Run[]) {
   target.push(...add.map((r) => ({ ...r })));
 }
 
+/** Append a line's runs after a line break. */
+function breakRuns(target: Run[], add: Run[]) {
+  if (!add.length) return;
+  const last = target[target.length - 1];
+  if (last) last.text = last.text.trimEnd();
+  target.push({ ...add[0], text: add[0].text.trimStart(), br: true }, ...add.slice(1).map((r) => ({ ...r })));
+}
+
+/**
+ * Whether the line before `next` stopped short of the edge by more than next's first word
+ * (and a space) needs: text that wraps by itself would have taken that word, so the line was
+ * broken on purpose. Text set flush right has its room before the line.
+ */
+function endedEarly(prev: SLine, next: SLine, ctx: Ctx): boolean {
+  if (/[-\u00ad]$/.test(prev.text)) return false;
+  const first = next.items.find((it) => it.str.trim());
+  if (!first) return false;
+  const str = first.str.trimStart();
+  const word = str.split(/\s/)[0];
+  const need = (first.w * word.length) / (str.length || 1) + next.dom * 0.25 + 0.5;
+  const width = ctx.x1 - ctx.x0;
+  const room = ctx.x1 - (prev.x + prev.w);
+  if (room >= 1.5) return room > need;
+  const flushRight = Math.abs(next.x + next.w - ctx.x1) < 1.5 && prev.x - ctx.x0 > width * 0.3;
+  return flushRight && prev.x - ctx.x0 > need;
+}
+
 function mergeRuns(runs: Run[]): Run[] {
   const out: Run[] = [];
   for (const r of runs) {
@@ -379,7 +445,8 @@ function mergeRuns(runs: Run[]): Run[] {
   return out.filter((r) => r.text);
 }
 
-export const runsText = (runs: Run[]) => runs.map((r) => r.text).join("");
+/** Plain text of runs (a line break the author set becomes a newline). */
+export const runsText = (runs: Run[]) => runs.map((r) => (r.br ? "\n" : "") + r.text).join("");
 
 /** Items of a line from x0 (inclusive) to x1 (exclusive), cutting items that straddle the bounds. */
 function sliceItems(items: Item[], x0: number, x1 = Infinity): Item[] {
@@ -433,7 +500,7 @@ function graphicsOf(shapes: Shape[], pw: number, ph: number): Graphics {
       if (!(s.fill && isWhite(s.fill) && !s.stroke)) {
         const hollow = !s.fill || isWhite(s.fill);
         // Rings and dots are bullets; an empty square big enough to tick is a check box.
-        g.marks.push({ x: s.x, y: s.y, w: s.w, h: s.h, check: hollow && !s.round && s.w >= 5, bullet: s.round ? (hollow ? "◦" : "•") : hollow ? "▫" : "▪" });
+        g.marks.push({ x: s.x, y: s.y, w: s.w, h: s.h, check: hollow && !s.round && s.w >= 5, bullet: s.round ? (hollow ? "◦" : "•") : hollow ? "▫" : "▪", color: hollow ? (s.stroke ?? s.fill) : s.fill });
       }
     } else if (s.w >= 16 && s.h >= 8 && s.w * s.h < pw * ph * 0.8 && !(s.fill && isWhite(s.fill) && !s.stroke)) {
       // A fill and an outline drawn separately for the same box count once.
@@ -450,7 +517,8 @@ function graphicsOf(shapes: Shape[], pw: number, ph: number): Graphics {
 /* ------------------------------------------------------------- regions */
 
 /** A page, or a box on it, with the text and shapes inside (boxes inside it are its kids). */
-type Region = { box?: Box; items: Item[]; kids: Region[]; hrules: Rule[]; vrules: Rule[]; marks: Mark[]; fills: Box[]; outlines: Box[] };
+/** `x1`: how far right its text may run, where that's more than its longest line (a block beside another). */
+type Region = { box?: Box; items: Item[]; kids: Region[]; hrules: Rule[]; vrules: Rule[]; marks: Mark[]; fills: Box[]; outlines: Box[]; x1?: number };
 
 const newRegion = (box?: Box): Region => ({ box, items: [], kids: [], hrules: [], vrules: [], marks: [], fills: [], outlines: [] });
 
@@ -513,9 +581,13 @@ function regionsOf(items: Item[], g: Graphics): Region {
     const oneLine = Math.max(...bases) - Math.min(...bases) < size * 0.6;
     const n = inner.reduce((k, i) => k + chars(i.str), 0);
     if (oneLine && b.h <= size * 2.8) {
-      // A badge: a short label on its own background.
-      if (n <= 32 && b.fill) {
-        for (const it of inner) it.bg = b.fill;
+      // A badge: a short label on its own background, the box close around it (not a bar across a table).
+      const textW = Math.max(...inner.map((i) => i.x + i.w)) - Math.min(...inner.map((i) => i.x));
+      if (n <= 32 && b.fill && b.w <= textW + Math.max(24, size * 4)) {
+        for (const it of inner) {
+          it.bg = b.fill;
+          it.bgRight = b.x + b.w;
+        }
         continue;
       }
       // Shading behind a table row or cell, or an outlined label: not a box of its own.
@@ -552,7 +624,11 @@ type Ctx = {
   page: number;
   pt: { page: number; width: number; height: number };
   body: number;
+  /** Baseline-to-baseline spacing of the running text, when known. */
+  leading?: number;
   hrules: Rule[];
+  /** Rules already drawn by a table, list or heading. */
+  used: Set<Rule>;
   vrules: Rule[];
   marks: Mark[];
   fills: Box[];
@@ -574,7 +650,8 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
     const dir = all[0]?.dir ?? 0;
     return { pt: p, dir, lines: all.filter((l) => l.dir === dir), height: p.height, width: p.width };
   });
-  const skip = pages.length >= 2 ? furniture(pages) : new Set<string>();
+  // Running heads repeat on many pages; a page number counts even on one.
+  const skip = furniture(pages);
   const kept = pages.map((p) => {
     const gone = new Set<TextItem>();
     for (const l of p.lines) if (skip.has(normalize(l.text)) && (l.y < p.height * 0.1 || l.y + l.h > p.height * 0.9)) for (const it of l.items) gone.add(it);
@@ -587,7 +664,7 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
   const perPage = pages.map((p, pi) => {
     const g = p.dir === 0 ? graphicsOf(p.pt.shapes ?? [], p.width, p.height) : { hrules: [], vrules: [], boxes: [], marks: [] };
     graphics.push(g);
-    const blocks = layoutRegion(regionsOf(kept[pi], g), { page: pi, pt: p.pt, body: body.size, columns: carry });
+    const blocks = layoutRegion(regionsOf(kept[pi], g), { page: pi, pt: p.pt, body: body.size, leading: body.leading, columns: carry });
     const last = blocks[blocks.length - 1];
     carry = last?.kind === "columns" ? last.starts : undefined;
     return blocks;
@@ -604,7 +681,7 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
     if (pi > 0) out.push({ kind: "pagebreak", page: pi, deliberate: deliberateBreak(perPage[pi - 1], blocks, layout.height - layout.bottom - bottoms[pi - 1], body, graphics[pi].boxes) });
     out.push(...blocks);
   });
-  joinAcrossPages(out);
+  joinAcrossPages(out, layout);
   rankHeadings(out);
   return { blocks: out, body, layout, furniture: furnitureLines(pages, skip) };
 }
@@ -628,7 +705,7 @@ function furnitureLines(pages: { lines: Line[]; height: number; width: number }[
         return { text, at };
       });
       const it = l.items.find((i) => i.str.trim()) ?? l.items[0];
-      (top ? out.header : out.footer).push({ parts, size: half(l.size), color: it?.color, face: it?.face, family: it?.family, bold: l.bold, edge: top ? l.y : p.height - (l.y + l.h) });
+      (top ? out.header : out.footer).push({ parts, size: half(l.size), color: it?.color, face: it?.face, family: it?.family, bold: l.bold, italic: l.italic, edge: top ? l.y : p.height - (l.y + l.h) });
     }
   });
   return out;
@@ -655,8 +732,37 @@ function deliberateBreak(before: SBlock[], after: SBlock[], free: number, body: 
   return free > need + lead;
 }
 
+/** Append blocks that continue a run of blocks, joining a paragraph the break cut mid-sentence. */
+function joinBlocks(into: SBlock[], more: SBlock[]) {
+  const x = into[into.length - 1];
+  const y = more[0];
+  const gx = x && "geo" in x ? x.geo : undefined;
+  const gy = y && "geo" in y ? y.geo : undefined;
+  if (x?.kind === "para" && y?.kind === "para" && !/[.!?:;]["”’)]?$/.test(runsText(x.runs).trimEnd()) && /^[a-z(“"‘'0-9]/.test(runsText(y.runs))) {
+    joinRuns(x.runs, y.runs);
+    x.runs = mergeRuns(x.runs);
+    if (gx && gy) [gx.gap, gx.next] = [gy.gap, gy.next];
+    into.push(...more.slice(1));
+    return;
+  }
+  // The space the break took (down to the foot of the page): as between the blocks before it.
+  if (gx) {
+    const gaps = into.slice(0, -1).flatMap((b) => ("geo" in b && b.geo?.gap !== undefined ? [b.geo.gap] : []));
+    gx.gap = gaps.length ? median(gaps) : undefined;
+    gx.next = gy?.first;
+  }
+  into.push(...more);
+}
+
 /** Merge what a natural page break cut in two: a paragraph, a list, or a table that runs on (dropping a repeated header row). */
-function joinAcrossPages(blocks: SBlock[]) {
+function joinAcrossPages(blocks: SBlock[], layout: PageLayout) {
+  // A box the break cut runs to the foot of one page and from the head of the next; two boxes
+  // that merely end one page and start the next are two boxes.
+  const cut = (a: SBlock, b: SBlock) => {
+    const ga = "geo" in a ? a.geo : undefined;
+    const gb = "geo" in b ? b.geo : undefined;
+    return !!ga && !!gb && ga.bottom >= layout.height - layout.bottom - 14 && gb.top <= layout.top + 14;
+  };
   for (let i = 1; i < blocks.length - 1; i++) {
     const pb = blocks[i];
     if (pb.kind !== "pagebreak" || pb.deliberate) continue;
@@ -685,16 +791,26 @@ function joinAcrossPages(blocks: SBlock[]) {
         b.formats.forEach((f, k) => (a.formats[k] ??= f));
         joined = true;
       }
+    } else if (a.kind === "box" && b.kind === "box" && cut(a, b) && a.fill === b.fill && a.stroke === b.stroke && Math.abs((a.geo?.left ?? 0) - (b.geo?.left ?? 0)) < 3 && Math.abs((a.geo?.right ?? 0) - (b.geo?.right ?? 0)) < 3) {
+      // A box the page break cut in two.
+      joinBlocks(a.blocks, b.blocks);
+      a.broken = true;
+      joined = true;
+    } else if (a.kind === "table" && a.cardCols && b.kind === "box" && b.geo?.left !== undefined && cut(a, b)) {
+      // The rest of one card of a row cut by the page break.
+      const k = a.cardCols.findIndex((c) => Math.abs(c.x - b.geo!.left!) < 3 && Math.abs(c.x + c.w - b.geo!.right!) < 3);
+      const cell = k >= 0 ? a.cells[a.cells.length - 1][k] : undefined;
+      if (cell?.blocks) {
+        joinBlocks(cell.blocks, b.blocks);
+        cell.paras = cell.blocks.flatMap(blockParas);
+        cell.text = cell.paras.map(runsText).join("\n");
+        a.rows[a.rows.length - 1][k] = cell.text;
+        a.broken = true;
+        joined = true;
+      }
     } else if (a.kind === "columns" && b.kind === "columns" && a.count === b.count) {
       // Columns that run on to the next page: one run of text (a paragraph cut by the page joins up).
-      const x = a.blocks[a.blocks.length - 1];
-      const y = b.blocks[0];
-      if (x?.kind === "para" && y?.kind === "para" && !/[.!?:;]["”’)]?$/.test(runsText(x.runs).trimEnd()) && /^[a-z(“"‘'0-9]/.test(runsText(y.runs))) {
-        joinRuns(x.runs, y.runs);
-        x.runs = mergeRuns(x.runs);
-        b.blocks.shift();
-      }
-      a.blocks.push(...b.blocks);
+      joinBlocks(a.blocks, b.blocks);
       joined = true;
     } else if (a.kind === "table" && b.kind === "table" && a.lines !== "cards" && b.lines !== "cards") {
       const cols = a.widths.length;
@@ -775,8 +891,9 @@ function bodyStyle(kept: Item[][], pages: { pt: PageText }[]): BodyStyle {
       else steps.push(b.base - a.base);
     }
   });
-  const inPara = steps.filter((s) => s >= size * 0.95 && s <= size * 2.2);
-  const leading = inPara.length >= 3 ? median(inPara) : undefined;
+  // Lines inside paragraphs sit closest: the tighter half of the steps (items of a list, set apart a little, are looser).
+  const inPara = steps.filter((s) => s >= size * 0.95 && s <= size * 2.2).sort((a, b) => a - b);
+  const leading = inPara.length >= 3 ? median(inPara.slice(0, Math.ceil(inPara.length / 2))) : undefined;
   const between = leading ? breaks.filter((s) => s > leading * 1.15 && s < leading * 2.5) : [];
   return {
     size,
@@ -808,11 +925,198 @@ function rankHeadings(blocks: SBlock[]) {
 }
 
 /** Blocks of a region: its own text, with the boxes inside it (callouts, rows of cards) in reading order. */
-function layoutRegion(r: Region, base: { page: number; pt: Ctx["pt"]; body: number; columns?: number[] }): SBlock[] {
+type Base = { page: number; pt: Ctx["pt"]; body: number; leading?: number; columns?: number[] };
+
+/**
+ * Blocks of a region. A tall box down one side (a CV's sidebar) with the rest of the content
+ * beside it becomes a table of one row: the box's content in one cell, in its colour, and
+ * what sits beside it in the other, each laid out on its own.
+ */
+function layoutRegion(r: Region, base: Base): SBlock[] {
+  const sb = sidebarOf(r, base);
+  const sp = sb ? null : sideBySide(r, base);
+  if (!sb && !sp) return layoutPlain(r, base);
+  const [y0, y1] = sb ? [sb.y0, sb.y1] : [sp!.y0, sp!.y1];
+  const mid = (o: Rect) => o.y + o.h / 2;
+  const inSpan = (o: Rect) => mid(o) >= y0 && mid(o) <= y1;
+  const part = (keep: (o: Rect) => boolean, box?: Box): Region => ({
+    box,
+    items: r.items.filter(keep),
+    kids: r.kids.filter((k) => k !== sb?.kid && keep(k.box!)),
+    hrules: r.hrules.filter(keep),
+    vrules: r.vrules.filter(keep),
+    marks: r.marks.filter(keep),
+    fills: r.fills.filter(keep),
+    outlines: r.outlines.filter(keep),
+  });
+  const text = (bs: SBlock[]) => bs.flatMap(blockParas).map(runsText).join("\n");
+  const cellOfBlocks = (bs: SBlock[], extra: Partial<Cell>): Cell => ({ paras: bs.flatMap(blockParas), text: text(bs), blocks: bs, ...extra });
+  const extent = (reg: Region) => {
+    const its = reg.items.filter((it) => it.str.trim());
+    return its.length ? { x0: Math.min(...its.map((it) => it.x)), x1: Math.max(...its.map((it) => it.x + it.w)) } : null;
+  };
+  let cells: Cell[];
+  let ws: number[];
+  let layout: { x: number; w: number; h?: number };
+  if (sb) {
+    const box = sb.kid.box!;
+    const main = part(inSpan);
+    const sideBlocks = layoutRegion(sb.kid, base);
+    const mainBlocks = layoutRegion(main, base);
+    const e = extent(main) ?? { x0: box.x + box.w, x1: box.x + box.w };
+    const pad = insets(sb.kid) ?? { x: 8, y: 8 };
+    const sideCell = cellOfBlocks(sideBlocks, { ...(box.fill ? { fill: box.fill } : {}), margins: { left: pad.x, right: pad.x, top: pad.y, bottom: pad.y } });
+    // The main text keeps its distance from the box.
+    const gapX = Math.max(0, sb.left ? e.x0 - (box.x + box.w) : box.x - e.x1);
+    const mainCell = cellOfBlocks(mainBlocks, { margins: { left: sb.left ? gapX : 0, right: sb.left ? 0 : gapX, top: 0, bottom: 0 } });
+    cells = sb.left ? [sideCell, mainCell] : [mainCell, sideCell];
+    ws = sb.left ? [box.w, e.x1 - (box.x + box.w)] : [box.x - e.x0, box.w];
+    layout = { x: sb.left ? box.x : e.x0, w: ws[0] + ws[1], h: box.h };
+  } else {
+    // Blocks side by side (a letterhead beside the invoice details): each laid out on its own,
+    // the second cell starting where its text does.
+    const left = part((o) => inSpan(o) && o.x + o.w / 2 < sp!.gx);
+    const right = part((o) => inSpan(o) && o.x + o.w / 2 >= sp!.gx);
+    const el = extent(left)!;
+    const er = extent(right)!;
+    // Text on the left could run on towards the right-hand block.
+    left.x1 = er.x0 - 12;
+    const none = { left: 0, right: 0, top: 0, bottom: 0 };
+    cells = [cellOfBlocks(layoutRegion(left, base), { margins: none }), cellOfBlocks(layoutRegion(right, base), { margins: none })];
+    ws = [er.x0 - el.x0, er.x1 - er.x0];
+    layout = { x: el.x0, w: ws[0] + ws[1] };
+  }
+  const total = ws[0] + ws[1];
+  const table: SBlock = {
+    kind: "table",
+    rows: [cells.map((c) => c.text)],
+    cells: [cells],
+    header: false,
+    widths: ws.map((w) => w / total),
+    layout,
+    page: base.page,
+    geo: { top: y0, bottom: y1, first: 0, last: 0 },
+  };
+  const out = layoutRegion(part((o) => !inSpan(o), r.box), base);
+  const at = out.findIndex((b) => "geo" in b && !!b.geo && b.geo.top >= y1 - 1);
+  out.splice(at < 0 ? out.length : at, 0, table);
+  setGaps(out, r.box);
+  return out;
+}
+
+/**
+ * Two blocks of text side by side that don't line up as a table: a stretch of four or more
+ * lines with a clear gap down the middle (nothing drawn across it), text on both sides, and
+ * lines on the two sides that mostly don't share baselines (a letterhead beside invoice
+ * details). Rows of a table, even with wrapped cells, keep one side aligned with the other.
+ */
+function sideBySide(r: Region, base: Base): { y0: number; y1: number; gx: number } | null {
+  const lines = linesOf(r.items, base.pt);
+  if (lines.length < 4) return null;
+  const x0 = Math.min(...lines.map((l) => l.x));
+  const x1 = Math.max(...lines.map((l) => l.x + l.w));
+  const width = x1 - x0;
+  if (width < 200) return null;
+  const lo = x0 + width * 0.15;
+  const hi = x1 - width * 0.15;
+  type Gap = { a: number; b: number };
+  const freeOf = (l: SLine): Gap[] => {
+    const out: Gap[] = [];
+    let at = lo;
+    for (const sg of segments(l)) {
+      if (sg.x > at) out.push({ a: at, b: Math.min(sg.x, hi) });
+      at = Math.max(at, sg.x2);
+    }
+    if (at < hi) out.push({ a: at, b: hi });
+    return out.filter((g) => g.b - g.a >= 16);
+  };
+  const cross = (g: Gap, top: number, bottom: number) =>
+    [...r.fills, ...r.outlines, ...r.hrules, ...r.kids.map((k) => k.box!)].some((o) => o.y < bottom && o.y + o.h > top && o.x < g.a && o.x + o.w > g.b);
+  for (let i = 0; i < lines.length; i++) {
+    let common = freeOf(lines[i]).filter((g) => !cross(g, lines[i].y, lines[i].y + lines[i].h));
+    let j = i;
+    while (common.length && j + 1 < lines.length) {
+      const l = lines[j + 1];
+      const next = common
+        .flatMap((g) => freeOf(l).map((f) => ({ a: Math.max(g.a, f.a), b: Math.min(g.b, f.b) })))
+        .filter((g) => g.b - g.a >= 16 && !cross(g, lines[j].y, l.y + l.h));
+      if (!next.length) break;
+      common = next;
+      j++;
+    }
+    if (!common.length || j - i + 1 < 4) continue;
+    const g = common.reduce((a, b) => (b.b - b.a > a.b - a.a ? b : a));
+    const gx = (g.a + g.b) / 2;
+    const leftOf = (l: SLine) => l.items.some((it) => it.str.trim() && it.x + it.w / 2 < gx);
+    const rightOf = (l: SLine) => l.items.some((it) => it.str.trim() && it.x + it.w / 2 >= gx);
+    // The blocks start where the later of the two does; short lines above it are ordinary text.
+    const from = Math.max(lines.slice(i, j + 1).findIndex(leftOf), lines.slice(i, j + 1).findIndex(rightOf));
+    const run = lines.slice(i + Math.max(0, from), j + 1);
+    if (run.length < 4) continue;
+    // Running text in two columns is read down one column then the next (see columnZones).
+    const sides = [0, 1].map((n) => linesFromItems(run.flatMap((l) => l.items.filter((it) => it.str.trim() && (it.x + it.w / 2 < gx) === (n === 0))), base.pt));
+    if (proseSides(sides, base.body)) continue;
+    const ls = run.filter(leftOf);
+    const rs = run.filter(rightOf);
+    const nl = ls.length;
+    const nr = rs.length;
+    const paired = run.filter((l) => leftOf(l) && rightOf(l)).length;
+    if (nl < 2 || nr < 2) continue;
+    // Side by side, not one above the other (an address set to the right above a date at the left).
+    const span = (xs: SLine[]) => [Math.min(...xs.map((l) => l.y)), Math.max(...xs.map((l) => l.y + l.h))];
+    const [la, lb] = span(ls);
+    const [ra, rb] = span(rs);
+    if (Math.min(lb, rb) - Math.max(la, ra) < Math.min(lb - la, rb - ra) * 0.5) continue;
+    const pl = paired / nl;
+    const pr = paired / nr;
+    if (Math.max(pl, pr) <= 0.8 && Math.min(pl, pr) < 0.65) return { y0: Math.min(...run.map((l) => l.y)), y1: Math.max(...run.map((l) => l.y + l.h)), gx };
+    i = j;
+  }
+  return null;
+}
+
+/**
+ * A box that runs down one side of the region (at least 40% of its height, under half its
+ * width) with text beside it and nothing else in its way: a sidebar.
+ */
+function sidebarOf(r: Region, base: Base): { kid: Region; left: boolean; y0: number; y1: number } | null {
+  const height = r.box?.h ?? base.pt.height;
+  const width = r.box?.w ?? base.pt.width;
+  for (const kid of r.kids) {
+    const b = kid.box!;
+    if (b.h < height * 0.4 || b.w > width * 0.45) continue;
+    const beside = r.items.filter((it) => it.str.trim() && it.y + it.h / 2 >= b.y && it.y + it.h / 2 <= b.y + b.h);
+    if (toLines({ page: 0, width: 0, height: 0, items: beside }).length < 3) continue;
+    const left = beside.every((it) => it.x >= b.x + b.w + 4);
+    const right = beside.every((it) => it.x + it.w <= b.x - 4);
+    const others = r.kids.filter((k) => k !== kid && k.box!.y + k.box!.h / 2 >= b.y && k.box!.y + k.box!.h / 2 <= b.y + b.h);
+    const clear = others.every((k) => (left ? k.box!.x >= b.x + b.w : k.box!.x + k.box!.w <= b.x));
+    if ((left || right) && clear) return { kid, left, y0: b.y, y1: b.y + b.h };
+  }
+  return null;
+}
+
+/** The gap below each block: to the next one, or for the last block in a box, to the box's edge. */
+function setGaps(out: SBlock[], box?: Box) {
+  const placed = out.filter((b): b is Extract<SBlock, { geo?: Geo }> & { geo: Geo } => "geo" in b && !!b.geo);
+  placed.forEach((b, k) => {
+    const nx = placed[k + 1]?.geo;
+    if (nx) {
+      b.geo.gap = Math.max(0, nx.top - b.geo.bottom);
+      b.geo.next = nx.first;
+    } else if (box) {
+      b.geo.gap = Math.max(0, box.y + box.h - b.geo.bottom);
+      b.geo.next = undefined;
+    }
+  });
+}
+
+function layoutPlain(r: Region, base: Base): SBlock[] {
   const lines = linesOf(r.items, base.pt);
   const x0 = lines.length ? Math.min(...lines.map((l) => l.x)) : 0;
-  const x1 = lines.length ? Math.max(...lines.map((l) => l.x + l.w)) : 0;
-  const ctx: Ctx = { ...base, hrules: r.hrules, vrules: r.vrules, marks: r.marks, fills: r.fills, outlines: r.outlines, x0, x1 };
+  // In a box, text can run as far from its right edge as it starts from the left.
+  const x1 = lines.length ? Math.max(...lines.map((l) => l.x + l.w), r.box ? r.box.x + r.box.w - Math.min(24, x0 - r.box.x) : -Infinity, r.x1 ?? -Infinity) : 0;
+  const ctx: Ctx = { ...base, hrules: r.hrules, used: new Set(), vrules: r.vrules, marks: r.marks, fills: r.fills, outlines: r.outlines, x0, x1 };
   // Runs of ordinary lines, and stretches set in columns, in order down the region.
   type Unit = { y: number; lines: SLine[]; gutter?: number };
   const groups = cardGroups(r.kids);
@@ -854,19 +1158,38 @@ function layoutRegion(r: Region, base: { page: number; pt: Ctx["pt"]; body: numb
     out.push(...groupBlocks(grp, base));
   }
   while (ui < units.length) out.push(...render(units[ui++]));
-  // The gap below each block: to the next one, or for the last block in a box, to the box's edge.
-  const placed = out.filter((b): b is Extract<SBlock, { geo?: Geo }> & { geo: Geo } => "geo" in b && !!b.geo);
-  placed.forEach((b, k) => {
-    const nx = placed[k + 1]?.geo;
-    if (nx) {
-      b.geo.gap = Math.max(0, nx.top - b.geo.bottom);
-      b.geo.next = nx.first;
-    } else if (r.box) {
-      b.geo.gap = Math.max(0, r.box.y + r.box.h - b.geo.bottom);
-      b.geo.next = undefined;
-    }
-  });
+  attachRules(out, lines, ctx);
+  setGaps(out, r.box);
   return out;
+}
+
+/**
+ * Rules no table, list or heading drew. One just under a paragraph or heading, across the
+ * text, becomes its bottom border; any other (between blocks, under a table, or short) a
+ * rule of its own. Underlines under words are left alone.
+ */
+function attachRules(out: SBlock[], lines: SLine[], ctx: Ctx) {
+  const width = ctx.x1 - ctx.x0;
+  if (width <= 0) return;
+  const free = ctx.hrules.filter((r) => !ctx.used.has(r.src ?? r) && r.w >= 24).sort((a, b) => a.y - b.y);
+  for (const r of free) {
+    const underline = lines.some((l) => r.y >= l.domBase - 1 && r.y <= l.domBase + l.dom * 0.35 && r.x >= l.x - 3 && r.x + r.w <= l.x + l.w + 3);
+    if (underline) continue;
+    const placed = out.flatMap((b, k) => ("geo" in b && b.geo ? [{ b, k, g: b.geo }] : []));
+    // Inside a block (a line in a table or box): not ours.
+    if (placed.some(({ g }) => r.y > g.top + 1 && r.y + r.h < g.bottom - 1)) continue;
+    const above = [...placed].reverse().find(({ g }) => g.bottom <= r.y + 1);
+    const below = placed.find(({ g }) => g.top >= r.y + r.h - 1);
+    const gapAbove = above ? r.y - above.g.bottom : Infinity;
+    const gapBelow = below ? below.g.top - (r.y + r.h) : Infinity;
+    const ab = above?.b;
+    if (ab && (ab.kind === "para" || ab.kind === "heading") && !ab.under && r.w >= width * 0.8 && gapAbove <= gapBelow + 2 && gapAbove < 30) {
+      ab.under = { color: r.color ?? "#000000", h: r.h, at: Math.max(0, gapAbove) };
+      continue;
+    }
+    const at = below ? below.k : out.length;
+    out.splice(at, 0, { kind: "rule", color: r.color ?? "#000000", h: r.h, inset: { left: Math.max(0, r.x - ctx.x0), right: Math.max(0, ctx.x1 - (r.x + r.w)) }, page: ctx.page, geo: { top: r.y, bottom: r.y + r.h, first: 0, last: 0 } });
+  }
 }
 
 type Group = { y: number; rows: Region[][] };
@@ -912,14 +1235,12 @@ function groupBlocks(g: Group, base: { page: number; pt: Ctx["pt"]; body: number
   if (g.rows.length === 1 && g.rows[0].length === 1) {
     const kid = g.rows[0][0];
     const inner = layoutRegion(kid, base);
-    // A frame around a whole section (with tables or boxes inside, or most of a page) adds nothing: keep its content.
-    if (inner.some((b) => b.kind === "table" || b.kind === "box") || kid.box!.h > base.pt.height * 0.45) {
-      // Its parts stay together on a page, as in the box.
-      for (const b of inner) if (b.kind === "para" || (b.kind === "table" && b.cells.length <= 12)) b.keep = true;
-      return inner;
-    }
     const box = kid.box!;
-    return inner.length ? [{ kind: "box", blocks: inner, fill: box.fill, stroke: box.stroke, pad: insets(kid), page: base.page, geo: { top: box.y, bottom: box.y + box.h, first: 0, last: 0 } }] : [];
+    // A border around (nearly) the whole page, or the outline of the one ruled table inside, adds nothing: keep the content.
+    const pageFrame = box.h > base.pt.height * 0.75 && box.w > base.pt.width * 0.6;
+    const tableEdge = inner.length === 1 && inner[0].kind === "table" && inner[0].lines === "grid";
+    if (pageFrame || tableEdge) return inner;
+    return inner.length ? [{ kind: "box", blocks: inner, fill: box.fill, stroke: box.stroke, pad: insets(kid), page: base.page, geo: { top: box.y, bottom: box.y + box.h, first: 0, last: 0, left: box.x, right: box.x + box.w } }] : [];
   }
   const cols = Math.max(...g.rows.map((r) => r.length));
   const cells = g.rows.map((rw) =>
@@ -927,7 +1248,7 @@ function groupBlocks(g: Group, base: { page: number; pt: Ctx["pt"]; body: number
       const kid = rw[c];
       if (!kid) return { paras: [], text: "" } as Cell;
       // Titles inside a card stay styled text: they aren't headings of the document.
-      const blocks = layoutRegion(kid, base).map((b): SBlock => (b.kind === "heading" ? { kind: "para", runs: b.runs, page: b.page, geo: b.geo } : b));
+      const blocks = layoutRegion(kid, base).map((b): SBlock => (b.kind === "heading" ? { kind: "para", runs: b.runs, page: b.page, ...(b.align ? { align: b.align } : {}), geo: b.geo } : b));
       const paras = blocks.flatMap(blockParas);
       return { paras, text: paras.map(runsText).join("\n"), blocks, fill: kid.box!.fill, stroke: kid.box!.stroke } as Cell;
     }),
@@ -937,13 +1258,29 @@ function groupBlocks(g: Group, base: { page: number; pt: Ctx["pt"]; body: number
   const total = raw.reduce((a, b) => a + b, 0) || 1;
   const boxes = g.rows.flat().map((k) => k.box!);
   const geo: Geo = { top: Math.min(...boxes.map((b) => b.y)), bottom: Math.max(...boxes.map((b) => b.y + b.h)), first: 0, last: 0 };
-  return [{ kind: "table", rows: cells.map((r) => r.map((c) => c.text)), cells, header: false, widths: raw.map((w) => w / total), lines: "cards", pad: insets(first[0]), page: base.page, geo }];
+  const rowSpan = g.rows.map((rw) => ({ top: Math.min(...rw.map((k) => k.box!.y)), bottom: Math.max(...rw.map((k) => k.box!.y + k.box!.h)) }));
+  const cardRowGaps = rowSpan.slice(1).map((r, k) => Math.max(0, r.top - rowSpan[k].bottom));
+  return [
+    {
+      kind: "table",
+      rows: cells.map((r) => r.map((c) => c.text)),
+      cells,
+      header: false,
+      widths: raw.map((w) => w / total),
+      lines: "cards",
+      pad: insets(first[0]),
+      page: base.page,
+      geo,
+      cardCols: first.map((k) => ({ x: k.box!.x, w: k.box!.w })),
+      ...(cardRowGaps.length ? { cardRowGaps } : {}),
+    },
+  ];
 }
 
 /** A block flattened to paragraphs (for plain table cells). */
 function blockParas(b: SBlock): Run[][] {
   if (b.kind === "heading" || b.kind === "para") return [b.runs];
-  if (b.kind === "list") return b.items.map((it, i) => [{ ...(it[0] ?? { bold: false, italic: false }), text: listLabel(b, i) + " " }, ...it]);
+  if (b.kind === "list") return b.items.map((it, i) => (listLabel(b, i) ? [{ ...(it[0] ?? { bold: false, italic: false }), text: listLabel(b, i) + " " }, ...it] : it));
   if (b.kind === "table") return b.cells.flatMap((r) => r.flatMap((c) => c.paras));
   if (b.kind === "box" || b.kind === "columns") return b.blocks.flatMap(blockParas);
   return [];
@@ -955,6 +1292,7 @@ export function listLabel(b: Extract<SBlock, { kind: "list" }>, i: number): stri
   const f = b.formats[lvl] ?? b.formats[0];
   if (f.kind === "bullet") return f.bullet ?? "•";
   if (f.kind === "check") return "☐";
+  if (f.kind === "none") return "";
   let n = f.start;
   for (let k = i - 1; k >= 0; k--) {
     if ((b.levels[k] ?? 0) < lvl) break;
@@ -989,7 +1327,10 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
   const flush = () => {
     if (para) {
       const runs = mergeRuns(para.runs);
-      if (runs.length) out.push({ kind: "para", runs, page: ctx.page, ...alignOf(para.lines, ctx), ...indentOf(para.lines, ctx), ...(para.bar ? { bar: para.bar } : {}), geo: geoOf(para.lines) });
+      const align = alignOf(para.lines, ctx);
+      // Centred and flush-right text sits by its alignment, not by indents.
+      const indent = align.align === "center" || align.align === "right" ? {} : indentOf(para.lines, ctx);
+      if (runs.length) out.push({ kind: "para", runs, page: ctx.page, ...align, ...indent, ...(para.bar ? { bar: para.bar } : {}), geo: geoOf(para.lines) });
     }
     para = null;
   };
@@ -1006,7 +1347,8 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
     const li = findList(lines, segs, i, ctx);
     if (li) {
       flush();
-      out.push(li.block);
+      for (const r of li.used) ctx.used.add(r.src ?? r);
+      out.push(...li.blocks);
       i = li.end;
       continue;
     }
@@ -1020,11 +1362,20 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
     const t = findTable(lines, segs, i, ctx);
     if (t) {
       flush();
+      for (const r of t.rules) ctx.used.add(r.src ?? r);
       const rows = lines.slice(i, t.end);
       const py = t.pad?.y ?? 0;
       const geo: Geo = { top: Math.min(...rows.map((l) => l.y)) - py, bottom: Math.max(...rows.map((l) => l.y + l.h)) + py, first: 0, last: 0 };
-      out.push({ kind: "table", rows: t.cells.map((r) => r.map((c) => c.text)), cells: t.cells, header: t.header, widths: t.widths, page: ctx.page, pad: t.pad, leading: t.leading, ...(t.lines ? { lines: t.lines, lineColor: t.lineColor, rowRules: t.rowRules } : {}), geo });
+      out.push({ kind: "table", rows: t.cells.map((r) => r.map((c) => c.text)), cells: t.cells, header: t.header, widths: t.widths, span: t.span, page: ctx.page, pad: t.pad, inset: t.inset, leading: t.leading, ...(t.rowSpace ? { rowSpace: t.rowSpace } : {}), ...(t.lines ? { lines: t.lines, lineColor: t.lineColor, rowRules: t.rowRules } : {}), geo });
       i = t.end;
+      continue;
+    }
+    const tabbed = tabbedRuns(l, segs[i], ctx);
+    if (tabbed) {
+      flush();
+      const left = l.x - ctx.x0;
+      out.push({ kind: "para", runs: tabbed, page: ctx.page, ...(left > 2 ? { indent: { left, first: 0 } } : {}), geo: geoOf([l]) });
+      i++;
       continue;
     }
     const runs = lineRuns(l);
@@ -1034,13 +1385,24 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
       const sameSize = Math.abs(l.dom - para.last.dom) < 0.6;
       // A new paragraph starts indented (beyond the line before) or, where paragraphs are
       // marked by a first-line indent, a little in from lines that sat at the left edge.
-      const indented = l.x - para.last.x > l.size * 1.5 || (para.lines.length >= 2 && Math.abs(para.last.x - ctx.x0) < 1.5 && l.x - para.last.x > l.size * 0.6 && l.x - para.last.x < l.size * 4);
+      // (Not for lines set flush right or centred, which start wherever their length puts them.)
+      const flushRight = Math.abs(l.x + l.w - ctx.x1) < 2 && Math.abs(para.last.x + para.last.w - ctx.x1) < 2 && l.x - ctx.x0 > (ctx.x1 - ctx.x0) * 0.2;
+      const centred = Math.abs(l.x + l.w / 2 - (para.last.x + para.last.w / 2)) < 2 && l.x - ctx.x0 > 24;
+      const indented = !flushRight && !centred && (l.x - para.last.x > l.size * 1.5 || (para.lines.length >= 2 && Math.abs(para.last.x - ctx.x0) < 1.5 && l.x - para.last.x > l.size * 0.6 && l.x - para.last.x < l.size * 4));
       const sentenceEnd = /[.!?:]["”’)]?$/.test(para.last.text);
       const prevShort = para.last.x + para.last.w < ctx.x0 + (ctx.x1 - ctx.x0) * 0.55 && sentenceEnd;
       // At the top of the next column the spacing that marks a new paragraph is gone: a finished sentence followed by a capital is one.
       const newColumn = l.col !== para.last.col && sentenceEnd && /^[A-Z“"‘]/.test(l.text);
-      if (gap < l.h * 0.75 && sameSize && !indented && !prevShort && !newColumn && bar === para.bar && l.x >= para.first.x - l.size * 1.5) {
-        joinRuns(para.runs, runs);
+      // The line before ended with room to spare for this one's first word: the author broke
+      // the line there (an address, a list of labels) or, after a full stop, ended the paragraph.
+      const early = l.col === para.last.col && endedEarly(para.last, l, ctx);
+      // Lines set further apart than the paragraph's own spacing (or the text's usual spacing) start a new one.
+      const step = l.domBase - para.last.domBase;
+      const usual = para.lines.length >= 2 ? para.last.domBase - para.lines[para.lines.length - 2].domBase : sameSize && ctx.leading && Math.abs(l.dom - ctx.body) < 0.6 ? ctx.leading : undefined;
+      const spaced = usual !== undefined && l.col === para.last.col && step > usual + Math.max(1.5, l.dom * 0.15);
+      if (gap < l.h * 0.75 && sameSize && !indented && !prevShort && !newColumn && !spaced && !(early && sentenceEnd) && bar === para.bar && l.x >= para.first.x - l.size * 1.5) {
+        if (early) breakRuns(para.runs, runs);
+        else joinRuns(para.runs, runs);
         para.last = l;
         para.lines.push(l);
         i++;
@@ -1053,6 +1415,26 @@ function blocksOf(lines: SLine[], ctx: Ctx): SBlock[] {
   }
   flush();
   return out;
+}
+
+/**
+ * A line with a short piece set flush right across a wide gap (a date beside a job title, a
+ * badge beside a label, an amount beside its name): that piece follows a tab to a stop at
+ * the right edge, so it stays flush right in Word.
+ */
+function tabbedRuns(l: SLine, segs: Segment[], ctx: Ctx): Run[] | null {
+  const width = ctx.x1 - ctx.x0;
+  if (segs.length < 2 || width < 150) return null;
+  const last = segs[segs.length - 1];
+  const prev = segs[segs.length - 2];
+  // A badge counts to the edge of its background.
+  const end = Math.max(last.x2, ...(last.items as Item[]).map((it) => it.bgRight ?? -Infinity));
+  if (ctx.x1 - end > Math.max(3, l.dom * 0.4) || last.x - prev.x2 < l.dom * 2 || last.x2 - last.x > width * 0.4) return null;
+  const left = mergeRuns(itemsRuns(sliceItems(l.items, -Infinity, last.x - 0.5), l.dom));
+  const right = mergeRuns(itemsRuns(sliceItems(l.items, last.x - 0.5), l.dom));
+  if (!left.length || !right.length) return null;
+  right[0] = { ...right[0], tab: "right" };
+  return [...left, ...right];
 }
 
 /** A coloured bar drawn just left of a line (a pull quote or callout), as its colour. */
@@ -1082,7 +1464,10 @@ function alignOf(lines: SLine[], ctx: Ctx): { align?: "center" | "right" | "just
 
 /** A paragraph's indents: where its lines start, and how far the first line sits in (or hangs out). */
 function indentOf(lines: SLine[], ctx: Ctx): { indent?: { left: number; first: number; right?: number } } {
-  if (lines.length < 2) return {};
+  if (lines.length < 2) {
+    const left = lines[0] ? lines[0].x - ctx.x0 : 0;
+    return left >= (lines[0]?.dom ?? 10) * 0.5 ? { indent: { left, first: 0 } } : {};
+  }
   const left = Math.min(...lines.slice(1).map((l) => l.x)) - ctx.x0;
   const first = lines[0].x - ctx.x0 - left;
   const size = lines[0].dom;
@@ -1168,7 +1553,7 @@ function columnsBlock(sides: SLine[][], starts: number[], rows: SLine[], ctx: Ct
   const colRight = Math.max(...sides[0].map((l) => l.x + l.w));
   // Rules, marks and shading inside a column move over with its text.
   const colOf = (x: number) => starts.reduce((c, sx, k) => (x >= sx - 6 ? k : c), 0);
-  const move = <T extends Rect>(rs: T[]) => rs.map((r) => ({ ...r, x: r.x - (starts[colOf(r.x + Math.min(r.w, 8) / 2)] - starts[0]) }));
+  const move = <T extends Rect>(rs: T[]) => rs.map((r) => ({ ...r, x: r.x - (starts[colOf(r.x + Math.min(r.w, 8) / 2)] - starts[0]), src: (r as Rule).src ?? r }));
   const inner = blocksOf(vlines, { ...ctx, x0: starts[0], x1: colRight, hrules: move(ctx.hrules), vrules: move(ctx.vrules), marks: move(ctx.marks), fills: move(ctx.fills), outlines: move(ctx.outlines) });
   // Gaps inside: down a column as measured; where the next block heads the next column, unknown.
   const placed = inner.filter((b): b is Extract<SBlock, { geo?: Geo }> & { geo: Geo } => "geo" in b && !!b.geo);
@@ -1248,7 +1633,13 @@ function columnZones(lines: SLine[], ctx: Ctx): { from: number; to: number; gutt
     const size = median(lines.slice(from, to).map((l) => l.dom));
     const oneSided = (l: SLine) => !side(l, 0).length || !side(l, 1).length;
     while (to - from > 0 && oneSided(lines[to - 1]) && lines[to - 1].dom < size * 0.9) to--;
-    while (to - from > 0 && oneSided(lines[from]) && lines[from].dom < size * 0.9) from++;
+    // The columns start where both do (within a line or so): short lines well above that are ordinary text.
+    while (to - from > 0 && oneSided(lines[from])) {
+      const own = side(lines[from], 0).length ? 0 : 1;
+      const other = lines.slice(from + 1, to).find((l) => side(l, 1 - own).length);
+      if (other && other.y - lines[from].y <= lines[from].h * 1.8) break;
+      from++;
+    }
     const zl = lines.slice(from, to);
     if (zl.length < 6) continue;
     const sides = [0, 1].map((n) => linesFromItems(zl.flatMap((l) => side(l, n)), ctx.pt));
@@ -1281,7 +1672,11 @@ function headingAt(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx): { bl
   const text = l.text;
   if (text.length > 150 || !/\p{L}/u.test(text)) return null;
   const big = l.dom >= ctx.body * 1.18;
-  const boldish = l.bold && l.dom >= ctx.body * 0.98 && text.length < 80 && !/[.:,;!?]$/.test(text) && !markerAt(l, ctx);
+  // A numbered title ("1. Definitions" over its clauses) is a heading; one followed by the next number is an item of a list.
+  const mk = markerAt(l, ctx);
+  const after = lines[i + 1] ? markerAt(lines[i + 1], ctx) : null;
+  const titled = !mk || (mk.kind === "decimal" && !!mk.after && text.length < 60 && !(after?.kind === "decimal" && Math.abs(after.x - mk.x) < 4));
+  const boldish = l.bold && l.dom >= ctx.body * 0.98 && text.length < 80 && (text.match(/\p{L}/gu) ?? []).length >= 3 && !/[.:,;!?]$/.test(text) && titled;
   if ((!big && !boldish) || l.dom < ctx.body * 0.95) return null;
   // A heading that wraps continues with lines of the same size and weight.
   let end = i + 1;
@@ -1313,12 +1708,29 @@ function headingAt(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx): { bl
     const bar = barOf(l, ctx);
     return { block: { kind: "para", runs: merged, page: ctx.page, ...alignOf(group, ctx), ...(bar ? { bar } : {}), geo: geoOf(group) }, end };
   }
-  return { block: { kind: "heading", level: 1, text: all, runs: merged, size: l.dom, page: ctx.page, geo: geoOf(group) }, end };
+  const { align } = alignOf(group, ctx);
+  const geo = geoOf(group);
+  const under = underOf(geo, lines[end], ctx);
+  return { block: { kind: "heading", level: 1, text: all, runs: merged, size: l.dom, page: ctx.page, ...(align === "center" || align === "right" ? { align } : {}), ...(under ? { under } : {}), geo }, end };
+}
+
+/**
+ * A rule drawn just under a heading (and above whatever follows), across most of the text:
+ * the heading's own underline. It is claimed so no table below takes it as its top line.
+ */
+function underOf(geo: Geo, next: SLine | undefined, ctx: Ctx): Under | undefined {
+  const width = ctx.x1 - ctx.x0;
+  const limit = Math.min(geo.bottom + Math.max(geo.last, 6) * 0.9, next ? next.y : Infinity);
+  const r = ctx.hrules.find((h) => !ctx.used.has(h.src ?? h) && h.y >= geo.bottom - 1 && h.y <= limit && h.w >= width * 0.5 && h.x <= ctx.x0 + width * 0.25);
+  if (!r) return undefined;
+  ctx.used.add(r.src ?? r);
+  return { color: r.color ?? "#000000", h: r.h, at: Math.max(0, r.y - geo.bottom) };
 }
 
 /* ------------------------------------------------------------- lists */
 
-type Marker = { kind: ListFormat["kind"]; value: number; before: string; after: string; bullet?: string; x: number; textX: number; letter?: string; run?: ListFormat["run"] };
+/** A list marker: its kind and value, the text around the number, where it and the item's text start, its look, and the text it shows (`token`). */
+type Marker = { kind: ListFormat["kind"]; value: number; before: string; after: string; bullet?: string; x: number; textX: number; letter?: string; run?: ListFormat["run"]; token?: string; literal?: string };
 
 type Ch = { c: string; x: number; x2: number; it: Item };
 function charsOf(items: Item[]): Ch[] {
@@ -1342,7 +1754,7 @@ function markerAt(l: SLine, ctx: Ctx, x0 = -Infinity): Marker | null {
   const first = chs[k];
   // A check box or bullet drawn just left of the text.
   const mark = ctx.marks.find((m) => m.x + m.w <= first.x + 1 && first.x - (m.x + m.w) < first.it.fontSize * 2.5 && m.x >= x0 - 1 && Math.min(m.y + m.h, l.y + l.h) - Math.max(m.y, l.y) > Math.min(m.h, l.h) * 0.4);
-  if (mark) return { kind: mark.check ? "check" : "bullet", value: 1, before: "", after: "", bullet: mark.bullet, x: mark.x, textX: first.x };
+  if (mark) return { kind: mark.check ? "check" : "bullet", value: 1, before: "", after: "", bullet: mark.bullet, x: mark.x, textX: first.x, ...(mark.color ? { run: { size: half(first.it.fontSize), color: mark.color, bold: false } } : {}) };
   let e = k + 1;
   while (e < chs.length && chs[e].c.trim() && chs[e].x - chs[e - 1].x2 < chs[e].it.fontSize * 0.15 && e - k < 8) e++;
   const token = chs.slice(k, e).map((c) => c.c).join("");
@@ -1355,8 +1767,9 @@ function markerAt(l: SLine, ctx: Ctx, x0 = -Infinity): Marker | null {
   const a = first.it;
   const b = next.it;
   const styled = a.bold !== b.bold || (a.color ?? "") !== (b.color ?? "") || Math.abs(a.fontSize - b.fontSize) > 0.6 || (a.face ?? "") !== (b.face ?? "");
+  if (first.it.sup) return null;
   const it0 = first.it;
-  const at = { x: first.x, textX: next.x, run: { size: half(it0.fontSize), color: it0.color, bold: it0.bold, face: it0.face, family: it0.family } };
+  const at = { x: first.x, textX: next.x, token, run: { size: half(it0.fontSize), color: it0.color, bold: it0.bold, face: it0.face, family: it0.family } };
   if (BULLETS.test(token)) return { kind: "bullet", value: 1, before: "", after: "", bullet: /[–—*-]/.test(token) ? "–" : /[▪■\uF0A7\uF06E]/.test(token) ? "▪" : /[◦○]/.test(token) ? "◦" : "•", ...at };
   let m = token.match(/^(\()?(\d{1,3})([.)])$/) ?? token.match(/^(\[)(\d{1,3})(\])$/);
   if (m) return { kind: "decimal", value: Number(m[2]), before: m[1] ?? "", after: m[3], ...at };
@@ -1364,6 +1777,8 @@ function markerAt(l: SLine, ctx: Ctx, x0 = -Infinity): Marker | null {
   if (m) return { kind: m[2] === m[2].toLowerCase() ? "lowerLetter" : "upperLetter", value: m[2].toLowerCase().charCodeAt(0) - 96, before: m[1] ?? "", after: m[3], letter: m[2], ...at };
   m = token.match(/^(\()?([ivxlc]{2,5}|[IVXLC]{2,5})([.)])$/);
   if (m) return { kind: m[2] === m[2].toLowerCase() ? "lowerRoman" : "upperRoman", value: romanValue(m[2]), before: m[1] ?? "", after: m[3], ...at };
+  // Clause numbers (2.1, 3.2.4) set apart from their text: kept as text, the item hanging after them.
+  if (/^\d{1,3}(\.\d{1,3}){1,3}\.?$/.test(token) && gap >= em * 0.6) return { kind: "none", value: Number(token.replace(/\.$/, "").split(".").pop()), before: "", after: "", literal: token, ...at };
   // Bare numbers and letters count only when set apart: another style, or a wide gap.
   if (/^\d{1,3}$/.test(token) && ((styled && gap > em * 0.25) || gap >= em * 1.5)) return { kind: "decimal", value: Number(token), before: "", after: "", ...at };
   if (/^[a-z]$/.test(token) && styled && gap > em * 0.3) return { kind: "lowerLetter", value: token.charCodeAt(0) - 96, before: "", after: "", letter: token, ...at };
@@ -1372,17 +1787,27 @@ function markerAt(l: SLine, ctx: Ctx, x0 = -Infinity): Marker | null {
 
 const sameFamily = (a: Marker, b: Marker) => {
   const fam = (k: Marker["kind"]) => (k === "lowerLetter" || k === "lowerRoman" ? "lower" : k === "upperLetter" || k === "upperRoman" ? "upper" : k);
-  return fam(a.kind) === fam(b.kind) && a.after === b.after && a.before === b.before;
+  const depth = (m: Marker) => (m.literal ? m.literal.replace(/\.$/, "").split(".").length : 0);
+  return fam(a.kind) === fam(b.kind) && a.after === b.after && a.before === b.before && depth(a) === depth(b);
 };
 
-type LItem = { m: Marker; col: number; runs: Run[]; children: LItem[]; childFormat?: ListFormat; top: number; bottom: number; bases: number[]; size: number };
+/** The run that shows a marker's own text, in its look. */
+const markerRun = (m: Marker, text: string): Run => ({ text, bold: m.run?.bold ?? false, italic: false, ...(m.run ? { size: m.run.size, color: m.run.color, face: m.run.face, family: m.run.family } : {}) });
+
+/** Markers of one list look alike (a footnote's raised "1" is not the next item of a numbered list). */
+const sameLook = (a: Marker, b: Marker) => !a.run || !b.run || (Math.abs(a.run.size - b.run.size) < 1 && a.run.bold === b.run.bold && (a.run.color ?? "") === (b.run.color ?? ""));
+
+/** An item of a list being read: its marker, text, nested items (or options set in a grid under it), and where it sits. */
+type LItem = { m: Marker; col: number; runs: Run[]; children: LItem[]; childFormat?: ListFormat; grid?: Grid; top: number; bottom: number; bases: number[]; size: number; right: number; rights?: number[] };
+/** Items set side by side, read row by row, that wrap within their columns. */
+type Grid = { rows: LItem[][]; cols: Marker[] };
 
 /**
  * A list starting at line i. Items continue on lines aligned with their text (hanging
  * indents); deeper markers start a nested list; a line can hold items side by side
  * (a list set in columns), read in the order of their numbers.
  */
-function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX = -Infinity): { block: SBlock; end: number; items: LItem[]; format: ListFormat } | null {
+function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX = -Infinity): { blocks: SBlock[]; end: number; items: LItem[]; format: ListFormat; used: Rule[]; grid?: Grid } | null {
   const m0 = markerAt(lines[i], ctx, minX);
   if (!m0) return null;
   // Columns: further markers of the same kind on this line, after a wide gap.
@@ -1401,14 +1826,32 @@ function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX =
     if (!found) break;
     cols.push(found);
   }
-  if (cols.length > 1 && !cols.slice(1).every((c) => lines.slice(i + 1, i + 8).some((l) => markerAt(l, ctx, c.x - 2)?.x !== undefined && Math.abs(markerAt(l, ctx, c.x - 2)!.x - c.x) < 4))) cols.length = 1;
+  // Side by side on later lines too (a grid of options), or a single row of them.
+  const besideBelow = (c: Marker) => lines.slice(i + 1, i + 8).some((l) => Math.abs((markerAt(l, ctx, c.x - 2)?.x ?? -99) - c.x) < 4);
+  const oneRow = cols.every((c, k) => k === 0 || c.value === cols[k - 1].value + 1);
+  if (cols.length > 1 && !oneRow && !cols.slice(1).every(besideBelow)) cols.length = 1;
   const bounds = cols.map((c, k) => [c.x - 3, k + 1 < cols.length ? cols[k + 1].x - 3 : Infinity]);
-  // The text after the marker must be one piece; several columns of text make it a table row.
-  const textSegs = (l: SLine, x0: number, x1: number) => segments({ ...l, items: sliceItems(l.items, x0, x1) } as Line).length;
-  if (cols.some((c, k) => textSegs(lines[i], c.textX - 0.5, bounds[k][1]) !== 1)) return null;
+  // The text after the marker must be one piece (several columns of text make it a table
+  // row), apart from a short piece set flush right at the end (marks, a date).
+  const textSegs = (l: SLine, x0: number, x1: number) => segments({ ...l, items: sliceItems(l.items, x0, x1) } as Line);
+  const tailAt = (l: SLine, x0: number, x1: number): number | null => {
+    if (cols.length > 1) return null;
+    const sg = textSegs(l, x0, x1);
+    const last = sg[sg.length - 1];
+    if (sg.length !== 2) return null;
+    return ctx.x1 - last.x2 < Math.max(3, l.dom * 0.4) && last.x - sg[0].x2 >= l.dom * 2 && last.x2 - last.x <= (ctx.x1 - ctx.x0) * 0.25 ? last.x : null;
+  };
+  const onePiece = (l: SLine, x0: number, x1: number) => textSegs(l, x0, x1).length === 1 || tailAt(l, x0, x1) !== null;
+  if (cols.some((c, k) => !onePiece(lines[i], c.textX - 0.5, bounds[k][1]))) return null;
 
   const items: LItem[] = [];
   const open: (LItem | null)[] = cols.map(() => null);
+  // Without a hanging indent, a wrapped item carries on under its marker: the line before ran
+  // to the edge of the column and this one follows straight on.
+  const wraps = (cur: LItem, k: number, px: number, l: SLine) => {
+    const right = k + 1 < cols.length ? cols[k + 1].x - 6 : ctx.x1;
+    return px >= cur.m.x - 4 && cur.right > right - (right - cols[k].x) * 0.2 && l.y - cur.bottom < l.h * 0.6 && !markerAt(l, ctx, bounds[k][0]);
+  };
   const lineH = lines[i].h;
   let end = i;
   for (let j = i; j < lines.length; j++) {
@@ -1428,8 +1871,22 @@ function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX =
       const px = Math.min(...part.filter((it) => it.str.trim()).map((it) => it.x));
       const mk = markerAt(l, ctx, x0);
       const cur = open[k];
-      if (mk && Math.abs(mk.x - cols[k].x) < 4 && sameFamily(mk, cols[k]) && textSegs(l, mk.textX - 0.5, x1) === 1) {
-        const it: LItem = { m: mk, col: k, runs: itemsRuns(sliceItems(l.items, mk.textX - 0.5, x1), l.dom), children: [], top: l.y, bottom: l.y + l.h, bases: [l.domBase], size: l.dom };
+      if (mk && Math.abs(mk.x - cols[k].x) < 4 && sameFamily(mk, cols[k]) && sameLook(mk, cols[k]) && onePiece(l, mk.textX - 0.5, x1)) {
+        const tail = tailAt(l, mk.textX - 0.5, x1);
+        // Where the item's text sits (a number set larger than the text reaches above and below it).
+        const body = sliceItems(l.items, mk.textX - 0.5, tail ?? x1);
+        const text = body.filter((p) => p.str.trim() && !p.sup);
+        const top = text.length ? Math.min(...text.map((p) => p.y)) : l.y;
+        const bottom = text.length ? Math.max(...text.map((p) => p.y + p.h)) : l.y + l.h;
+        let runs = itemsRuns(body, l.dom);
+        // A clause number stays in the text, the item's text after a tab at its hanging indent.
+        if (mk.literal && runs.length) runs = [markerRun(mk, mk.literal), { ...runs[0], text: runs[0].text.trimStart(), tab: "next" }, ...runs.slice(1)];
+        if (tail !== null) {
+          const right = mergeRuns(itemsRuns(sliceItems(l.items, tail - 0.5, x1), l.dom));
+          if (right.length) runs = [...mergeRuns(runs), { ...right[0], tab: "right" }, ...right.slice(1)];
+        }
+        const right = text.length ? Math.max(...text.map((p) => p.x + p.w)) : l.x + l.w;
+        const it: LItem = { m: mk, col: k, runs, children: [], top, bottom, bases: [l.domBase], size: l.dom, right, rights: [right] };
         items.push(it);
         open[k] = it;
       } else if (cur && cols.length === 1 && mk && mk.x > cols[k].x + 6 && mk.x <= cur.m.textX + 48) {
@@ -1439,14 +1896,19 @@ function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX =
           ok = false;
           break;
         }
-        cur.children.push(...sub.items);
-        cur.childFormat = sub.format;
+        if (sub.grid) cur.grid = sub.grid;
+        else {
+          cur.children.push(...sub.items);
+          cur.childFormat = sub.format;
+        }
         j = sub.end - 1;
         nested = true;
-      } else if (cur && px >= cur.m.textX - 4) {
+      } else if (cur && (Math.abs(px - cur.m.textX) <= Math.max(4, l.dom * 0.6) || wraps(cur, k, px, l))) {
         joinRuns(cur.runs, itemsRuns(part, l.dom));
         cur.bottom = Math.max(cur.bottom, l.y + l.h);
         cur.bases.push(l.domBase);
+        cur.right = Math.max(...part.filter((p) => p.str.trim()).map((p) => p.x + p.w));
+        cur.rights?.push(cur.right);
       } else ok = false;
     }
     if (!ok) break;
@@ -1457,25 +1919,36 @@ function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX =
   // Read side-by-side items in the order of their numbers when they run in sequence.
   let ordered = items;
   let columns: number | undefined;
+  let grid = false;
   if (cols.length > 1) {
     const vals = items.map((it) => it.m.value);
     const sorted = [...vals].sort((a, b) => a - b);
     const seq = sorted.every((v, k) => k === 0 || v === sorted[k - 1] + 1);
     const down = [...items].sort((a, b) => a.col - b.col);
     ordered = seq ? [...items].sort((a, b) => a.m.value - b.m.value) : down;
-    // Numbered down each column in turn (not across): keep the columns.
-    if (seq && down.every((it, k) => it === ordered[k])) columns = cols.length;
+    const downColumns = seq && down.every((it, k) => it === ordered[k]);
+    // Short options set in a row, or across a grid row by row: each row one line, the options
+    // after tabs where they sit. Numbered down each column in turn (not across): keep the columns.
+    const short = items.every((it) => it.bases.length === 1 && !it.children.length);
+    if (seq && (items.length === cols.length || !downColumns)) {
+      // Options that wrap within their columns are kept in a grid (a table under the item they belong to).
+      if (!short && minX > -Infinity) return { blocks: [], end, items: ordered, format: { kind: "none", before: "", after: "", start: 1 }, used: [], grid: { rows: byRows(ordered), cols } };
+      if (short) {
+        ordered = gridRows(ordered, cols, ctx);
+        grid = true;
+      }
+    } else if (downColumns) columns = cols.length;
   }
   // Bare numbers, and letters (an initial like "A. Rao" looks the same), need a run of them to count as a list.
-  if (ordered.length < 2 && m0.kind !== "bullet" && m0.kind !== "check" && (!m0.after || m0.kind !== "decimal")) return null;
+  if (ordered.length < 2 && !grid && m0.kind !== "bullet" && m0.kind !== "check" && m0.kind !== "none" && (!m0.after || m0.kind !== "decimal")) return null;
   const firstM = ordered[0].m;
   let kind = firstM.kind;
   let start = firstM.value;
   // "i." before "ii." is a roman numeral, not the letter i.
   if (kind === "lowerLetter" && firstM.letter === "i" && ordered[1]?.m.kind === "lowerRoman") [kind, start] = ["lowerRoman", 1];
   if (kind === "upperLetter" && firstM.letter === "I" && ordered[1]?.m.kind === "upperRoman") [kind, start] = ["upperRoman", 1];
-  const indent = { left: Math.max(0, firstM.textX - ctx.x0), hanging: Math.max(9, firstM.textX - firstM.x) };
-  const format: ListFormat = { kind, before: firstM.before, after: firstM.after, start, ...(firstM.bullet ? { bullet: firstM.bullet } : {}), ...(firstM.run ? { run: firstM.run } : {}), indent };
+  const indent = grid ? { left: Math.max(0, firstM.x - ctx.x0), hanging: 0 } : { left: Math.max(0, firstM.textX - ctx.x0), hanging: Math.max(9, firstM.textX - firstM.x) };
+  const format: ListFormat = { kind, before: firstM.before, after: firstM.after, start, ...(firstM.bullet ? { bullet: firstM.bullet } : {}), ...(firstM.run && !grid ? { run: firstM.run } : {}), indent };
   const flat: Run[][] = [];
   const levels: number[] = [];
   const formats: ListFormat[] = [format];
@@ -1504,16 +1977,142 @@ function findList(lines: SLine[], segs: Segment[][], i: number, ctx: Ctx, minX =
     leading: median(geos.map((g) => leadingOf(g.bases, g.size)).filter((v): v is number => v !== undefined)) || undefined,
   };
   // Rules drawn between items (and under the last), across most of the list's width.
+  const used: Rule[] = [];
   const lx0 = Math.min(...geos.map((g) => g.m.x));
   const lx1 = ctx.x1;
+  const bottomOf = (g: LItem) => (g.grid ? Math.max(g.bottom, ...g.grid.rows.flat().map((r) => r.bottom)) : g.bottom);
+  const gridRules = new Map<LItem, Rule>();
+  const between = geos.slice(0, -1).some((g, k) => ctx.hrules.some((h) => !ctx.used.has(h.src ?? h) && h.y >= bottomOf(g) - 1 && h.y + h.h <= geos[k + 1].top + 1 && h.w >= (lx1 - lx0) * 0.6 && h.x < lx0 + 20));
   const rules = geos.map((g, k) => {
-    const below = k + 1 < geos.length ? geos[k + 1].top : g.bottom + g.size * 3;
-    if (below < g.bottom) return null;
-    const r = ctx.hrules.find((h) => h.y >= g.bottom - 1 && h.y + h.h <= below + 1 && h.w >= (lx1 - lx0) * 0.6 && h.x < lx0 + 20);
-    return r ? { color: r.color ?? "#000000", at: r.y - g.bottom, h: r.h } : null;
+    const bottom = bottomOf(g);
+    // A line under the last item is the list's own only when lines also run between its items.
+    if (k === geos.length - 1 && !between) return null;
+    const below = k + 1 < geos.length ? geos[k + 1].top : bottom + g.size * 3;
+    if (below < bottom) return null;
+    const r = ctx.hrules.find((h) => !ctx.used.has(h.src ?? h) && h.y >= bottom - 1 && h.y + h.h <= below + 1 && h.w >= (lx1 - lx0) * 0.6 && h.x < lx0 + 20);
+    if (r) used.push(r);
+    if (r && g.grid) gridRules.set(g, r);
+    return r && !g.grid ? { color: r.color ?? "#000000", at: r.y - g.bottom, h: r.h } : null;
   });
   const isOrdered = format.kind !== "bullet" && format.kind !== "check";
-  return { block: { kind: "list", ordered: isOrdered, items: flat, levels, formats, ...(columns ? { columns } : {}), gaps, ...(rules.some(Boolean) ? { rules } : {}), page: ctx.page, geo }, end, items: ordered, format };
+  const out = grid ? { ...format, kind: "none" as const } : format;
+  // Justified: the items that wrap fill every line but their last to the right edge.
+  const wrapped = geos.filter((g) => (g.rights?.length ?? 0) >= 2);
+  const justified = wrapped.length >= 2 && wrapped.filter((g) => g.rights!.slice(0, -1).every((r) => ctx.x1 - r < 1.5)).length >= wrapped.length * 0.75;
+  const block: Extract<SBlock, { kind: "list" }> = { kind: "list", ordered: isOrdered, items: flat, levels, formats: grid ? [out, ...formats.slice(1)] : formats, ...(columns ? { columns } : {}), gaps, ...(rules.some(Boolean) ? { rules } : {}), ...(justified ? { align: "justify" as const } : {}), page: ctx.page, geo };
+  // Options set in a grid under an item: the list stops after that item, the grid follows as a
+  // table (with any rule drawn under it), and the list carries on, numbered from where it was.
+  const blocks: SBlock[] = [];
+  let from = 0;
+  geos.forEach((g, k) => {
+    if (!g.grid) return;
+    let to = k + 1;
+    while (to < geos.length && levels[to] > levels[k]) to++;
+    blocks.push(listPart(block, geos, from, to), gridTable(g.grid, ctx));
+    const r = gridRules.get(g);
+    if (r) blocks.push({ kind: "rule", color: r.color ?? "#000000", h: r.h, inset: { left: Math.max(0, r.x - ctx.x0), right: Math.max(0, ctx.x1 - (r.x + r.w)) }, page: ctx.page, geo: { top: r.y, bottom: r.y + r.h, first: 0, last: 0 } });
+    from = to;
+  });
+  if (from < geos.length) blocks.push(from ? listPart(block, geos, from, geos.length) : block);
+  return { blocks, end, items: ordered, format: out, used };
+}
+
+/** Items from..to of a list as a list of their own (numbered on from where they were). */
+function listPart(b: Extract<SBlock, { kind: "list" }>, geos: LItem[], from: number, to: number): SBlock {
+  if (from === 0 && to === b.items.length) return b;
+  const gs = geos.slice(from, to);
+  const base = b.levels[from] ?? 0;
+  const formats = b.formats.map((f, lvl) => (lvl === base && from > 0 && f.kind !== "bullet" && f.kind !== "check" && f.kind !== "none" ? { ...f, start: geos[from].m.value } : f));
+  return {
+    ...b,
+    items: b.items.slice(from, to),
+    levels: b.levels.slice(from, to),
+    formats,
+    gaps: b.gaps?.slice(from, to - 1),
+    ...(b.rules ? { rules: b.rules.slice(from, to) } : {}),
+    geo: { ...b.geo!, top: Math.min(...gs.map((g) => g.top)), bottom: Math.max(...gs.map((g) => g.bottom)), first: gs[0].size, last: gs[gs.length - 1].size },
+  };
+}
+
+/** Items in rows (by where they sit), each row left to right. */
+function byRows(items: LItem[]): LItem[][] {
+  const rows: LItem[][] = [];
+  for (const it of [...items].sort((a, b) => a.top - b.top)) {
+    const row = rows.find((r) => Math.abs(r[0].top - it.top) < Math.max(2, it.size * 0.4));
+    if (row) row.push(it);
+    else rows.push([it]);
+  }
+  for (const r of rows) r.sort((a, b) => a.m.x - b.m.x);
+  return rows;
+}
+
+/** Options set in a grid that wrap within their columns, as a table without lines: each keeps its label, its text hanging after it. */
+function gridTable(g: Grid, ctx: Ctx): SBlock {
+  const edges = [...g.cols.map((c) => c.x), ctx.x1];
+  const ws = edges.slice(1).map((e, k) => Math.max(1, e - edges[k]));
+  const total = ws.reduce((a, b) => a + b, 0);
+  const cells: Cell[][] = g.rows.map((row) =>
+    g.cols.map((_, k) => {
+      const it = row.find((r) => r.col === k);
+      if (!it || !it.runs.length) return { paras: [], text: "" };
+      const runs = mergeRuns([markerRun(it.m, it.m.token ?? listToken(it.m)), { ...it.runs[0], text: it.runs[0].text.trimStart(), tab: "next" }, ...it.runs.slice(1)]);
+      return { paras: [runs], text: runsText(runs), hang: it.m.textX - it.m.x, geo: { gaps: [], leadings: [leadingOf(it.bases, it.size)], sizes: [half(it.size)] } };
+    }),
+  );
+  const tops = g.rows.map((r) => Math.min(...r.map((i) => i.top)));
+  const bottoms = g.rows.map((r) => Math.max(...r.map((i) => i.bottom)));
+  const gaps = tops.slice(1).map((t, k) => t - bottoms[k]).filter((v) => v >= 0);
+  const padY = gaps.length ? median(gaps) / 2 : 2;
+  const all = g.rows.flat();
+  return {
+    kind: "table",
+    rows: cells.map((r) => r.map((c) => c.text)),
+    cells,
+    header: false,
+    widths: ws.map((w) => w / total),
+    span: { x: g.cols[0].x - ctx.x0, w: total },
+    pad: { x: 4, y: padY },
+    inset: 0,
+    leading: median(all.map((i) => leadingOf(i.bases, i.size)).filter((v): v is number => v !== undefined)) || undefined,
+    page: ctx.page,
+    // Like other tables, its edges sit half a row's gap beyond its text.
+    geo: { top: tops[0] - padY, bottom: bottoms[bottoms.length - 1] + padY, first: 0, last: 0 },
+  };
+}
+
+/**
+ * Items set side by side (options a to d in a row, or two by two) as one line per row: each
+ * item keeps its own label as text, the second and later ones after a tab where they sit.
+ */
+function gridRows(items: LItem[], cols: Marker[], ctx: Ctx): LItem[] {
+  const rows: LItem[][] = [];
+  for (const it of items) {
+    const row = rows.find((r) => Math.abs(r[0].top - it.top) < Math.max(2, it.size * 0.4));
+    if (row) row.push(it);
+    else rows.push([it]);
+  }
+  return rows.map((row) => {
+    row.sort((a, b) => a.m.x - b.m.x);
+    const runs: Run[] = [];
+    row.forEach((it, k) => {
+      const label = markerRun(it.m, it.m.token ?? listToken(it.m));
+      const own = it.runs.map((r, n) => (n ? r : { ...r, text: " " + r.text.trimStart() }));
+      if (own.length) own[own.length - 1] = { ...own[own.length - 1], text: own[own.length - 1].text.trimEnd() };
+      runs.push(k ? { ...label, tab: it.m.x - ctx.x0 } : label, ...own);
+    });
+    const first = row[0];
+    const m: Marker = { kind: "none", value: rows.indexOf(row) + 1, before: "", after: "", x: cols[0].x, textX: cols[0].x };
+    return { m, col: 0, runs: mergeRuns(runs), children: [], top: Math.min(...row.map((r) => r.top)), bottom: Math.max(...row.map((r) => r.bottom)), bases: first.bases, size: first.size, right: Math.max(...row.map((r) => r.right)) };
+  });
+}
+
+/** The text a marker shows, rebuilt from its kind and value (for markers drawn rather than written). */
+function listToken(m: Marker): string {
+  if (m.kind === "bullet") return m.bullet ?? "•";
+  if (m.kind === "check") return "☐";
+  const n = m.value;
+  const s = m.kind === "lowerLetter" ? letters(n) : m.kind === "upperLetter" ? letters(n).toUpperCase() : m.kind === "lowerRoman" ? roman(n) : m.kind === "upperRoman" ? roman(n).toUpperCase() : String(n);
+  return m.before + s + m.after;
 }
 
 /* ------------------------------------------------------------- tables */
@@ -1540,8 +2139,8 @@ export function pageGrid(pt: PageText): string[][] {
 type Band = { x0: number; x1: number };
 /** A piece of text placed in a column; `span` marks a heading that stretches over several columns. */
 type Placed = Segment & { y: number; h: number; base: number; size: number; bold: boolean; band: number; span: boolean };
-type TableHit = { end: number; cells: Cell[][]; header: boolean; widths: number[]; lines?: "rows" | "grid"; lineColor?: string; rowRules?: (string | null)[]; pad?: { x: number; y: number }; leading?: number };
-type TableCtx = { body: number; hrules: Rule[]; vrules: Rule[]; fills: Box[]; outlines: Box[] };
+type TableHit = { end: number; cells: Cell[][]; header: boolean; widths: number[]; span?: { x: number; w: number }; lines?: "rows" | "grid"; lineColor?: string; rowRules?: (string | null)[]; pad?: { x: number; y: number }; inset?: number; leading?: number; rules: Rule[]; rowSpace?: number[] };
+type TableCtx = { body: number; hrules: Rule[]; used?: Set<Rule>; vrules: Rule[]; fills: Box[]; outlines: Box[]; marks?: Mark[]; x0?: number; x1?: number };
 
 /** Left edges that line up across at least `min` of the given lines. */
 function sharedStarts(rows: Segment[][], min: number): number[] {
@@ -1633,8 +2232,16 @@ function rowGapThreshold(gaps: number[], lineH: number): number | null {
 }
 
 /** Turn a cell's text pieces (top to bottom) into paragraphs of styled runs, with their spacing. */
-function cellOf(parts: Placed[], fill?: string): Cell {
+function cellOf(parts: Placed[], fill?: string, limit?: number): Cell {
   const paras: { runs: Run[]; last: Placed; lines: number; top: number; bottom: number; bases: number[]; size: number }[] = [];
+  // A line that stops short of the column's edge by more than the next line's first word was broken there on purpose.
+  const edge = Math.max(limit ?? -Infinity, ...parts.map((p) => p.x2));
+  const early = (prev: Placed, p: Placed) => {
+    const first = p.items.find((it) => it.str.trim());
+    if (!first || /[-\u00ad]$/.test(prev.text)) return false;
+    const str = first.str.trimStart();
+    return edge - prev.x2 > (first.w * str.split(/\s/)[0].length) / (str.length || 1) + p.size * 0.3 + 1;
+  };
   for (const p of parts.sort((a, b) => a.base - b.base || a.x - b.x)) {
     const runs = itemsRuns(p.items as Item[]);
     const prev = paras[paras.length - 1];
@@ -1643,7 +2250,8 @@ function cellOf(parts: Placed[], fill?: string): Cell {
       const gap = p.y - (prev.last.y + prev.last.h);
       const styleBreak = (prev.lines === 1 && prev.last.bold !== p.bold && runsText(prev.runs).length < 40) || p.span || prev.last.span;
       if (sameLine || (Math.abs(p.size - prev.last.size) <= 0.8 && gap < p.h * 0.9 && !styleBreak)) {
-        joinRuns(prev.runs, runs);
+        if (!sameLine && early(prev.last, p)) breakRuns(prev.runs, runs);
+        else joinRuns(prev.runs, runs);
         prev.last = p;
         prev.bottom = Math.max(prev.bottom, p.y + p.h);
         if (!sameLine) {
@@ -1675,7 +2283,7 @@ const domOf = (l: Line) => (l as SLine).dom ?? l.size;
  */
 export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?: TableCtx): TableHit | null {
   if (segs[start].length < 2) return null;
-  const hr = ctx?.hrules ?? [];
+  const hr = (ctx?.hrules ?? []).filter((r) => !ctx?.used?.has(r.src ?? r));
   // A rule drawn across the whole gap between two lines (one under a group of columns in a
   // grouped header doesn't end the row: the cell beside it carries on).
   const ruleBetween = (a: Line, b: Line, x0: number, x1: number) => {
@@ -1695,13 +2303,20 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     if (!sg.length) break;
     const m = multi();
     const lineH = median(m.map((k) => lines[k].h));
-    const ruled = ruleBetween(lines[j - 1], l, left, right);
+    // Rules between the lines (even with gaps, like signature lines in two columns) allow a wider gap.
+    const ruled = hr.some((r) => r.y >= lines[j - 1].y + lines[j - 1].h * 0.5 && r.y + r.h <= l.y + l.h * 0.5 && Math.min(r.x + r.w, right) - Math.max(r.x, left) > (right - left) * 0.3);
     if (l.y - bottom > lineH * (ruled ? 4.5 : 2.6)) break;
     if (ctx ? sg.length === 1 && domOf(l) >= ctx.body * 1.25 : l.size > median(m.map((k) => lines[k].size)) * 1.35) break;
+    // A numbered item (its number, its text, perhaps marks set flush right) starts a list, not a row.
+    if (ctx?.x1 !== undefined && sg.length >= 2 && sg.length <= 3 && /^(\(?\d{1,3}[.)]|\(?[a-z][.)]|\d{1,3}(\.\d{1,3})+\.?)$/i.test(sg[0].text) && (sg.length === 2 || ctx.x1 - sg[2].x2 < 3)) break;
     if (sg.length < 2) {
       const starts = sharedStarts(m.map((k) => segs[k]), 1);
       const s0 = sg[0];
       if (starts.some((x) => x > s0.x + 6 && x < s0.x2 - 6)) break;
+      // A bulleted or numbered line starts a list; a bold line among plain rows heads what follows.
+      const lead = s0.text.split(" ")[0];
+      if (BULLETS.test(lead) || /^(\(?\d{1,3}[.)]|\(?[a-z][.)])$/i.test(lead) || ctx?.marks?.some((mk) => mk.x + mk.w <= s0.x + 1 && s0.x - (mk.x + mk.w) < l.size * 2.5 && mk.y + mk.h >= l.y && mk.y <= l.y + l.h)) break;
+      if ((l as SLine).bold && s0.text.length < 60 && !/[.,;:]$/.test(s0.text) && m.every((k) => !lines[k].bold)) break;
       if (s0.x < left - 8) {
         // Left of everything so far: only a row label under a grouped header (the rows below start here too).
         const below = lines.slice(j + 1, j + 5).filter((nl, n) => segs[j + 1 + n].length >= 2 && nl.y - (l.y + l.h) < lineH * 4);
@@ -1709,6 +2324,10 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
         left = s0.x;
       }
     } else {
+      // A row whose cells start where none of the rows so far do begins another table.
+      const known = sharedStarts(m.map((k) => segs[k]), 1);
+      const matches = sg.filter((s) => known.some((x) => Math.abs(x - s.x) <= 10) || known.some((x, n) => n > 0 && s.x > known[n - 1] && s.x2 >= x - 4 && s.x2 < x + 40)).length;
+      if (m.length >= 2 && matches < Math.min(sg.length, 2)) break;
       left = Math.min(left, sg[0].x);
       right = Math.max(right, sg[sg.length - 1].x2);
     }
@@ -1717,6 +2336,16 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
   }
   const multiLines = multi();
   if (multiLines.length < 2) return null;
+  // Text with a short piece set flush right on each line (titles and dates, labels and amounts) is tabbed text, not a table.
+  if (ctx?.x1 !== undefined && ctx.x0 !== undefined) {
+    const width = ctx.x1 - ctx.x0;
+    const tabbed = (k: number) => {
+      const sg = segs[k];
+      const last = sg[sg.length - 1];
+      return sg.length === 2 && ctx.x1! - last.x2 < Math.max(3, lines[k].size * 0.4) && last.x - sg[0].x2 >= lines[k].size * 2 && last.x2 - last.x <= width * 0.4;
+    };
+    if (multiLines.every(tabbed) && !ruleBetween(lines[multiLines[0]], lines[multiLines[multiLines.length - 1]], left, right)) return null;
+  }
 
   // 2. Columns.
   const starts = sharedStarts(multiLines.map((k) => segs[k]), 2);
@@ -1791,8 +2420,21 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
       return rest.length >= 2 && even && full / rest.length >= 0.8 ? g.map((k) => [k]) : [g];
     });
   }
-  // A lone line under the table (a note or caption) is not a row.
-  while (groups.length > 1 && !groups[groups.length - 1].some((k) => segs[k].length >= 2)) groups.pop();
+  // A lone line under the table (a note or caption) is not a row, unless it sits in a column
+  // like the rows above it (the last line of an address in the first column).
+  const rowLike = (g: number[], prev: number[]) => {
+    const gap = Math.min(...g.map((k) => lines[k].y)) - Math.max(...prev.map((k) => lines[k].y + lines[k].h));
+    const usualGap = median(groups.slice(1, -1).map((h, n) => Math.min(...h.map((k) => lines[k].y)) - Math.max(...groups[n].map((k) => lines[k].y + lines[k].h))));
+    const size = median(multiLines.map((k) => domOf(lines[k])));
+    // Its text no wider than the column is in the rows with several cells.
+    const fits = (k: number) => {
+      const p = placed.get(k)![0];
+      const ends = multiLines.flatMap((m) => placed.get(m)!.filter((q) => q.band === p.band).map((q) => q.x2));
+      return ends.length > 0 && p.x2 <= Math.max(...ends) + 6;
+    };
+    return groups.length > 2 && gap <= usualGap * 1.15 + 1 && g.every((k) => Math.abs(domOf(lines[k]) - size) < 0.6 && segs[k].length === 1 && placed.get(k)!.length === 1 && fits(k));
+  };
+  while (groups.length > 1 && !groups[groups.length - 1].some((k) => segs[k].length >= 2) && !rowLike(groups[groups.length - 1], groups[groups.length - 2])) groups.pop();
   if (groups.length < 2) return null;
 
   // 4. Cells, with any shading drawn behind them.
@@ -1800,7 +2442,8 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     bands.map((_, b) => {
       const parts = g.flatMap((k) => placed.get(k)!.filter((p) => p.band === b));
       const fill = parts.length ? ctx?.fills.find((f) => parts.every((p) => centerIn(f, (p.x + p.x2) / 2, p.y + p.h / 2)))?.fill : undefined;
-      return cellOf(parts, fill);
+      // Text in a column wraps where its longest line ends.
+      return cellOf(parts, fill, bands[b].x1);
     }),
   );
   const filled = cells.flat().filter((c) => c.text).length;
@@ -1814,10 +2457,16 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     if (body.length < 2) return;
     const spread = (v: number[]) => Math.max(...v) - Math.min(...v);
     const starts = spread(body.map((p) => p.x));
-    // Figures of equal width line up both ways; figures are set flush right by convention.
+    // Figures of equal width line up both ways: then the heading over them tells (flush with
+    // their start or their end); without one, figures are set flush right by convention.
     const figures = body.every((p) => /^[-+(]?[₹$€£]?\s?[\d.,]+\s?%?\)?$/.test(p.text.trim()));
-    const right = spread(body.map((p) => p.x2)) < 2.5 && (starts > 4 || figures);
-    const centre = !right && spread(body.map((p) => (p.x + p.x2) / 2)) < 2.5 && starts > 4;
+    const headCell = groups.length >= 3 ? pieces(groups.slice(0, 1))[0] : undefined;
+    const headLeft = !!headCell && starts < 1 && Math.abs(headCell.x - body[0].x) < 2 && Math.abs(headCell.x2 - body[0].x2) > 2;
+    // Text of near-equal widths, centred under a heading of another width, is centred.
+    const mids = body.map((p) => (p.x + p.x2) / 2);
+    const headCentre = !!headCell && starts <= 4 && spread(mids) < 2.5 && Math.abs((headCell.x + headCell.x2) / 2 - median(mids)) < 2 && Math.abs(headCell.x - median(body.map((p) => p.x))) > 3;
+    const right = !headCentre && spread(body.map((p) => p.x2)) < 2.5 && (starts > 4 || (figures && !headLeft));
+    const centre = !right && spread(mids) < 2.5 && (starts > 4 || headCentre);
     if (!right && !centre) return;
     const end = Math.max(...body.map((p) => p.x2));
     const mid = (Math.max(...body.map((p) => p.x)) + Math.min(...body.map((p) => p.x2))) / 2;
@@ -1830,20 +2479,62 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
   const head = groups[0].flatMap((k) => placed.get(k)!);
   const headChars = head.reduce((n, p) => n + p.text.length, 0) || 1;
   const header = head.filter((p) => p.bold).reduce((n, p) => n + p.text.length, 0) / headChars >= 0.6;
-  // Column widths from where each column starts.
   const gutter = bands.length > 1 ? median(bands.slice(1).map((b, k) => b.x0 - bands[k].x1)) : 0;
-  const raw = bands.map((b, k) => Math.max(1, (k + 1 < bands.length ? bands[k + 1].x0 : b.x1 + gutter) - b.x0));
-  const total = raw.reduce((a, b) => a + b, 0);
-  const floored = raw.map((w) => Math.max(w / total, 0.05));
-  const sum = floored.reduce((a, b) => a + b, 0);
+  const top = lines[region[0]].y;
+  const bottomY = Math.max(...groups[groups.length - 1].map((k) => lines[k].y + lines[k].h));
   const end = groups[groups.length - 1][groups[groups.length - 1].length - 1] + 1;
   // Lines drawn in the PDF: a grid (ruled columns, or every cell outlined), or rules above,
   // between and below the rows, each in its own colour.
-  const top = lines[region[0]].y;
-  const bottomY = Math.max(...groups[groups.length - 1].map((k) => lines[k].y + lines[k].h));
-  const within = (r: Rect) => r.y < bottomY + 2 && r.y + r.h > top - 2 && r.x + r.w > tx0 - 12 && r.x < tx1 + 12;
+  // Lines down the sides may stand well off the text (a wide cell with its text centred).
+  const within = (r: Rect) => r.y < bottomY + 2 && r.y + r.h > top - 2 && r.x + r.w > Math.min(tx0 - 12, (ctx?.x0 ?? tx0) - 4) && r.x < Math.max(tx1 + 12, (ctx?.x1 ?? tx1) + 4);
   const vr = (ctx?.vrules ?? []).filter(within);
   const ol = (ctx?.outlines ?? []).filter(within);
+  // The table's edges: its outer lines down the sides, else the rules across it, else its text.
+  const shade = (ctx?.fills ?? []).filter((f) => f.y < bottomY + 2 && f.y + f.h > top - lineH * 2.5 && f.x < tx1 && f.x + f.w > tx0 - 12);
+  const across = [...hr.filter((r) => r.y >= top - lineH * 2.5 && r.y <= bottomY + lineH * 2.5 && r.x < tx1 && r.x + r.w > tx0 - 12), ...shade];
+  const sides = [...vr, ...ol];
+  const gridded = vr.length >= 2 || ol.length >= 2;
+  const e0 = gridded ? Math.min(...sides.map((r) => r.x)) : across.length ? Math.min(...across.map((r) => r.x)) : tx0;
+  const e1 = gridded ? Math.max(...sides.map((r) => r.x + r.w)) : across.length ? Math.max(...across.map((r) => r.x + r.w)) : tx1 + Math.min(gutter, 12);
+  const inset = Math.max(0, Math.min(72, tx0 - e0));
+  // Where the columns meet: at an edge drawn between them (a cell's shading or lines, a rule
+  // down the side), else at the next column's text, less its padding where lines are drawn.
+  const shapes = [...vr, ...ol, ...shade, ...hr.filter((r) => r.y >= top - lineH * 2.5 && r.y <= bottomY + lineH * 2.5)];
+  const drawnCut = (k: number) => {
+    const lo = bands[k - 1].x1 - 1;
+    const hi = bands[k].x0 + 1;
+    const xs = shapes.flatMap((o) => [o.x, o.x + o.w]).filter((x) => x > lo && x < hi);
+    if (!xs.length) return undefined;
+    const counts = new Map<number, number>();
+    for (const x of xs) tally(counts, Math.round(x), 1);
+    return mode(counts);
+  };
+  // (Only lines down the sides or shading mark cell edges; rules across rows leave the text where it starts.)
+  const shaded = cells.some((row) => row.some((c) => c.fill));
+  const drawnCuts = bands.slice(1).map((_, k) => (gridded || shaded ? drawnCut(k + 1) : undefined));
+  const insetsDrawn = drawnCuts.flatMap((c, k) => (c !== undefined && cells.every((row) => !row[k + 1].align) ? [bands[k + 1].x0 - c] : []));
+  let padX = insetsDrawn.length ? Math.min(12, Math.max(2, Math.min(...insetsDrawn))) : Math.min(10, Math.max(3, gutter / 2));
+  const cuts = [e0, ...bands.slice(1).map((b, k) => drawnCuts[k] ?? b.x0 - (gridded ? padX : 0)), Math.max(e1, bands[bands.length - 1].x1)];
+  // Padding no wider than leaves room for each column's widest text.
+  for (let k = 0; k < bands.length; k++) padX = Math.max(1.5, Math.min(padX, (cuts[k + 1] - cuts[k] - (bands[k].x1 - bands[k].x0)) / 2 - 0.5));
+  // Where the cells' edges are drawn, text that sits as far from both edges is centred, and
+  // text close to the right edge is flush right (when the text alone couldn't tell).
+  if (gridded) {
+    bands.forEach((_, b) => {
+      if (cells.some((row) => row[b].align)) return;
+      const ps = groups.flatMap((g) => g.flatMap((k) => placed.get(k)!.filter((p) => p.band === b && !p.span)));
+      if (!ps.length) return;
+      const lg = median(ps.map((p) => p.x - cuts[b]));
+      const rg = median(ps.map((p) => cuts[b + 1] - p.x2));
+      const align = Math.abs(lg - rg) < 3 && lg > padX + 3 ? "center" : rg + 4 < lg && rg < padX + 4 ? "right" : undefined;
+      if (align) cells.forEach((row) => row[b].text && (row[b].align = align));
+    });
+  }
+  const raw = cuts.slice(1).map((c, k) => Math.max(1, c - cuts[k]));
+  const total = raw.reduce((a, b) => a + b, 0);
+  const floored = raw.map((w) => Math.max(w / total, 0.05));
+  const sum = floored.reduce((a, b) => a + b, 0);
+  const span = { x: e0 - (ctx?.x0 ?? e0), w: total };
   const colorOf = (rs: Rule[]) => mode(rs.reduce((m, r) => tally(m, r.color ?? "#000000", r.w + r.h), new Map<string, number>()));
   const ruleIn = (y0: number, y1: number) => {
     const span = hr.filter((r) => r.y >= y0 - 1 && r.y + r.h <= y1 + 1 && r.x < tx1 && r.x + r.w > tx0);
@@ -1857,8 +2548,7 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
     ...groups.slice(1).map((g, k) => ruleIn(gBottom(groups[k]), gTop(g))),
     ruleIn(bottomY, bottomY + lineH * 2.5),
   ];
-  const drawn =
-    vr.length >= 2 || ol.length >= 2
+  const drawn = gridded
       ? { lines: "grid" as const, lineColor: colorOf([...vr, ...ol.map((o) => ({ ...o, color: o.stroke }))]) }
       : rowRules.some(Boolean)
         ? { lines: "rows" as const, lineColor: colorOf(usedRules), rowRules }
@@ -1871,8 +2561,12 @@ export function findTable(lines: Line[], segs: Segment[][], start: number, ctx?:
       return ps.slice(1).map((p, n) => p.base - ps[n].base).filter((d) => d > p0size(ps) * 0.9 && d < p0size(ps) * 2.2);
     }),
   );
-  const pad = rowGaps.length ? { x: Math.min(10, Math.max(3, gutter / 2)), y: Math.min(14, Math.max(1.5, median(rowGaps) / 2)) } : undefined;
-  return { end, cells, header, widths: floored.map((w) => w / sum), pad, leading: steps.length ? median(steps) : undefined, ...drawn };
+  const pad = rowGaps.length ? { x: padX, y: Math.min(14, Math.max(1.5, median(rowGaps) / 2)) } : undefined;
+  // Rows set further apart than usual (space left to sign in) keep their extra space.
+  const extra = pad ? rowGaps.map((g) => Math.max(0, g - pad.y * 2)) : [];
+  // The rules this table draws (across its columns, from just above it to just below).
+  const rules = drawn.lines ? hr.filter((r) => r.y >= top - lineH * 2.5 && r.y <= bottomY + lineH * 2.5 && Math.min(r.x + r.w, tx1) - Math.max(r.x, tx0) > r.w * 0.5) : [];
+  return { end, cells, header, widths: floored.map((w) => w / sum), span, pad, inset, leading: steps.length ? median(steps) : undefined, rules, ...(extra.some((e) => e > 4) ? { rowSpace: extra } : {}), ...drawn };
 }
 
 const p0size = (ps: Placed[]) => (ps.length ? median(ps.map((p) => p.size)) : 10);
