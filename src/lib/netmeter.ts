@@ -5,8 +5,11 @@
  * channels, and measures request bodies. Downloading the app's own code,
  * fonts or OCR data sends nothing (GET requests have no body), so the meter
  * stays at 0 B while you work. Optional features that do talk to a server
- * (AI answers, P2P connection set-up) show up here, labelled.
+ * (AI answers, P2P connection set-up) show up here, labelled. The live site's
+ * anonymous visit counter is listed too, but kept apart from the "your files"
+ * total, since it never carries file content.
  */
+import { ANALYTICS_HOST } from "./analytics";
 
 export type NetEvent = {
   id: number;
@@ -17,11 +20,14 @@ export type NetEvent = {
   bytes: number;
   /** Bytes that went straight to another browser (WebRTC), not to a server. */
   direct: boolean;
+  /** An anonymous visit count (page address, referrer, time on page), not file content. */
+  visit: boolean;
 };
 
-type Snapshot = { server: number; direct: number; events: NetEvent[] };
+/** `server`: bytes of your files and text sent to servers; `visit`: the visit counter's bytes. */
+export type Snapshot = { server: number; direct: number; visit: number; events: NetEvent[] };
 
-let snap: Snapshot = { server: 0, direct: 0, events: [] };
+let snap: Snapshot = { server: 0, direct: 0, visit: 0, events: [] };
 const listeners = new Set<() => void>();
 let nextId = 1;
 let installed = false;
@@ -32,8 +38,9 @@ function emit() {
   for (const l of listeners) l();
 }
 
-function record(e: Omit<NetEvent, "id" | "at">) {
-  if (e.bytes <= 0) return;
+function record(raw: Omit<NetEvent, "id" | "at" | "visit">) {
+  if (raw.bytes <= 0) return;
+  const e = { ...raw, visit: !!ANALYTICS_HOST && raw.host === ANALYTICS_HOST };
   // WebRTC/WebSocket traffic arrives as many small sends: batch them per host
   // so the list stays readable.
   if (e.kind === "peer" || e.kind === "websocket") {
@@ -55,22 +62,23 @@ function flush() {
     const last = snap.events[0];
     if (last && last.kind === e.kind && last.host === e.host && Date.now() - last.at < 60_000) {
       const merged = { ...last, bytes: last.bytes + e.bytes, at: Date.now() };
-      snap = {
-        server: snap.server + (e.direct ? 0 : e.bytes),
-        direct: snap.direct + (e.direct ? e.bytes : 0),
-        events: [merged, ...snap.events.slice(1)],
-      };
+      snap = { ...add(snap, e), events: [merged, ...snap.events.slice(1)] };
       emit();
     } else push(e);
   }
 }
 
-function push(e: NetEvent) {
-  snap = {
-    server: snap.server + (e.direct ? 0 : e.bytes),
-    direct: snap.direct + (e.direct ? e.bytes : 0),
-    events: [e, ...snap.events].slice(0, 50),
+function add(s: Snapshot, e: NetEvent): Snapshot {
+  return {
+    ...s,
+    server: s.server + (e.direct || e.visit ? 0 : e.bytes),
+    direct: s.direct + (e.direct ? e.bytes : 0),
+    visit: s.visit + (e.visit ? e.bytes : 0),
   };
+}
+
+function push(e: NetEvent) {
+  snap = { ...add(snap, e), events: [e, ...snap.events].slice(0, 50) };
   emit();
 }
 
@@ -85,7 +93,7 @@ export function getSnapshot(): Snapshot {
   return snap;
 }
 
-const EMPTY: Snapshot = { server: 0, direct: 0, events: [] };
+const EMPTY: Snapshot = { server: 0, direct: 0, visit: 0, events: [] };
 export function getServerSnapshot(): Snapshot {
   return EMPTY;
 }

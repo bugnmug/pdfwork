@@ -14,4 +14,9 @@ export const BRAND = {
    * Filled in automatically on Vercel and Netlify; elsewhere set SITE_URL when building.
    */
   url: __SITE_URL__,
+  /**
+   * Plausible's script for this site: cookie-free visit counting, loaded only at the
+   * address above. The privacy meter lists what it sends. Leave empty to turn it off.
+   */
+  analytics: "https://plausible.io/js/pa-H7TRr-l2XiAaeSUCD25v9.js",
 } as const;

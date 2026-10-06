@@ -91,7 +91,7 @@ function ToolPage() {
           <div className="mt-6 flex max-w-prose items-start gap-3 rounded-lg border border-line bg-paper p-4">
             <ShieldCheck className="mt-0.5 size-5 shrink-0 text-ok" aria-hidden />
             <p className="text-sm text-ink-2">
-              <b className="font-medium text-ink">Your files stay on this device.</b> {BRAND.name} opens and processes them inside your browser. The counter in the top bar shows how many bytes this page has sent to any server: it should read 0 B.{" "}
+              <b className="font-medium text-ink">Your files stay on this device.</b> {BRAND.name} opens and processes them inside your browser. The counter in the top bar shows how many bytes of your files this page has sent to any server: it should read 0 B.{" "}
               <Link to="/privacy" className="text-carbon underline-offset-2 hover:underline">
                 How this works
               </Link>

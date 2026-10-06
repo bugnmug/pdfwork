@@ -163,7 +163,7 @@ function Home() {
             {[
               { icon: MonitorSmartphone, title: "Opened by your browser", body: "Files are read by this page on your device, the way a desktop app reads them. Files open straight away because nothing has to travel to a server first." },
               { icon: Cpu, title: "Processed on your device", body: "PDF.js, pdf-lib and Tesseract run locally. After a tool's engine has loaded, it keeps working with the internet off." },
-              { icon: Gauge, title: "Every byte counted", body: "The meter in the top bar counts everything this page sends. Run any tool and watch it stay at 0 B." },
+              { icon: Gauge, title: "Every byte counted", body: "The meter in the top bar counts everything this page sends. Run any tool and watch your files stay at 0 B; the only other thing it lists is an anonymous visit count." },
             ].map((x) => (
               <li key={x.title}>
                 <x.icon className="size-6 text-carbon" strokeWidth={1.7} aria-hidden />

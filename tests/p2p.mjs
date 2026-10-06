@@ -45,11 +45,11 @@ for (const name of ["heavy.pdf", "photo.jpg"]) {
   const out = OUT + name;
   await dl.saveAs(out);
   const same = createHash("sha256").update(readFileSync(FX + name)).digest("hex") === createHash("sha256").update(readFileSync(out)).digest("hex");
-  console.log(name, same ? "identical" : "DIFFERENT");
+  console.log(name, same ? "identical" : `DIFFERENT (sent ${readFileSync(FX + name).length} bytes, received ${readFileSync(out).length})`);
   if (!same) failures.push(`${name} differs after transfer`);
 }
 await send.waitForSelector("text=Sent!", { timeout: 20000 });
-console.log("sender meter:", await send.textContent("header button[aria-label^='Sent to servers']"));
+console.log("sender meter:", await send.textContent("header button[aria-label^='Your files sent to servers']"));
 for (const l of logs) console.log("  ", l.slice(0, 200));
 await browser.close();
 console.log(failures.length ? `FAIL: ${failures.join("; ")}` : "P2P share passed");

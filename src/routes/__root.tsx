@@ -5,6 +5,7 @@ import appCss from "../styles.css?url";
 import { SiteFooter, SiteHeader, themeScript } from "@/components/shell";
 import { Button } from "@/components/ui";
 import { BRAND } from "@/lib/brand";
+import { startAnalytics } from "@/lib/analytics";
 import { installNetMeter } from "@/lib/netmeter";
 
 export const Route = createRootRoute({
@@ -45,7 +46,11 @@ function RootDocument({ children }: { children: ReactNode }) {
 }
 
 function RootLayout() {
-  useEffect(() => installNetMeter(), []);
+  useEffect(() => {
+    // The meter first, so it also counts what the visit counter sends.
+    installNetMeter();
+    startAnalytics();
+  }, []);
   return (
     <div className="flex min-h-dvh flex-col">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-paper focus:px-3 focus:py-2">

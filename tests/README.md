@@ -28,6 +28,7 @@ Start the app first (`npm run dev` in the project root), then from `tests/`:
 | `node engine.mjs` | 97 cases across every file tool: merge, split, compress, OCR, conversions, security, redaction, business documents, plus rendering with the tab in the background and rebuilding styled tables in Word, Excel and Markdown. Each output is opened and verified. Pass a regex as the third argument to run some, e.g. `node engine.mjs http://127.0.0.1:8080 out/engine "merge\|split"` | dev server (it imports source modules) |
 | `node smoke.mjs [url]` | Uses five tools through their real pages, downloads the results, checks them, and confirms the privacy meter still reads 0 B | any build: dev, `npm run preview` (port 8081) or a deployed site |
 | `node pages.mjs [url]` | Loads all 77 pages at phone and desktop widths; fails on errors or sideways scrolling | any build |
+| `node analytics.mjs` | Visit counting runs only on the live address, never sends anything after `#` (P2P share codes), and the privacy meter keeps it apart from your files | a production build served under the live name: `SITE_URL=https://www.doyourpdf.com npm run build`, then `PORT=8082 node .output/server/index.mjs` |
 | `node p2p.mjs` | Encrypted transfer between two browsers: wrong password refused, files arrive byte-identical | `node peer-server.mjs`, and the dev server started with `VITE_PEER_HOST=127.0.0.1 VITE_PEER_PORT=9000 VITE_PEER_SECURE=false` |
 
 Each script exits non-zero on failure. Outputs are saved under `tests/out/` for inspection.

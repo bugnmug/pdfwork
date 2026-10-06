@@ -37,7 +37,7 @@ async function run(name, slug, files, press, check) {
     const f = `${OUT}${name}-${dl.suggestedFilename()}`;
     await dl.saveAs(f);
     notes.push(...check(info(f)));
-    const meter = await page.locator('[aria-label^="Sent to servers"]').first().getAttribute("aria-label");
+    const meter = await page.locator('[aria-label^="Your files sent to servers"]').first().getAttribute("aria-label");
     notes.push(/: 0 B\./.test(meter ?? "") ? "meter 0 B" : `✗ meter: ${meter}`);
   } catch (e) {
     notes.push("✗ " + e.message.split("\n")[0]);

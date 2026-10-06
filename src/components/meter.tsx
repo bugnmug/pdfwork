@@ -1,6 +1,6 @@
 import { ArrowUpRight } from "lucide-react";
 import { useSyncExternalStore } from "react";
-import { getServerSnapshot, getSnapshot, subscribe, type NetEvent } from "@/lib/netmeter";
+import { getServerSnapshot, getSnapshot, subscribe, type NetEvent, type Snapshot } from "@/lib/netmeter";
 import { cn, formatBytes } from "@/lib/utils";
 import { Popover } from "./ui";
 
@@ -16,17 +16,21 @@ const KIND: Record<NetEvent["kind"], string> = {
   peer: "Direct transfer",
 };
 
-function MeterDetails({ server, direct, events }: { server: number; direct: number; events: NetEvent[] }) {
+function MeterDetails({ server, direct, visit, events }: Snapshot) {
   return (
     <div className="grid w-[22rem] gap-4 p-4">
       <div>
-        <p className="text-xs font-medium tracking-wide text-ink-3 uppercase">Sent to servers this session</p>
+        <p className="text-xs font-medium tracking-wide text-ink-3 uppercase">Your files sent to servers</p>
         <p className="mt-1 text-3xl font-semibold tabular">{formatBytes(server)}</p>
-        {direct > 0 ? <p className="mt-1 text-sm text-ink-2 tabular">Plus {formatBytes(direct)} sent straight to the other device, encrypted in transit.</p> : null}
+        {direct > 0 ? <p className="mt-1 text-sm text-ink-2">Plus <span className="tabular">{formatBytes(direct)}</span> sent straight to the other device, encrypted in transit.</p> : null}
+        {visit > 0 ? (
+          <p className="mt-1 text-sm text-ink-2">Plus <span className="tabular">{formatBytes(visit)}</span> of anonymous visit counting: the page address, where you came from and time on the page. No file content, no cookies.</p>
+        ) : null}
       </div>
       <p className="text-sm leading-relaxed text-ink-2">
         Your files are opened and processed by this browser. This meter counts every byte the page sends out: requests, beacons, sockets and peer connections. Loading the app and its engines only downloads; it sends nothing of yours.
       </p>
+      {server === 0 ? <p className="rounded-md bg-marker/40 px-3 py-2 text-sm text-ink">None of your files have left this device.</p> : null}
       {events.length ? (
         <div className="grid gap-1.5">
           <p className="text-xs font-medium tracking-wide text-ink-3 uppercase">What was sent</p>
@@ -36,7 +40,7 @@ function MeterDetails({ server, direct, events }: { server: number; direct: numb
                 <span className="min-w-0">
                   <span className="block truncate text-ink">{e.host}</span>
                   <span className="text-xs text-ink-3">
-                    {KIND[e.kind]} · {new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    {e.visit ? "Visit count" : KIND[e.kind]} · {new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </span>
                 <span className="shrink-0 tabular text-ink-2">{formatBytes(e.bytes)}</span>
@@ -44,9 +48,7 @@ function MeterDetails({ server, direct, events }: { server: number; direct: numb
             ))}
           </ul>
         </div>
-      ) : (
-        <p className="rounded-md bg-marker/40 px-3 py-2 text-sm text-ink">Nothing has left this device.</p>
-      )}
+      ) : null}
       <p className="text-xs text-ink-3">Check it yourself: open your browser&apos;s developer tools, Network tab, and watch while a tool runs.</p>
     </div>
   );
@@ -62,14 +64,14 @@ export function MeterPill({ className }: { className?: string }) {
           type="button"
           onClick={toggle}
           aria-expanded={open}
-          aria-label={`Sent to servers: ${formatBytes(s.server)}. Show details.`}
+          aria-label={`Your files sent to servers: ${formatBytes(s.server)}.${s.visit ? ` Visit count: ${formatBytes(s.visit)}.` : ""} Show details.`}
           className={cn(
             "group inline-flex h-9 items-center gap-2 rounded-full border border-line bg-paper pr-3 pl-1.5 text-[13px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink",
             className,
           )}
         >
           <span className={cn("inline-flex h-6 items-center rounded-full px-2 font-semibold tabular", clean ? "bg-marker text-marker-ink" : "bg-carbon-soft text-carbon")}>{formatBytes(s.server)}</span>
-          <span className="hidden sm:inline">sent to servers</span>
+          <span className="hidden sm:inline">of your files sent</span>
           <ArrowUpRight className="size-3.5 text-ink-3 transition-transform group-hover:-translate-y-px group-hover:translate-x-px" aria-hidden />
         </button>
       )}
@@ -85,7 +87,7 @@ export function MeterInline() {
   return (
     <span className="inline-flex items-baseline gap-2">
       <span className="rounded-sm bg-marker px-1.5 font-semibold text-marker-ink tabular">{formatBytes(s.server)}</span>
-      <span>sent to servers so far</span>
+      <span>of your files sent to servers so far</span>
     </span>
   );
 }

@@ -49,16 +49,19 @@ function PrivacyPage() {
             <b>Optional audio.</b> Transcribing a recording or downloading an MP3 of a PDF sends that audio or text to the speech service, when enabled. Live dictation relies on the speech recognition that comes with your browser, and some browsers send that audio to their maker&apos;s servers.
           </p>
           <p>
+            <b>Counting visits.</b> On this site, Plausible counts page views. It receives the page address (never anything after the # sign, where share codes live), the page you came from, how long you stayed and which outside links you clicked. It sets no cookies, keeps no IP addresses and never sees your files. The meter lists these requests separately, as the visit count.
+          </p>
+          <p>
             <b>P2P Share and the whiteboard.</b> A public connection broker helps two browsers find each other. Your files and drawings then travel directly between the devices through an encrypted WebRTC channel. Add a password and files are also encrypted end to end with AES-256 before they leave your device.
           </p>
         </Section>
         <Section title="What is stored">
           <p>Some tools remember things for you in this browser&apos;s local storage: saved signatures, your business details for invoices, a resume draft, saved workflows and your theme. They stay on this device and you can clear them with your browser&apos;s site-data settings.</p>
-          <p>There are no accounts, no analytics and no advertising trackers.</p>
+          <p>There are no accounts, no cookies and no advertising trackers.</p>
         </Section>
         <Section title="Check it yourself">
           <p>
-            <b>The meter.</b> The counter in the top bar wraps every way a web page can send data (fetch, XHR, beacons, WebSockets and WebRTC) and adds up the bytes. Click it to see each request.
+            <b>The meter.</b> The counter in the top bar wraps every way a web page can send data (fetch, XHR, beacons, WebSockets and WebRTC) and adds up the bytes. Its main number is what was sent of your files; the visit count is shown on its own line. Click it to see each request.
           </p>
           <p>
             <b>Developer tools.</b> Open your browser&apos;s developer tools, choose the Network tab, and run a tool. You will see downloads of the app&apos;s own files, and no uploads.

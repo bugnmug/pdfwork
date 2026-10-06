@@ -1299,7 +1299,7 @@ export function defaultsOf(defs: OptionDef[] = []): Values {
 
 export const FAQ: { q: string; a: string }[] = [
   { q: `Is ${BRAND.name} really free?`, a: "Yes. Every tool costs nothing: no account, no page caps, and nothing stamped on your files." },
-  { q: "Are my files uploaded?", a: "No. Files are opened and processed by your own browser. They never reach a server. The only things that use the network are optional: AI answers (if this site enables them) send the question plus relevant passages of text, never the file; P2P Share and the whiteboard connect two browsers directly." },
+  { q: "Are my files uploaded?", a: "No. Files are opened and processed by your own browser. They never reach a server. Apart from an anonymous visit count, the only things that use the network are optional: AI answers (if this site enables them) send the question plus relevant passages of text, never the file; P2P Share and the whiteboard connect two browsers directly." },
   { q: "Does it work offline?", a: "Once a tool's engine has loaded, most tools keep working without a connection. OCR downloads its language data on first use and caches it." },
   { q: "How big can my files be?", a: "There's no cap from us. Your device does the processing, so its free memory is the real ceiling. On a phone, split or compress very large files first." },
   { q: "Can it edit scanned PDFs?", a: "Run OCR (Searchable PDF) first. That adds a text layer, after which you can search, copy, convert, redact and edit text." },

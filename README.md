@@ -23,7 +23,7 @@ Text in generated PDFs uses embedded Noto fonts with proper shaping, so ₹, Hin
 ## How privacy works
 
 - Files are read with the File API and processed by JavaScript and WebAssembly in the tab: pdf-lib for writing, PDF.js for reading and rendering, Tesseract for OCR.
-- Every engine, font and data file is served by the site itself (`public/vendor`, `public/fonts`). There are no CDN calls, no analytics and no trackers.
+- Every engine, font and data file is served by the site itself (`public/vendor`, `public/fonts`). There are no CDN calls and no trackers. On the live site, Plausible's cookie-free script counts visits; the meter lists its requests separately as a visit count, and nothing after `#` in the address (where P2P share codes live) is sent.
 - `src/lib/netmeter.ts` wraps `fetch`, `XMLHttpRequest`, `sendBeacon`, `WebSocket` and `RTCDataChannel` and adds up outgoing bytes. The header pill shows the total and a list of every request with a body.
 - Optional features that do use the network say so in the interface: AI answers send only the question and the relevant passages; P2P share and the whiteboard use a connection broker, with data flowing directly between browsers.
 
@@ -82,7 +82,7 @@ All of these are optional. Without them every tool still works, using the on-dev
 
 ## Renaming
 
-The product name, tagline and description live in `src/lib/brand.ts`. Page titles, the header, footer, share cards and the producer field of generated PDFs all read from it. Replace `public/favicon.svg` and `public/og.jpg` to match.
+The product name, tagline, description and the Plausible script address (leave it empty to turn visit counting off) live in `src/lib/brand.ts`. Page titles, the header, footer, share cards and the producer field of generated PDFs all read from it. Replace `public/favicon.svg` and `public/og.jpg` to match.
 
 ## Testing
 

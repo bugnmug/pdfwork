@@ -215,6 +215,7 @@ function Receiver({ initialCode }: { initialCode: string }) {
   const [wrong, setWrong] = useState(false);
   const [got, setGot] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
+  const [broken, setBroken] = useState<string[]>([]);
   const [error, setError] = useState<string>();
   const peer = useRef<Peer | null>(null);
   const conn = useRef<DataConnection | null>(null);
@@ -259,8 +260,12 @@ function Receiver({ initialCode }: { initialCode: string }) {
               setState(h.encrypted ? "password" : "offer");
             } else if (msg.t === "file" && h) current = { meta: h.files[msg.i], parts: [] };
             else if (msg.t === "end" && current) {
-              out.push(new File(current.parts, current.meta.name, { type: current.meta.type || "application/octet-stream" }));
-              setFiles([...out]);
+              // Never hand over a damaged file: it must be exactly the size the sender announced.
+              const size = current.parts.reduce((n, p) => n + p.byteLength, 0);
+              if (size === current.meta.size) {
+                out.push(new File(current.parts, current.meta.name, { type: current.meta.type || "application/octet-stream" }));
+                setFiles([...out]);
+              } else setBroken((b) => [...b, current!.meta.name]);
               current = null;
             } else if (msg.t === "done") setState("done");
             return;
@@ -360,6 +365,7 @@ function Receiver({ initialCode }: { initialCode: string }) {
       {state === "receiving" || state === "done" ? (
         <div className="grid gap-3">
           {state === "receiving" ? <Progress value={total ? got / total : null} label={`${formatBytes(got)} of ${formatBytes(total)}`} /> : <p className="flex items-center gap-2 font-semibold text-ok"><Check className="size-5" /> Received</p>}
+          {broken.length ? <Notice tone="danger">{broken.join(", ")} didn&apos;t arrive intact, so {broken.length === 1 ? "it was" : "they were"} left out. Ask the sender to share again.</Notice> : null}
           <ul className="grid gap-1.5">
             {files.map((f, i) => (
               <li key={i} className="flex items-center gap-3 rounded-md border border-line-2 px-3 py-2 text-sm">
