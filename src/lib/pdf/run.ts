@@ -227,7 +227,7 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
     case "bates": {
       const { batesNumber } = await import("./stamp");
       const srcs = await Promise.all(pdfFiles(ctx).map((f) => srcOf(f, ctx)));
-      const out = await batesNumber(srcs, { prefix: str(o, "prefix"), suffix: str(o, "suffix"), start: num(o, "start", 1), digits: num(o, "digits", 6), position: str(o, "position", "bottom-right") as "bottom-right", size: num(o, "size", 9) });
+      const out = await batesNumber(srcs, { prefix: str(o, "prefix"), suffix: str(o, "suffix"), start: num(o, "start", 1), digits: num(o, "digits", 7), position: str(o, "position", "bottom-right") as "bottom-right", size: num(o, "size", 10) });
       if (out.length > 1) {
         const { withZip } = await import("./pages");
         return withZip(out, "bates-numbered.zip");
