@@ -125,7 +125,7 @@ export function blocksToMarkdown(blocks: SBlock[]): string {
     else if (b.kind === "list") out.push(b.items.map((it, i) => `${b.ordered ? `${i + 1}.` : "-"} ${mdRuns(it)}`).join("\n"));
     else if (b.kind === "table") {
       const w = Math.max(...b.rows.map((r) => r.length));
-      const row = (r: string[]) => `| ${Array.from({ length: w }, (_, i) => (r[i] ?? "").replace(/\|/g, "\\|")).join(" | ")} |`;
+      const row = (r: string[]) => `| ${Array.from({ length: w }, (_, i) => (r[i] ?? "").replace(/\|/g, "\\|").replace(/\n/g, "<br>")).join(" | ")} |`;
       out.push([row(b.rows[0]), `| ${Array.from({ length: w }, () => "---").join(" | ")} |`, ...b.rows.slice(1).map(row)].join("\n"));
     }
   }
@@ -154,7 +154,11 @@ function blocksToHtml(blocks: SBlock[], imgs: Map<number, ExtractedImage[]>): st
     } else if (b.kind === "heading") out.push(`<h${b.level}>${esc(b.text)}</h${b.level}>`);
     else if (b.kind === "para") out.push(`<p>${runs(b.runs)}</p>`);
     else if (b.kind === "list") out.push(`<${b.ordered ? "ol" : "ul"}>${b.items.map((i) => `<li>${runs(i)}</li>`).join("")}</${b.ordered ? "ol" : "ul"}>`);
-    else if (b.kind === "table") out.push(`<table><thead><tr>${b.rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${b.rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+    else if (b.kind === "table") {
+      const cell = (c: string, tag: string) => `<${tag}>${esc(c).replace(/\n/g, "<br>")}</${tag}>`;
+      const head = b.header ? `<thead><tr>${b.rows[0].map((c) => cell(c, "th")).join("")}</tr></thead>` : "";
+      out.push(`<table>${head}<tbody>${b.rows.slice(b.header ? 1 : 0).map((r) => `<tr>${r.map((c) => cell(c, "td")).join("")}</tr>`).join("")}</tbody></table>`);
+    }
   }
   flushImgs(page);
   return out.join("\n");
@@ -218,6 +222,7 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
   const d = await import("docx");
   const children: InstanceType<typeof d.Paragraph | typeof d.Table>[] = [];
   const name = stem(src.name);
+  let landscape = false;
   if (o.mode === "exact") {
     await withPdfjs(
       src.bytes,
@@ -238,7 +243,10 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
       src.password,
     );
   } else {
-    const { blocks } = await readStructured(src, onProgress);
+    const { blocks, pages } = await readStructured(src, onProgress);
+    landscape = pages.filter((p) => p.width > p.height).length > pages.length / 2;
+    // A4 with 2.54 cm margins: the text block is this many twips wide.
+    const contentWidth = landscape ? 16838 - 2880 : 11906 - 2880;
     const imgs = new Map<number, ExtractedImage[]>();
     if (o.images !== false) for (const im of await extractImages(src, { minSize: 40 }).catch(() => [])) imgs.set(im.page, [...(imgs.get(im.page) ?? []), im]);
     const runs = (rs: Run[], size?: number) => rs.map((r) => new d.TextRun({ text: r.text, bold: r.bold, italics: r.italic, size }));
@@ -275,15 +283,26 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
         );
       } else if (b.kind === "table") {
         if (pb) children.push(new d.Paragraph({ children: [], pageBreakBefore: true }));
-        const width = Math.max(...b.rows.map((r) => r.length));
+        const cols = b.widths.map((w) => Math.round(w * contentWidth));
         children.push(
           new d.Table({
-            width: { size: 100, type: d.WidthType.PERCENTAGE },
-            rows: b.rows.map(
+            width: { size: contentWidth, type: d.WidthType.DXA },
+            columnWidths: cols,
+            layout: d.TableLayoutType.FIXED,
+            margins: { top: 60, bottom: 60, left: 100, right: 100 },
+            rows: b.cells.map(
               (r, ri) =>
                 new d.TableRow({
-                  tableHeader: ri === 0,
-                  children: Array.from({ length: width }, (_, ci) => new d.TableCell({ children: [new d.Paragraph({ children: [new d.TextRun({ text: r[ci] ?? "", bold: ri === 0 })] })] })),
+                  tableHeader: b.header && ri === 0,
+                  cantSplit: r.every((c) => c.paras.length <= 6),
+                  children: cols.map(
+                    (w, ci) =>
+                      new d.TableCell({
+                        width: { size: w, type: d.WidthType.DXA },
+                        shading: b.header && ri === 0 ? { type: d.ShadingType.CLEAR, color: "auto", fill: "E9EBF2" } : undefined,
+                        children: (r[ci]?.paras.length ? r[ci].paras : [[]]).map((p, pi, all) => new d.Paragraph({ children: runs(p), spacing: { after: pi < all.length - 1 ? 60 : 0 } })),
+                      }),
+                  ),
                 }),
             ),
           }),
@@ -297,7 +316,7 @@ export async function pdfToWord(src: Src, o: { mode?: "editable" | "exact"; page
     creator: BRAND.name,
     title: name,
     numbering: { config: [{ reference: "num", levels: [{ level: 0, format: d.LevelFormat.DECIMAL, text: "%1.", alignment: d.AlignmentType.START }] }] },
-    sections: [{ children: children as never[] }],
+    sections: [{ properties: landscape ? { page: { size: { orientation: d.PageOrientation.LANDSCAPE } } } : {}, children: children as never[] }],
   });
   const blob = await d.Packer.toBlob(doc);
   return {

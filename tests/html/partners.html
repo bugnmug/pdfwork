@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- A styled table like the ones AI tools and web apps print to PDF: header bar, zebra rows,
+     coloured badges above a description, and text that wraps inside every cell. -->
+<html><head><meta charset="utf-8"><style>
+@page { size: A4 landscape; margin: 14mm 16mm; }
+body { font-family: Helvetica, Arial, sans-serif; color: #2a2f3a; }
+h1 { color: #26307a; font-size: 22px; margin: 0 0 2px; }
+.sub { color: #6b7280; font-size: 12.5px; margin: 0 0 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+th { background: #3a3f96; color: #fff; text-align: left; padding: 7px 10px; font-size: 12px; }
+td { padding: 8px 10px; vertical-align: top; border-bottom: 1px solid #e3e5ea; line-height: 1.35; }
+tr:nth-child(even) td { background: #f4f5f8; }
+td.co { color: #3346b5; font-weight: 600; width: 13%; }
+td.what { width: 31%; }
+td.rel { width: 27%; }
+td.comp { color: #555b66; font-size: 10px; width: 29%; }
+.b { display: inline-block; color: #fff; font-weight: 700; font-size: 9.5px; padding: 2px 7px; border-radius: 3px; margin-bottom: 4px; }
+.p { background: #2f7d4f; } .a { background: #d9822b; } .d { background: #c0392b; }
+</style></head><body>
+<h1>Event Sponsors: Partner Landscape</h1>
+<p class="sub">What each sponsor does, how it relates to us, and who it competes with</p>
+<table><thead><tr><th>Company</th><th>What they do</th><th>Relation to us</th><th>Top competitors</th></tr></thead><tbody>
+<tr><td class="co">Northwind Labs</td><td class="what">Consulting and training firm that helps companies prepare for and support a new sales leader. Advisory and community, not a product.</td><td class="rel"><span class="b p">Partner</span><br>No product overlap, a channel to reach sales leaders and founders.</td><td class="comp">Harbor Group, Peakline, The Leaders Club, Modern Revenue, Summit</td></tr>
+<tr><td class="co">Bluepeak</td><td class="what">AI agents that handle buyer conversations on websites, inside products and on calls, running demos and answering objections.</td><td class="rel"><span class="b a">Adjacent competitor</span><br>Different approach (AI as the seller rather than the reasoning layer), but the same AI-for-revenue budget.</td><td class="comp">Chatline (Acme), Qualifyr (Orbit), Driftwood, Closer, Agentic Sales</td></tr>
+<tr><td class="co">Cloudmason</td><td class="what">A CRM consulting and implementation firm that builds and manages CRM setups for other companies.</td><td class="rel"><span class="b p">Partner</span><br>A systems integrator that could implement us or refer us to its clients.</td><td class="comp">Slate, Silverpine, Coastline Cloud, Bluefield (Orbit), Delta Digital</td></tr>
+<tr><td class="co">Gridplan</td><td class="what">Sales planning software: territory design, quota setting, capacity planning, forecasting.</td><td class="rel"><span class="b p">Partner, low overlap</span><br>Sits earlier in the funnel (planning, not deal-level reasoning).</td><td class="comp">Clarion, Anaplex, Quotient, Captiva, Varion</td></tr>
+<tr><td class="co">Ops Guild</td><td class="what">A community for revenue operations people: chat group, courses, events. Not a product.</td><td class="rel"><span class="b p">Partner</span><br>Direct access to our buyer audience.</td><td class="comp">Ops Wizards, Rev Circle, Harbor Group, Revenue Ops Alliance, Modern Revenue</td></tr>
+<tr><td class="co">Pricewise</td><td class="what">A quoting platform for building and approving price quotes.</td><td class="rel"><span class="b p">Partner, no overlap</span><br>Comes in downstream, once deal terms are being finalised.</td><td class="comp">Orbit Revenue Cloud (CPQ), Conga Quotes, DealDesk, PaperTrail, Valuo</td></tr>
+<tr><td class="co">Atlas Agent</td><td class="what">An AI agent wired into CRM and call data that automates forecasting, deal reviews, quarterly prep and CRM admin.</td><td class="rel"><span class="b d">Direct competitor</span><br>Same category, same mechanism, real overlap in use cases.</td><td class="comp">Clarion, Gongly, general-purpose AI assistants wired into CRM, in-house builds</td></tr>
+<tr><td class="co">Mapwell</td><td class="what">Maps out the buying committee on enterprise deals, flags missing stakeholders and recommends next steps.</td><td class="rel"><span class="b d">Direct competitor</span><br>Closest match to our pitch, with a narrower focus on stakeholder mapping.</td><td class="comp">Boomer, Connect Points, Viewly, Draftwise, The Hive</td></tr>
+</tbody></table></body></html>

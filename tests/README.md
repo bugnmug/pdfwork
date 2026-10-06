@@ -13,6 +13,7 @@ System tools: Node.js 20+, Python 3 with `pymupdf pillow python-docx python-pptx
 cd tests
 npm install                    # playwright-core, plus the PeerJS server for the P2P test
 python3 make-fixtures.py       # writes sample PDFs, Office files and images to tests/fixtures/
+                               # (engine.mjs also prints the pages in tests/html/ to PDF there)
 ```
 
 Chromium: set `CHROMIUM_PATH` to a Chromium or Chrome binary, or have Playwright's browsers
@@ -24,7 +25,7 @@ Start the app first (`npm run dev` in the project root), then from `tests/`:
 
 | Command | What it checks | Needs |
 | --- | --- | --- |
-| `node engine.mjs` | 93 cases across every file tool: merge, split, compress, OCR, conversions, security, redaction, business documents, plus rendering with the tab in the background. Each output is opened and verified. Pass a regex as the third argument to run some, e.g. `node engine.mjs http://127.0.0.1:8080 out/engine "merge\|split"` | dev server (it imports source modules) |
+| `node engine.mjs` | 97 cases across every file tool: merge, split, compress, OCR, conversions, security, redaction, business documents, plus rendering with the tab in the background and rebuilding styled tables in Word, Excel and Markdown. Each output is opened and verified. Pass a regex as the third argument to run some, e.g. `node engine.mjs http://127.0.0.1:8080 out/engine "merge\|split"` | dev server (it imports source modules) |
 | `node smoke.mjs [url]` | Uses five tools through their real pages, downloads the results, checks them, and confirms the privacy meter still reads 0 B | any build: dev, `npm run preview` (port 8081) or a deployed site |
 | `node pages.mjs [url]` | Loads all 77 pages at phone and desktop widths; fails on errors or sideways scrolling | any build |
 | `node p2p.mjs` | Encrypted transfer between two browsers: wrong password refused, files arrive byte-identical | `node peer-server.mjs`, and the dev server started with `VITE_PEER_HOST=127.0.0.1 VITE_PEER_PORT=9000 VITE_PEER_SECURE=false` |

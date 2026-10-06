@@ -1,7 +1,7 @@
 // Drive every tool's runTool() inside a real Chromium against the dev server,
 // save outputs, and validate them with qpdf / pdftotext / LibreOffice / python.
 // Usage: node engine.mjs [baseUrl] [outDir] [caseFilterRegex]  (needs the dev server: npm run dev)
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, extname, basename } from "node:path";
 import { CASES } from "./cases.mjs";
@@ -58,6 +58,13 @@ function extraFiles(c) {
 }
 
 const browser = await launch(["--use-fake-ui-for-media-stream"]);
+// More fixtures: pages in html/ printed to PDF by Chromium, the way many web apps and AI tools make PDFs.
+for (const f of readdirSync(new URL("./html/", import.meta.url)).filter((n) => n.endsWith(".html"))) {
+  const p = await browser.newPage();
+  await p.goto(new URL("./html/" + f, import.meta.url).href);
+  await p.pdf({ path: join(FX, f.replace(/\.html$/, ".pdf")), printBackground: true, preferCSSPageSize: true });
+  await p.close();
+}
 const ctx = await browser.newContext({ acceptDownloads: true });
 const page = await ctx.newPage();
 const consoleErrors = [];

@@ -86,7 +86,7 @@ The product name, tagline and description live in `src/lib/brand.ts`. Page title
 
 ## Testing
 
-`tests/` holds browser tests that run every tool in Chromium and verify the outputs with qpdf, Poppler, PyMuPDF and LibreOffice: 93 engine cases (including rendering with the tab in the background), a smoke test that also checks the privacy meter, a page sweep at phone and desktop widths, and an encrypted P2P transfer. See `tests/README.md` for setup.
+`tests/` holds browser tests that run every tool in Chromium and verify the outputs with qpdf, Poppler, PyMuPDF and LibreOffice: 97 engine cases (including rendering with the tab in the background and rebuilding styled tables), a smoke test that also checks the privacy meter, a page sweep at phone and desktop widths, and an encrypted P2P transfer. See `tests/README.md` for setup.
 
 ## Project layout
 

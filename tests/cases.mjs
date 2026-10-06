@@ -22,6 +22,25 @@ function needPdf(saved, h, opts = {}) {
   for (const t of opts.notText ?? []) if (has(text, t) || has(fitzText, t)) notes.push(`✗ still contains "${t}"`);
   return { notes, text: text + "\n" + fitzText, pdf, pages };
 }
+/** Expected table cells from a fixture page in html/ (a line break inside a cell becomes " / "). */
+function htmlTable(file) {
+  const src = readFileSync(new URL("./html/" + file, import.meta.url), "utf8");
+  return [...src.matchAll(/<tr[^>]*>(.*?)<\/tr>/gs)].map((m) =>
+    [...m[1].matchAll(/<t[hd][^>]*>(.*?)<\/t[hd]>/gs)].map((c) => c[1].replace(/<span[^>]*>(.*?)<\/span>/g, "$1").replace(/<br>/g, " / ").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").trim()),
+  );
+}
+/** Tables (cell paragraphs joined by " / "), body paragraphs and page orientation of a .docx. */
+function docxLayout(h, path) {
+  return JSON.parse(
+    py(
+      h,
+      `import docx,json
+d=docx.Document(${JSON.stringify(path)});s=d.sections[0]
+head=lambda t:t.rows[0]._tr.trPr is not None and 'tblHeader' in t.rows[0]._tr.trPr.xml
+print(json.dumps({"landscape":s.page_width>s.page_height,"body":[p.text for p in d.paragraphs if p.text.strip()],"tables":[{"header":head(t),"cells":[[" / ".join(p.text for p in c.paragraphs) for c in r.cells] for r in t.rows]} for t in d.tables]}))`,
+    ),
+  );
+}
 const imgCount = (h, p) => Math.max(0, h.sh("pdfimages", ["-list", p]).out.trim().split("\n").length - 2);
 
 export const CASES = [
@@ -177,6 +196,44 @@ export const CASES = [
       const [heads, tables, imgs] = st.split(" ").map(Number);
       notes.push(heads >= 2 ? `${heads} headings` : `✗ headings ${heads}`, tables >= 1 ? `${tables} table(s)` : "✗ no table", imgs >= 1 ? `${imgs} images` : "✗ no images");
       return ok(notes);
+  } },
+  { id: "pdf-to-word-wrapped-table", slug: "pdf-to-word", files: ["partners.pdf"], check: (s, h) => {
+      const d = docxLayout(h, first(s, ".docx").path);
+      const want = htmlTable("partners.html");
+      const t = d.tables[0];
+      const notes = [d.tables.length === 1 ? "one table" : `✗ ${d.tables.length} tables`];
+      if (t) {
+        const shape = `${t.cells.length}x${t.cells[0].length}`;
+        notes.push(shape === `${want.length}x${want[0].length}` ? shape : `✗ shape ${shape}`);
+        const bad = want.flatMap((r, i) => r.flatMap((c, j) => ((t.cells[i]?.[j] ?? "") === c ? [] : [`r${i}c${j}`])));
+        notes.push(bad.length ? `✗ ${bad.length} cells differ (${bad.slice(0, 4).join(", ")})` : "every cell matches", t.header ? "header row" : "✗ no header row");
+      }
+      notes.push(d.landscape ? "landscape" : "✗ portrait", d.body.length === 2 ? "nothing leaked out of the table" : `✗ ${d.body.length} paragraphs outside tables`);
+      return ok(notes);
+  } },
+  { id: "pdf-to-word-table-styles", slug: "pdf-to-word", files: ["table-styles.pdf"], check: (s, h) => {
+      const d = docxLayout(h, first(s, ".docx").path);
+      const shapes = d.tables.map((t) => `${t.cells.length}x${t.cells[0].length}`).join(" ");
+      return ok([
+        shapes === "5x4 4x2 5x4 3x5" ? `tables ${shapes}` : `✗ tables ${shapes}`,
+        d.tables[1]?.cells[1]?.[1]?.endsWith("in any way at all.") ? "wrapped cell kept whole" : "✗ wrapped cell split",
+        d.tables[2]?.cells[4]?.join("|") === "Total|4,63,600|2,92,800|1,70,800" ? "totals row" : "✗ totals row",
+        d.tables[3]?.cells[0]?.[1] === "2025 results overall / Deals" ? "grouped header" : "✗ grouped header",
+        d.body.some((p) => p.startsWith("Paragraph after table A")) ? "paragraph after table" : "✗ paragraph swallowed",
+        d.body.some((p) => p.startsWith("Figures in rupees")) ? "note after table" : "✗ note swallowed",
+      ]);
+  } },
+  { id: "pdf-to-excel-wrapped-table", slug: "pdf-to-excel", files: ["partners.pdf"], check: (s, h) => {
+      const x = first(s, ".xlsx");
+      const rows = JSON.parse(py(h, `import openpyxl,json;ws=openpyxl.load_workbook(${JSON.stringify(x.path)}).active;print(json.dumps([[c if c is not None else "" for c in r] for r in ws.iter_rows(values_only=True)]))`));
+      const want = htmlTable("partners.html");
+      const entries = rows.filter((r) => want.slice(1).some((w) => w[0] === r[0]));
+      const row = rows.find((r) => r[0] === want[1][0]);
+      return ok([entries.length === want.length - 1 ? `${entries.length} entries, one row each` : `✗ ${entries.length} entry rows`, row?.[1] === want[1][1] ? "description in one cell" : "✗ description split"]);
+  } },
+  { id: "pdf-to-markdown-table", slug: "pdf-to-markdown", files: ["partners.pdf"], check: (s) => {
+      const lines = readFileSync(first(s, ".md").path, "utf8").split("\n").filter((l) => l.startsWith("| "));
+      return ok([lines.length === 10 ? "10 table lines" : `✗ ${lines.length} table lines`, lines.some((l) => l.startsWith("| Northwind Labs | Consulting and training firm")) ? "row intact" : "✗ row broken"]);
   } },
   { id: "pdf-to-word-exact", slug: "pdf-to-word", files: ["cmp-a.pdf"], options: { mode: "exact" }, check: (s, h) => {
       const o = h.officeText(first(s, ".docx").path);
