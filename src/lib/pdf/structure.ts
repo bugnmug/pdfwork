@@ -207,7 +207,7 @@ export function segments(line: Line): Segment[] {
   return groups.map(segmentOf).filter((s) => s.text);
 }
 
-function segmentOf(items: TextItem[]): Segment {
+export function segmentOf(items: TextItem[]): Segment {
   let text = "";
   let x2 = -Infinity;
   for (const it of items) {

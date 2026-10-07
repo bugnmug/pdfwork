@@ -209,5 +209,30 @@
 @font-face { font-family: "Doc Mono"; src: url("/fonts/NotoSansMono-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
 @font-face { font-family: "Doc Deva"; src: url("/fonts/NotoSansDevanagari-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "Doc Deva"; src: url("/fonts/NotoSansDevanagari-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+/* Faces with the widths of common document fonts, for lines retyped with Edit text. */
+@font-face { font-family: "Doc MSans"; src: url("/fonts/MetricSans-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc MSans"; src: url("/fonts/MetricSans-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc MSans"; src: url("/fonts/MetricSans-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc MSans"; src: url("/fonts/MetricSans-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc MSerif"; src: url("/fonts/MetricSerif-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc MSerif"; src: url("/fonts/MetricSerif-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc MSerif"; src: url("/fonts/MetricSerif-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc MSerif"; src: url("/fonts/MetricSerif-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc MMono"; src: url("/fonts/MetricMono-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc MMono"; src: url("/fonts/MetricMono-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc MMono"; src: url("/fonts/MetricMono-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc MMono"; src: url("/fonts/MetricMono-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Carlito"; src: url("/fonts/Carlito-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Carlito"; src: url("/fonts/Carlito-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Carlito"; src: url("/fonts/Carlito-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Carlito"; src: url("/fonts/Carlito-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Caladea"; src: url("/fonts/Caladea-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Caladea"; src: url("/fonts/Caladea-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Caladea"; src: url("/fonts/Caladea-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Caladea"; src: url("/fonts/Caladea-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Gelasio"; src: url("/fonts/Gelasio-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Gelasio"; src: url("/fonts/Gelasio-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Doc Gelasio"; src: url("/fonts/Gelasio-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Doc Gelasio"; src: url("/fonts/Gelasio-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
 @font-face { font-family: "Hand Caveat"; src: url("/fonts/Caveat.ttf") format("truetype"); font-display: swap; }
 @font-face { font-family: "Hand Kalam"; src: url("/fonts/Kalam-Regular.ttf") format("truetype"); font-display: swap; }

@@ -15,16 +15,39 @@ import {
   endText,
   popGraphicsState,
   pushGraphicsState,
+  rgb,
+  rotateAndSkewTextDegreesAndTranslate,
   setCharacterSqueeze,
+  setFillingColor,
   setFontAndSize,
+  setGraphicsState,
   setTextMatrix,
   setTextRenderingMode,
   showText,
 } from "@cantoo/pdf-lib";
 import { degrees, type PDFDocument, type PDFFont, type PDFPage, type RGB } from "./core";
+import { COMPLEX, showOps } from "./textops";
 
 export type Family = "sans" | "serif" | "mono";
-export type TextStyle = { family?: Family; bold?: boolean; italic?: boolean };
+/** Faces with the metrics of common document fonts (Arial, Times, Courier, Calibri, Cambria, Georgia). */
+export type Face = "msans" | "mserif" | "mmono" | "carlito" | "caladea" | "gelasio";
+export type TextStyle = { family?: Family | Face; bold?: boolean; italic?: boolean };
+
+/**
+ * The face with the same letter widths as a document's font (by its name in the PDF), so text
+ * retyped in it takes the same space; undefined when there is none.
+ */
+export function matchFace(name?: string): Face | undefined {
+  const k = (name ?? "").replace(/^[A-Z]{6}\+/, "").toLowerCase().replace(/[^a-z]/g, "").replace(/^dyp(?=metric)/, "");
+  if (!k || /narrow|condensed|black|rounded|light/.test(k)) return undefined;
+  if (/^(arial|helvetica|liberationsans|arimo|nimbussans|freesans|metricsans)/.test(k)) return "msans";
+  if (/^(timesnewroman|times|liberationserif|tinos|nimbusroman|freeserif|metricserif)/.test(k)) return "mserif";
+  if (/^(couriernew|courier|liberationmono|cousine|nimbusmono|freemono|metricmono)/.test(k)) return "mmono";
+  if (/^(calibri|carlito)/.test(k)) return "carlito";
+  if (/^(cambria|caladea)/.test(k)) return "caladea";
+  if (/^(georgia|gelasio)/.test(k)) return "gelasio";
+  return undefined;
+}
 
 const FILES: Record<string, string> = {
   "sans/r": "NotoSans-Regular.ttf",
@@ -206,15 +229,32 @@ export class FontSet {
     let total = 0;
     for (const run of await splitRuns(text, o.style ?? {})) {
       const font = await this.font(run.key);
-      page.drawText(run.text, {
-        x,
-        y,
-        size: o.size,
-        font,
-        color: o.color,
-        opacity: o.opacity,
-        rotate: degrees(o.rotate ?? 0),
-      });
+      if (COMPLEX.test(run.text)) {
+        // Indic scripts draw some vowel signs before their letter: each such cluster carries its
+        // letters as ActualText (see showOps), so the words copy and search in reading order.
+        const key = page.node.newFontDictionary(font.name, font.ref);
+        const gs = o.opacity !== undefined && o.opacity < 1 ? page.node.newExtGState("GS", page.doc.context.obj({ Type: "ExtGState", ca: o.opacity, CA: o.opacity })) : undefined;
+        page.pushOperators(
+          pushGraphicsState(),
+          ...(gs ? [setGraphicsState(gs)] : []),
+          beginText(),
+          setFillingColor(o.color ?? rgb(0, 0, 0)),
+          setFontAndSize(key, o.size),
+          rotateAndSkewTextDegreesAndTranslate(o.rotate ?? 0, 0, 0, x, y),
+          ...showOps(font, run.text),
+          endText(),
+          popGraphicsState(),
+        );
+      } else
+        page.drawText(run.text, {
+          x,
+          y,
+          size: o.size,
+          font,
+          color: o.color,
+          opacity: o.opacity,
+          rotate: degrees(o.rotate ?? 0),
+        });
       const w = font.widthOfTextAtSize(run.text, o.size);
       x += w * Math.cos(rot);
       y += w * Math.sin(rot);

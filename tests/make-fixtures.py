@@ -121,6 +121,92 @@ for name, lines in [
         pg.insert_text((56, 90 + i * 24), l, fontsize=12, fontname="helv")
     d.save(os.path.join(OUT, name))
 
+# stamp-pages.pdf: pages as they come in real files, for the tools that draw on pages: A4,
+# Letter landscape, a page turned 90 degrees, one whose visible area (crop box) is offset in
+# a larger sheet, one turned 270 degrees, and an A6 page. Text reads upright on every page.
+d = pymupdf.open()
+filler = "Operations review for the quarter. Volumes rose across all regions while costs held steady. " * 5
+for title, (pw, ph), rot, crop in [
+    ("1. A4 portrait", (595, 842), 0, None),
+    ("2. Letter landscape", (792, 612), 0, None),
+    ("3. Turned 90", (595, 842), 90, None),
+    ("4. Offset crop box", (700, 900), 0, (40, 30, 640, 860)),
+    ("5. Turned 270", (595, 842), 270, None),
+    ("6. A6", (298, 420), 0, None),
+]:
+    pg = d.new_page(width=pw, height=ph)
+    pg.set_rotation(rot)
+    if crop:
+        pg.set_cropbox(pymupdf.Rect(*crop))
+    vis = pg.rect  # the page as shown: turned and cropped
+    to_page = pg.derotation_matrix  # shown -> unturned coordinates
+    def put(x, y, s, size):
+        pg.insert_text(pymupdf.Point(vis.x0 + x, vis.y0 + y) * to_page, s, fontsize=size, rotate=rot)
+    put(40, 60, title, 16)
+    line, y = "", 90
+    for word in filler.split():
+        if len(line) + len(word) > (vis.width - 80) / 5.2:
+            put(40, y, line, 10)
+            line, y = "", y + 14
+        line += word + " "
+    put(40, y, line, 10)
+d.save(os.path.join(OUT, "stamp-pages.pdf"))
+
+# framed.pdf: a page drawn inside a form XObject, as tools that resize or impose pages make them.
+d = pymupdf.open()
+pg = d.new_page(width=W, height=H)
+pg.show_pdf_page(pg.rect, pymupdf.open(os.path.join(OUT, "cmp-a.pdf")), 0)
+d.save(os.path.join(OUT, "framed.pdf"))
+
+# scan-ocr.pdf: a scanned page with an invisible text layer over it, as OCR leaves it.
+src = pymupdf.open(os.path.join(OUT, "cmp-a.pdf"))
+d = pymupdf.open()
+pg = d.new_page(width=W, height=H)
+pg.insert_image(pg.rect, stream=src[0].get_pixmap(dpi=150).tobytes("png"))
+for b in src[0].get_text("dict")["blocks"]:
+    for l in b.get("lines", []):
+        for sp in l["spans"]:
+            pg.insert_text(sp["origin"], sp["text"], fontsize=sp["size"], fontname="helv", render_mode=3)
+d.save(os.path.join(OUT, "scan-ocr.pdf"))
+
+# spot.pdf: colours as print shops send them: CMYK fills, a spot colour (Separation, with a
+# PostScript tint function), a two-ink DeviceN colour, a palette picture and a square
+# annotation with border and fill colours.
+d = pymupdf.open()
+pg = d.new_page(width=W, height=H)
+pg.insert_text((50, 60), "Spot colours", fontsize=18, fontname="hebo")
+tint = d.get_new_xref()
+d.update_object(tint, "<< /FunctionType 4 /Domain [0 1] /Range [0 1 0 1 0 1 0 1] >>")
+d.update_stream(tint, b"{ dup 0 exch dup 0.95 mul exch 0 }")
+tint2 = d.get_new_xref()
+d.update_object(tint2, "<< /FunctionType 4 /Domain [0 1 0 1] /Range [0 1 0 1 0 1 0 1] >>")
+d.update_stream(tint2, b"{ 0 0 }")
+pal = d.get_new_xref()
+d.update_object(pal, "<< /Type /XObject /Subtype /Image /Width 32 /Height 32 /BitsPerComponent 8 /ColorSpace [/Indexed /DeviceRGB 3 <FF00000080000000FFFFFF00>] >>")
+d.update_stream(pal, bytes([(x // 8 + y // 8) % 4 for y in range(32) for x in range(32)]))
+kind, val = d.xref_get_key(pg.xref, "Resources")
+res = int(val.split()[0]) if kind == "xref" else pg.xref
+key = "" if kind == "xref" else "Resources/"
+d.xref_set_key(res, key + "ColorSpace", f"<< /CS0 [/Separation /PANTONE#20485 /DeviceCMYK {tint} 0 R] /CS1 [/DeviceN [/Cyan /Magenta] /DeviceCMYK {tint2} 0 R] >>")
+d.xref_set_key(res, key + "XObject", f"<< /Im1 {pal} 0 R >>")
+cx = pg.get_contents()[0]
+d.update_stream(cx, d.xref_stream(cx) + b"""
+0 0 0.9 0.9 0 k 50 722 200 40 re f
+/CS0 cs 0.7 scn 50 662 200 40 re f
+/CS1 cs 0.3 0.8 scn 50 602 200 40 re f
+q 100 0 0 100 50 480 cm /Im1 Do Q
+""".replace(b"0 0 0.9 0.9 0 k", b"0 0.9 0.9 0 k"))
+annot = pg.add_rect_annot(pymupdf.Rect(300, 80, 400, 160))
+annot.set_colors(stroke=(1, 0, 0), fill=(0, 0, 1))
+annot.update()
+d.save(os.path.join(OUT, "spot.pdf"))
+
+# xmp.pdf: properties both in the Info dictionary and in XMP metadata, as office suites write them.
+d = pymupdf.open(os.path.join(OUT, "cmp-a.pdf"))
+d.set_metadata({"title": "Old title", "author": "Old Author"})
+d.set_xml_metadata('<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title><rdf:Alt><rdf:li xml:lang="x-default">Old title</rdf:li></rdf:Alt></dc:title><dc:creator><rdf:Seq><rdf:li>Old Author</rdf:li></rdf:Seq></dc:creator></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>')
+d.save(os.path.join(OUT, "xmp.pdf"))
+
 # form.pdf
 d = pymupdf.open()
 pg = d.new_page(width=W, height=H)
@@ -398,5 +484,71 @@ dr.rectangle([120, 180, 560, 220], fill=(220, 0, 0))
 ex = Image.Exif()
 ex[0x0112] = 6
 raw.save(os.path.join(OUT, "phone-turned.jpg"), quality=90, exif=ex.tobytes())
+
+# ---------- damaged PDFs, for Repair ----------
+# Damage of the kinds files suffer, done to fixtures made above: stray bytes in front and an index
+# that points to the wrong places, a file cut short, an object whose header is wiped out (so it
+# can't be found), and data overwritten with zeros inside a font program or a page's drawing.
+import re
+
+
+def xref_offsets(path):
+    out = {}
+    for line in subprocess.run(["qpdf", "--show-xref", path], capture_output=True, text=True).stdout.splitlines():
+        m = re.match(r"(\d+)/(\d+): uncompressed; offset = (\d+)", line)
+        if m:
+            out[int(m.group(1))] = int(m.group(3))
+    return out
+
+
+def damaged(source, name, how):
+    path = os.path.join(OUT, source)
+    with open(path, "rb") as f:
+        data = f.read()
+    with open(os.path.join(OUT, name), "wb") as f:
+        f.write(how(data, xref_offsets(path), pymupdf.open(path)))
+
+
+def wipe_header(data, at):
+    """'12 0 obj' becomes '12 0 xbj': readers can no longer find the object."""
+    m = re.compile(rb"\d+\s+\d+\s+obj").match(data, at)
+    return data[: m.end() - 3] + b"xbj" + data[m.end():]
+
+
+def zero_middle(data, at, n):
+    """n bytes of a stream object's data, from its middle, overwritten with zeros."""
+    start = re.compile(rb"stream\r?\n").search(data, at).end()
+    end = data.find(b"endstream", start)
+    mid = start + (end - start) // 2 - n // 2
+    return data[:mid] + bytes(n) + data[mid + n:]
+
+
+def shift_index(data, off, doc):
+    xr = data.rfind(b"\nxref")
+    tail = re.sub(rb"(\d{10}) (\d{5}) n", lambda m: b"%010d %s n" % (int(m.group(1)) + 17, m.group(2)), data[xr:])
+    return b"Received: from mail.example.com\r\nContent-Type: application/pdf\r\n\r\n" + data[:xr] + tail
+
+
+def biggest_font_file(doc):
+    files = []
+    for f in doc.get_page_fonts(0):
+        desc = doc.xref_get_key(f[0], "FontDescriptor")
+        ff = doc.xref_get_key(int(desc[1].split()[0]), "FontFile2") if desc[0] == "xref" else ("null", "")
+        if ff[0] == "xref":
+            x = int(ff[1].split()[0])
+            files.append((len(doc.xref_stream_raw(x)), x))
+    return max(files)[1]
+
+
+damaged("links.pdf", "damaged-index.pdf", shift_index)
+damaged("text.pdf", "damaged-pagelist.pdf", lambda d, off, doc: wipe_header(d, off[int(doc.xref_get_key(doc.pdf_catalog(), "Pages")[1].split()[0])]))
+damaged("office-deck.pdf", "damaged-cut.pdf", lambda d, off, doc: d[: len(d) * 92 // 100])
+damaged("office-deck.pdf", "damaged-font.pdf", lambda d, off, doc: zero_middle(d, off[biggest_font_file(doc)], 300))
+damaged("office-deck.pdf", "damaged-lostfont.pdf", lambda d, off, doc: wipe_header(d, off[doc.get_page_fonts(0)[0][0]]))
+damaged("text.pdf", "damaged-content.pdf", lambda d, off, doc: zero_middle(d, off[max(doc[0].get_contents(), key=lambda x: len(doc.xref_stream_raw(x)))], 100))
+damaged("links.pdf", "damaged-oldfont.pdf", lambda d, off, doc: wipe_header(d, off[doc.get_page_fonts(0)[0][0]]))
+# Not a PDF at all: the page a site sends when a download link needs a sign-in, saved as .pdf.
+with open(os.path.join(OUT, "web-page.pdf"), "w") as f:
+    f.write("<!DOCTYPE html>\n<html><head><title>Sign in</title></head><body><form><input name=user><input type=password></form></body></html>\n")
 
 print("fixtures:", sorted(os.listdir(OUT)))

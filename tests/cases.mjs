@@ -56,6 +56,53 @@ const imgCount = (h, p) => Math.max(0, h.sh("pdfimages", ["-list", p]).out.trim(
 const pptxDump = (h, path, pdf) => JSON.parse(h.sh("python3", [new URL("./pptx-dump.py", import.meta.url).pathname, path, ...(pdf ? [pdf] : [])], { timeout: 240000 }).out);
 /** A PDF's pages as data (see pdf-probe.py): size, text, words with boxes, links, fills, lines, pictures, fonts. */
 const pdfProbe = (h, path) => JSON.parse(h.sh("python3", [new URL("./pdf-probe.py", import.meta.url).pathname, path]).out);
+/** Pages as a reader shows them (turned and cropped), with what is drawn in a colour (see stamp-probe.py). */
+/** What an Edit text change did to a page (see edit-probe.py), for the line the edit case reports in its note. */
+const editProbe = (h, s, input, page = 1) => {
+  const o = first(s, ".pdf");
+  const { box } = JSON.parse(o.note);
+  return JSON.parse(h.sh("python3", [new URL("./edit-probe.py", import.meta.url).pathname, FX + input, o.path, String(page), ...box.map(String)]).out);
+};
+/** Notes for an edit: the old words gone, the new ones there, nothing else on the page touched. */
+const editNotes = (e, gone, want) => [
+  expect(!has(e.text, gone), `old words gone from the text ("${gone}")`),
+  ...(want ? [expect(has(e.text, want) && has(want, e.inBox.split(" ")[0] ?? "-"), `new words in place ("${want}")`)] : [expect(!e.inBox.trim(), "line left empty")]),
+  expect(!e.moved.length, e.moved.length ? `words moved: ${JSON.stringify(e.moved)}` : "no other word moved"),
+  expect(e.pixelsOutside === 0, `nothing else on the page changed (${e.pixelsOutside} pixels)`),
+];
+/** What a repaired file keeps of the undamaged original (see repair-probe.py). */
+const repairProbe = (h, original, repaired) => JSON.parse(h.sh("python3", [new URL("./repair-probe.py", import.meta.url).pathname, FX + original, repaired], { timeout: 240000 }).out);
+/**
+ * A repair: says what it did (`said`), opens cleanly in strict readers (no complaints, qpdf
+ * happy), has every page of the original, its words (all, or `words` of them) and no junk, and
+ * looks the same (each page at least `look` alike).
+ */
+const repairNotes = (s, h, original, said, o = {}) => {
+  const pdf = first(s, ".pdf");
+  if (!pdf) return ["✗ no PDF output"];
+  const r = repairProbe(h, original, pdf.path);
+  const chk = h.sh("qpdf", ["--check", pdf.path]);
+  const look = o.look ?? 0.99;
+  return [
+    expect(said.test(pdf.note ?? ""), `says: ${pdf.note}`),
+    expect(chk.code === 0, chk.code === 0 ? "qpdf: no problems" : `qpdf: ${chk.out.slice(-160)}`),
+    expect(r.errors === 0, r.errors ? `${r.errors} reader complaints (${r.firstError})` : "no reader complaints"),
+    expect(r.pages[0] === r.pages[1], `pages ${r.pages[1]} of ${r.pages[0]}`),
+    expect(r.words >= (o.words ?? 1) && r.junk === 0, `words kept ${r.words}, junk ${r.junk}`),
+    expect(r.look.every((l) => l >= look), `looks the same (${r.look.join(", ")})`),
+  ];
+};
+/** How a colour change went (see colour-probe.py). */
+const colourProbe = (h, before, after) => JSON.parse(h.sh("python3", [new URL("./colour-probe.py", import.meta.url).pathname, before, after]).out);
+/** Grey all over, as light as before, and still text. */
+const greyNotes = (c) => [
+  expect(c.pages.every((p) => p.coloured === 0), `no colour left (${c.pages.map((p) => p.coloured).join(", ")} coloured pixels)`),
+  expect(c.pages.every((p) => p.lightness === null || p.lightness < 200), `each colour as light as before (${c.pages.map((p) => p.lightness).join(", ")} pixels off)`),
+  expect(c.pages.every((p) => !p.fullPagePicture), "text and drawings kept, not a picture of the page"),
+];
+const stampProbe = (h, path, ink) => JSON.parse(h.sh("python3", [new URL("./stamp-probe.py", import.meta.url).pathname, path, ...(ink ? [ink] : [])]).out);
+/** Problems with a box that should sit whole on its page: off the page, or away from where it belongs. */
+const boxIssues = (pages, where) => pages.map((p, i) => (!p.ink ? `page ${i + 1}: nothing drawn` : where(p, p.ink) ? `page ${i + 1}: ${where(p, p.ink)}` : null)).filter(Boolean);
 /** The first word on a probed page that reads exactly `t`: [x0, y0, x1, y1, t], y down from the top. */
 const wordAt = (pg, t) => pg.words.find((w) => w[4] === t);
 /** The word just before the first `t` on its line (a list number before its text). */
@@ -180,17 +227,76 @@ print(json.dumps({'links':[l.get('page') for l in d[0].get_links()],'toc':[t[1] 
       const before = statSync(h.join(h.FX, "text.pdf")).size;
       return ok([...r.notes, `${before} → ${r.pdf.size}`, imgCount(h, r.pdf.path) >= 2 ? "images kept" : "✗ images lost"]);
   } },
-  { id: "repair", slug: "repair-pdf", files: ["text.pdf"], check: (s, h) => ok(needPdf(s, h, { pages: 4, text: ["Quarterly"] }).notes) },
+  // Repair: each damaged file (see make-fixtures.py) against the undamaged one it was made from.
+  { id: "repair", slug: "repair-pdf", files: ["text.pdf"], check: (s, h) => ok(repairNotes(s, h, "text.pdf", /No damage found/, { look: 0.999 })) },
+  { id: "repair-index", slug: "repair-pdf", files: ["damaged-index.pdf"], check: (s, h) => {
+      const r = repairProbe(h, "links.pdf", first(s, ".pdf").path);
+      return ok([...repairNotes(s, h, "links.pdf", /stray data.*broken index.*Nothing was lost/), expect(JSON.stringify(r.links) === "[2,0,0]" && r.toc === 3, `links and bookmarks kept (${r.links}, ${r.toc})`)]);
+  } },
+  { id: "repair-page-list", slug: "repair-pdf", files: ["damaged-pagelist.pdf"], check: (s, h) => {
+      const r = repairProbe(h, "text.pdf", first(s, ".pdf").path);
+      return ok([...repairNotes(s, h, "text.pdf", /list of pages.*Nothing was lost/), expect(r.toc === 5, `bookmarks kept (${r.toc})`)]);
+  } },
+  { id: "repair-cut-short", slug: "repair-pdf", files: ["damaged-cut.pdf"], check: (s, h) => ok(repairNotes(s, h, "office-deck.pdf", /end of the file was missing.*Nothing was lost/)) },
+  { id: "repair-damaged-font", slug: "repair-pdf", files: ["damaged-font.pdf"], check: (s, h) => ok(repairNotes(s, h, "office-deck.pdf", /damaged font was replaced with a matching one/, { look: 0.97 })) },
+  { id: "repair-lost-font", slug: "repair-pdf", files: ["damaged-lostfont.pdf"], check: (s, h) => ok(repairNotes(s, h, "office-deck.pdf", /Rebuilt a lost font from its surviving parts.*Nothing was lost/)) },
+  { id: "repair-standard-font", slug: "repair-pdf", files: ["damaged-oldfont.pdf"], check: (s, h) => ok(repairNotes(s, h, "links.pdf", /shown in a standard font/)) },
+  // A page whose drawing is damaged part way keeps what comes before the damage, cleanly.
+  { id: "repair-damaged-drawing", slug: "repair-pdf", files: ["damaged-content.pdf"], check: (s, h) => {
+      const r = repairProbe(h, "text.pdf", first(s, ".pdf").path);
+      return ok([...repairNotes(s, h, "text.pdf", /^4 pages\. Page 1: the end of its content was damaged/, { words: 0.5, look: 0 }), expect(r.look.slice(1).every((l) => l >= 0.99), `the other pages unchanged (${r.look.join(", ")})`)]);
+  } },
+  { id: "repair-not-a-pdf", slug: "repair-pdf", files: ["web-page.pdf"], expectError: /web page saved with a \.pdf name/ },
   { id: "ocr-pdf", slug: "ocr-pdf", files: ["scan.pdf"], options: { lang: "eng" }, check: (s, h) => {
       const r = needPdf(s, h, { pages: 1, text: ["Quarterly Operations", "escalations"] });
       return ok([...r.notes, imgCount(h, r.pdf.path) >= 1 ? "original scan kept" : "✗ scan image lost", s[0].note ?? ""]);
   } },
   { id: "ocr-image", slug: "ocr-pdf", files: ["scan.png"], options: { lang: "eng" }, check: (s, h) => ok(needPdf(s, h, { pages: 1, text: ["Quarterly"] }).notes) },
-  { id: "grayscale", slug: "grayscale-pdf", files: ["cmp-a.pdf"], check: (s, h) => ok(needPdf(s, h, { pages: 1 }).notes) },
-  { id: "pdfa", slug: "pdf-to-pdfa", files: ["cmp-a.pdf"], options: { level: "2B" }, check: (s, h) => {
-      const r = needPdf(s, h, { pages: 1, text: ["Alpha"] });
-      const meta = h.sh("pdfinfo", ["-meta", r.pdf.path]).out;
-      return ok([...r.notes, /pdfaid/i.test(meta) ? "PDF/A metadata present" : "✗ no PDF/A metadata"]);
+  // Grayscale in the file itself: no colour left anywhere, each colour as light as it was, text
+  // still text (not a picture of the page), links and bookmarks kept, pictures stored grey;
+  // gradients and an SVG pattern from Chrome, and CMYK, spot (PostScript tint), two-ink and
+  // palette colours with a coloured annotation.
+  { id: "grayscale", slug: "grayscale-pdf", files: ["text.pdf"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 4, text: ["Quarterly Operations Report", "Consulting hours"] });
+      if (!r.pdf) return ok(r.notes);
+      const c = colourProbe(h, FX + "text.pdf", r.pdf.path);
+      return ok([...r.notes, ...greyNotes(c), expect(c.toc === 5, "bookmarks kept"), expect(c.pages.every((p) => p.images.every((cs) => cs === "DeviceGray")), "pictures stored grey"), expect(r.pdf.size < 523529, `smaller than the original (${r.pdf.size} bytes)`)]);
+  } },
+  { id: "grayscale-gradients", slug: "grayscale-pdf", files: ["colours.pdf"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["Quarterly colours", "Amber card", "a link to the colour guide"] });
+      if (!r.pdf) return ok(r.notes);
+      const c = colourProbe(h, FX + "colours.pdf", r.pdf.path);
+      return ok([...r.notes, ...greyNotes(c), expect(c.pages[0].links === 1, "link kept")]);
+  } },
+  { id: "grayscale-spot-colours", slug: "grayscale-pdf", files: ["spot.pdf"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["Spot colours"] });
+      if (!r.pdf) return ok(r.notes);
+      const c = colourProbe(h, FX + "spot.pdf", r.pdf.path);
+      return ok([...r.notes, ...greyNotes(c), expect(/text kept as text/.test(first(s, ".pdf").note ?? ""), `converted, not redrawn (${first(s, ".pdf").note})`)]);
+  } },
+  // PDF/A checked against the rules files break in practice (see pdfa-check.py): fonts the file
+  // only names (Helvetica) get a same-width font embedded and the text stays text, a form keeps
+  // its fields with check marks from an embedded font, links are set to print, and for PDF/A-1
+  // a page with a see-through picture is redrawn, its words still searchable.
+  { id: "pdfa", slug: "pdf-to-pdfa", files: ["text.pdf"], options: { level: "2B" }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 4, text: ["Quarterly Operations Report", "Consulting hours"] });
+      if (!r.pdf) return ok(r.notes);
+      const v = JSON.parse(py(h, `import subprocess;print(subprocess.run(['python3',${JSON.stringify(new URL("./pdfa-check.py", import.meta.url).pathname)},${JSON.stringify(r.pdf.path)},'2'],capture_output=True,text=True).stdout)`));
+      const fonts = h.sh("pdffonts", [r.pdf.path]).out;
+      return ok([...r.notes, expect(v.ok, v.ok ? "passes the PDF/A-2 checks" : v.problems.join("; ")), expect(!/\bno\s+no\s+no\b/.test(fonts) && !/Type 1\s+WinAnsi\s+no/.test(fonts), "every font embedded"), expect(pdfProbe(h, r.pdf.path).pages[0].images.length === 0, "text pages stay text")]);
+  } },
+  { id: "pdfa-1-transparency", slug: "pdf-to-pdfa", files: ["text.pdf"], options: { level: "1B" }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 4, text: ["Chapter A", "Quarterly Operations Report"] });
+      if (!r.pdf) return ok(r.notes);
+      const v = JSON.parse(py(h, `import subprocess;print(subprocess.run(['python3',${JSON.stringify(new URL("./pdfa-check.py", import.meta.url).pathname)},${JSON.stringify(r.pdf.path)},'1'],capture_output=True,text=True).stdout)`));
+      return ok([...r.notes, expect(v.ok, v.ok ? "passes the PDF/A-1 checks" : v.problems.join("; ")), expect(/1 page redrawn/.test(first(s, ".pdf").note ?? ""), `the page with a see-through picture redrawn (${first(s, ".pdf").note})`)]);
+  } },
+  { id: "pdfa-form-links", slug: "pdf-to-pdfa", files: ["form.pdf"], options: { level: "2B" }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["Registration form"] });
+      if (!r.pdf) return ok(r.notes);
+      const v = JSON.parse(py(h, `import subprocess;print(subprocess.run(['python3',${JSON.stringify(new URL("./pdfa-check.py", import.meta.url).pathname)},${JSON.stringify(r.pdf.path)},'2'],capture_output=True,text=True).stdout)`));
+      const fields = py(h, `import pymupdf;print(sum(1 for p in pymupdf.open(${JSON.stringify(r.pdf.path)}) for w in p.widgets()))`);
+      return ok([...r.notes, expect(v.ok, v.ok ? "passes the PDF/A-2 checks" : v.problems.join("; ")), expect(fields === "4", `the form keeps its ${fields} fields`)]);
   } },
   { id: "watermark-text", slug: "watermark", files: ["text.pdf"], options: { text: "DRAFT", opacity: 0.2, color: "#b42318" }, check: (s, h) => ok(needPdf(s, h, { pages: 4, text: ["DRAFT", "Quarterly"] }).notes) },
   { id: "watermark-unicode-tiled", slug: "watermark", files: ["cmp-a.pdf"], options: { text: "गोपनीय ₹ Confidential", position: "tile", opacity: 0.15 }, check: (s, h) => ok(needPdf(s, h, { pages: 1, text: ["Confidential", "₹"] }).notes) },
@@ -203,7 +309,98 @@ print(json.dumps({'links':[l.get('page') for l in d[0].get_links()],'toc':[t[1] 
       const t2 = pdfs[1] ? h.pdfText(pdfs[1].path) : "";
       return ok([...needPdf(s, h, { pdf: pdfs[0], text: ["EXH-000007", "EXH-000010"] }).notes, has(t2, "EXH-000011") ? "continues across files" : "✗ numbering did not continue"]);
   } },
+  // Pages as they come in real files (Letter landscape, turned 90 and 270 degrees, a crop box
+  // offset in a larger sheet, A6): a turned watermark at the bottom stays whole on the page,
+  // centred, and a flat one across the middle fits the page's width. Both are marked as
+  // watermark artifacts, which screen readers skip.
+  { id: "watermark-turned-pages", slug: "watermark", files: ["stamp-pages.pdf"], options: { text: "DRAFT", position: "bottom", angle: 30, opacity: 0.5 }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 6 });
+      if (!r.pdf) return ok(r.notes);
+      const pages = stampProbe(h, r.pdf.path, "b42318");
+      const bad = boxIssues(pages, (p, b) => (b[0] < 6 || b[1] < 6 || b[2] > p.w - 6 || b[3] > p.h - 6 ? "runs off the page" : Math.abs((b[0] + b[2]) / 2 - p.w / 2) > p.w * 0.03 ? "off centre" : (b[1] + b[3]) / 2 < p.h * 0.6 ? "not at the bottom" : null));
+      return ok([...r.notes, expect(!bad.length, bad.length ? bad.join("; ") : "whole, centred and at the bottom of every page"), expect(pages.every((p) => p.artifacts.includes("Watermark")), "marked as a watermark")]);
+  } },
+  { id: "watermark-flat-fits", slug: "watermark", files: ["stamp-pages.pdf"], options: { text: "CONFIDENTIAL", angle: 0, opacity: 0.3 }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 6 });
+      if (!r.pdf) return ok(r.notes);
+      const pages = stampProbe(h, r.pdf.path, "b42318");
+      const bad = boxIssues(pages, (p, b) => (b[0] < 6 || b[2] > p.w - 6 ? "wider than the page" : Math.abs((b[0] + b[2]) / 2 - p.w / 2) > p.w * 0.03 || Math.abs((b[1] + b[3]) / 2 - p.h / 2) > p.h * 0.03 ? "off centre" : null));
+      return ok([...r.notes, expect(!bad.length, bad.length ? bad.join("; ") : "centred and within the width of every page")]);
+  } },
+  // Booklet numbering after an unnumbered cover: page 2 is a left-hand page, so its number goes
+  // on the left even though it is the first one printed; turned and cropped pages included.
+  { id: "page-numbers-turned-pages", slug: "page-numbers", files: ["stamp-pages.pdf"], options: { format: "Page {n} of {total}", position: "bottom-right", skipFirst: 1, mirror: true }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 6, text: ["Page 1 of 5", "Page 5 of 5"] });
+      if (!r.pdf) return ok(r.notes);
+      const pages = stampProbe(h, r.pdf.path);
+      const bad = pages.slice(1).map((p, k) => {
+        const w = p.words.find((x) => x[4] === "Page");
+        const i = k + 2;
+        if (!w) return `page ${i}: no number`;
+        const left = w[0] < p.w / 2;
+        return left !== (i % 2 === 0) ? `page ${i}: on the ${left ? "left" : "right"}` : w[3] < p.h - 50 || w[3] > p.h ? `page ${i}: not at the bottom` : null;
+      }).filter(Boolean);
+      return ok([...r.notes, expect(!pages[0].words.some((x) => x[4] === "Page"), "cover left unnumbered"), expect(!bad.length, bad.length ? bad.join("; ") : "left on even pages, right on odd ones, at the bottom"), expect(pages.slice(1).every((p) => p.artifacts.includes("Footer")), "marked as page furniture")]);
+  } },
   { id: "stamp-image", slug: "stamp-image", files: ["text.pdf", "thumb.png"], options: { where: "last", caption: "L.T.I." }, check: (s, h) => ok(needPdf(s, h, { pages: 4, text: ["L.T.I."] }).notes) },
+  // A name in Hindi with English in brackets, and a rupee amount: each field drawn run by run in
+  // fonts that have the letters (Noto Sans Devanagari and Noto Sans), filled and flattened.
+  // Edit text takes the old words out of the page itself (not just covered: they can't be copied
+  // or found any more), keeps everything else exactly as it was, and sets the new words in a
+  // face with the widths of the line's own font: a Chrome-printed invoice (CID fonts), a
+  // deleted line, a page turned 90 degrees (standard Helvetica, no widths in the file), the
+  // text inside the form a resized page is drawn with, and a scanned page with an OCR layer
+  // (the invisible words go; the cover stays, as the visible ones are in the picture).
+  { id: "edit-text-retype", slug: "edit-text", files: ["invoice.pdf"], edit: { page: 1, needle: "Kestrel Foods Pvt. Ltd.", text: "Kestrel Foods India Pvt. Ltd." }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1 });
+      if (!r.pdf) return ok(r.notes);
+      const e = editProbe(h, s, "invoice.pdf");
+      return ok([...r.notes, ...editNotes(e, "Kestrel Foods Pvt. Ltd.", "Kestrel Foods India Pvt. Ltd."), expect(e.fonts.some((f) => /MetricSans/.test(f)), "set in the Arial-width face, like the line's Liberation Sans")]);
+  } },
+  { id: "edit-text-delete", slug: "edit-text", files: ["invoice.pdf"], edit: { page: 1, needle: "Attn: Accounts Payable", text: "" }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1 });
+      if (!r.pdf) return ok(r.notes);
+      return ok([...r.notes, ...editNotes(editProbe(h, s, "invoice.pdf"), "Attn: Accounts Payable", "")]);
+  } },
+  { id: "edit-text-turned-page", slug: "edit-text", files: ["stamp-pages.pdf"], edit: { page: 3, needle: "3. Turned 90", text: "3. Turned a quarter" }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 6 });
+      if (!r.pdf) return ok(r.notes);
+      return ok([...r.notes, ...editNotes(editProbe(h, s, "stamp-pages.pdf", 3), "3. Turned 90", "3. Turned a quarter")]);
+  } },
+  { id: "edit-text-in-form", slug: "edit-text", files: ["framed.pdf"], edit: { page: 1, needle: "Beta clause: delivery by courier.", text: "Beta clause: delivery by hand." }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1 });
+      if (!r.pdf) return ok(r.notes);
+      return ok([...r.notes, ...editNotes(editProbe(h, s, "framed.pdf"), "delivery by courier", "Beta clause: delivery by hand.")]);
+  } },
+  { id: "edit-text-ocr-layer", slug: "edit-text", files: ["scan-ocr.pdf"], edit: { page: 1, needle: "Gamma clause: warranty of 12 months.", text: "Gamma clause: warranty of 24 months." }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1 });
+      if (!r.pdf) return ok(r.notes);
+      const e = editProbe(h, s, "scan-ocr.pdf");
+      return ok([...r.notes, ...editNotes(e, "warranty of 12 months", "Gamma clause: warranty of 24 months."), expect(e.pixelsInside > 50, "the scanned words covered")]);
+  } },
+  { id: "fill-form-hindi", slug: "fill-form", files: ["form.pdf"], options: { values: { full_name: "प्रिया शर्मा (Priya)", email: "₹ 4,500 paid", subscribe: "true", plan: "Pro" } }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1 });
+      if (!r.pdf) return ok(r.notes);
+      const f = JSON.parse(py(h, `import pymupdf,re,json
+d=pymupdf.open(${JSON.stringify(r.pdf.path)})
+out={}
+for w in d[0].widgets():
+    ap=d.xref_get_key(w.xref,'AP/N')
+    fonts=[]
+    if ap[0]=='xref':
+        res=d.xref_get_key(int(ap[1].split()[0]),'Resources/Font')
+        fonts=[d.xref_get_key(int(x),'BaseFont')[1] for x in re.findall(r'(\\d+) 0 R',res[1])]
+    out[w.field_name]={'value':w.field_value,'fonts':fonts}
+print(json.dumps(out,ensure_ascii=False))`));
+      const name = f.full_name ?? { fonts: [] };
+      return ok([...r.notes, expect(name.value === "प्रिया शर्मा (Priya)", "Hindi value kept"), expect(name.fonts.some((x) => /Devanagari/.test(x)) && name.fonts.some((x) => /NotoSans-/.test(x)), `drawn in Devanagari and Latin fonts (${name.fonts.join(", ")})`), expect(f.subscribe?.value === "Yes" && f.plan?.value === "Pro", "checkbox and choice set")]);
+  } },
+  { id: "fill-form-hindi-flat", slug: "fill-form", files: ["form.pdf"], options: { values: { full_name: "प्रिया शर्मा (Priya)", email: "₹ 4,500 paid" }, flatten: true }, check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["प्रिया शर्मा (Priya)", "₹ 4,500 paid"] });
+      if (!r.pdf) return ok(r.notes);
+      const { pages } = pdfProbe(h, r.pdf.path);
+      return ok([...r.notes, expect(pages[0].fonts.some((x) => /Devanagari/.test(x)), "Hindi drawn in a Devanagari font"), expect(!py(h, `import pymupdf;print(len(list(pymupdf.open(${JSON.stringify(r.pdf.path)})[0].widgets())))`).match(/^[1-9]/), "no fields left")]);
+  } },
   { id: "flatten", slug: "flatten-pdf", files: ["form.pdf"], check: (s, h) => {
       const r = needPdf(s, h, { pages: 1, text: ["Registration form"] });
       const fields = py(h, `import pymupdf;d=pymupdf.open(${JSON.stringify(r.pdf.path)});print(sum(1 for p in d for w in p.widgets()))`);
@@ -214,10 +411,25 @@ print(json.dumps({'links':[l.get('page') for l in d[0].get_links()],'toc':[t[1] 
       return ok([/Priya Sharma/.test(v) ? "name filled" : "✗ " + v, /'plan': 'Pro'/.test(v) ? "dropdown set" : "✗ dropdown", /subscribe': (True|'Yes'|'On')/i.test(v) ? "checkbox set" : "✗ checkbox " + v]);
   } },
   { id: "fill-form-flatten", slug: "fill-form", files: ["form.pdf"], options: { values: { full_name: "Ravi Kumar", plan: "Enterprise" }, flatten: true }, check: (s, h) => ok(needPdf(s, h, { text: ["Ravi Kumar", "Enterprise"] }).notes) },
-  { id: "invert", slug: "invert-pdf", files: ["cmp-a.pdf"], check: (s, h) => ok(needPdf(s, h, { pages: 1 }).notes) },
+  // Dark mode redraws pages in place: dark pictures of the pages with their words still
+  // searchable, bookmarks and turned pages as they were.
+  { id: "invert", slug: "invert-pdf", files: ["text.pdf"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 4, text: ["Quarterly Operations Report", "Chapter B: Appendix"] });
+      if (!r.pdf) return ok(r.notes);
+      const c = colourProbe(h, FX + "text.pdf", r.pdf.path);
+      const turned = py(h, `import pymupdf;print([p.rotation for p in pymupdf.open(${JSON.stringify(r.pdf.path)})])`);
+      return ok([...r.notes, expect(c.toc === 5, "bookmarks kept"), expect(turned === "[0, 0, 0, 90]", `turned page kept (${turned})`), expect(c.pages.every((p) => p.fullPagePicture), "pages drawn dark")]);
+  } },
   { id: "metadata", slug: "metadata", files: ["text.pdf"], options: { title: "New Title ₹", author: "Harsh", subject: "S", keywords: "a, b" }, check: (s, h) => {
       const info = h.sh("pdfinfo", [s[0].path]).out;
       return ok([/Title:\s+New Title/.test(info) ? "title set" : "✗ title", /Author:\s+Harsh/.test(info) ? "author set" : "✗ author"]);
+  } },
+  // A file whose properties are also in XMP metadata (which many readers show first): both say
+  // the new values, and keywords keep their commas.
+  { id: "metadata-xmp", slug: "metadata", files: ["xmp.pdf"], options: { title: "Board pack ₹", author: "Priya Sharma", subject: "Q3", keywords: "board pack, quarterly" }, check: (s, h) => {
+      const info = h.sh("pdfinfo", [s[0].path]).out;
+      const xmp = h.sh("pdfinfo", ["-meta", s[0].path]).out;
+      return ok([expect(/Title:\s+Board pack ₹/.test(info) && /Board pack ₹/.test(xmp), "title in Info and XMP"), expect(/Priya Sharma/.test(xmp) && !/Old (title|Author)/.test(xmp), "old values gone from XMP"), expect(/Keywords:\s+board pack, quarterly/.test(info), "keywords keep their commas")]);
   } },
   { id: "pdf-to-handwriting", slug: "pdf-to-handwriting", files: ["cmp-a.pdf"], check: (s, h) => ok(needPdf(s, h, { text: ["Alpha"] }).notes) },
   { id: "text-to-handwriting", slug: "text-to-handwriting", options: { heading: "Homework", body: "Dear diary,\nToday I merged twelve PDFs. नमस्ते दुनिया ₹500." }, check: (s, h) => ok(needPdf(s, h, { text: ["Homework", "merged twelve"] }).notes) },

@@ -7,13 +7,19 @@
  */
 import { BlendMode, LineCapStyle } from "@cantoo/pdf-lib";
 import { degrees, embedImage, hexToRgb, pdfOut, saveDoc, stem, type OutFile, type ProgressFn } from "./core";
-import { FontSet, type Family } from "./fonts";
+import { FontSet, matchFace, type Face, type Family } from "./fonts";
 import { pageFrame, place, type Frame } from "./geometry";
 import { open, type Src } from "./pages";
+import { removeTextIn } from "./textedit";
 
 type Base = { id: string; page: number };
-export type TextObj = Base & { type: "text"; x: number; y: number; text: string; size: number; color: string; family: Family; bold?: boolean; italic?: boolean; coverId?: string; original?: string };
-export type RectObj = Base & { type: "rect"; x: number; y: number; w: number; h: number; mode: "whiteout" | "highlight" | "box" | "redact"; color: string; strokeWidth?: number; fill?: boolean };
+/**
+ * Text placed on a page. A line retyped with Edit text has `coverId`, the whiteout over the old
+ * line, and `face`, a face with the widths of the line's own font when there is one.
+ */
+export type TextObj = Base & { type: "text"; x: number; y: number; text: string; size: number; color: string; family: Family; face?: Face; bold?: boolean; italic?: boolean; coverId?: string; original?: string };
+/** `erase`: the whiteout over a line deleted with Edit text (only there to take the old words away). */
+export type RectObj = Base & { type: "rect"; x: number; y: number; w: number; h: number; mode: "whiteout" | "highlight" | "box" | "redact"; color: string; strokeWidth?: number; fill?: boolean; erase?: boolean };
 export type EllipseObj = Base & { type: "ellipse"; x: number; y: number; w: number; h: number; color: string; strokeWidth: number; fill?: boolean };
 export type LineObj = Base & { type: "line"; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number; arrow?: boolean };
 export type InkObj = Base & { type: "ink"; points: [number, number][]; color: string; strokeWidth: number; opacity?: number };
@@ -90,6 +96,25 @@ function drawPath(page: import("./core").PDFPage, f: Frame, d: string, o: { fill
   });
 }
 
+/** A line of a page's text as Edit text offers it (see editlines.ts). */
+export type LineRef = { text: string; x: number; y: number; w: number; h: number; base: number; size: number; family: Family; face?: string; bold: boolean; italic: boolean };
+
+/**
+ * Edit text's two objects for a line: a whiteout over the old words (in `bg`, the colour behind
+ * them, while editing; when saving takes the words out of the page it isn't drawn) and the new
+ * text at the line's place and size, in a face with the widths of the line's font when there is
+ * one. An empty `text` deletes the line.
+ */
+export function retypeLine(line: LineRef, page: number, o: { coverId: string; textId: string; bg: string; fg: string; text?: string }): [RectObj, TextObj] {
+  // A little wider than the words, for slanted letters and scans (where the cover stays).
+  const padX = Math.max(1, line.size * 0.12);
+  const padY = Math.max(0.5, line.size * 0.06);
+  return [
+    { id: o.coverId, page, type: "rect", mode: "whiteout", x: line.x - padX, y: line.y - padY, w: line.w + padX * 2, h: line.h + padY * 2, color: o.bg },
+    { id: o.textId, page, type: "text", x: line.x, y: line.base - BASELINE * line.size, text: o.text ?? line.text, original: line.text, size: Math.round(line.size * 10) / 10, color: o.fg, family: line.family, face: matchFace(line.face), bold: line.bold, italic: line.italic, coverId: o.coverId },
+  ];
+}
+
 function dataUrlBytes(src: string): { bytes: Uint8Array; mime: string } {
   const m = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(src);
   if (!m) throw new Error("An image could not be read.");
@@ -109,6 +134,25 @@ export async function applyEdits(src: Src, objects: EditObject[], onProgress?: P
     list.push(o);
     byPage.set(o.page, list);
   }
+  // Words under a whiteout are taken out of the page itself, not just covered, so they can no
+  // longer be copied, searched or extracted. A whiteout that only hid a line retyped (or deleted)
+  // with Edit text is then left out, so the page's own background shows; it stays when some of
+  // the words couldn't be taken out (inside a form shared with other pages, or in a font whose
+  // widths are unknown), or were an invisible layer over a scan, whose visible words are in
+  // the picture.
+  const retyped = new Set(objects.flatMap((o) => (o.type === "text" && o.coverId ? [o.coverId] : o.type === "rect" && o.erase ? [o.id] : [])));
+  const dropped = new Set<string>();
+  for (const [pi, list] of byPage) {
+    const whiteouts = list.filter((o): o is RectObj => o.type === "rect" && o.mode === "whiteout");
+    if (!whiteouts.length) continue;
+    try {
+      removeTextIn(doc, pi, whiteouts).forEach((r, k) => {
+        if (retyped.has(whiteouts[k].id) && r.removed > 0 && !r.missed && !r.invisible) dropped.add(whiteouts[k].id);
+      });
+    } catch {
+      /* the cover still hides them */
+    }
+  }
   // Paint order: covers first, then shapes and ink, highlights, images, text on top.
   const rank = (o: EditObject) => (o.type === "rect" && o.mode === "whiteout" ? 0 : o.type === "rect" && o.mode === "highlight" ? 2 : o.type === "image" ? 3 : o.type === "text" ? 4 : 1);
   let done = 0;
@@ -116,6 +160,7 @@ export async function applyEdits(src: Src, objects: EditObject[], onProgress?: P
     const page = pages[pi];
     const f = pageFrame(page);
     for (const o of [...list].sort((a, b) => rank(a) - rank(b))) {
+      if (dropped.has(o.id)) continue;
       switch (o.type) {
         case "rect": {
           if (o.mode === "whiteout") drawPath(page, f, svgRect(o.x, o.y, o.w, o.h), { fill: o.color || "#ffffff" });
@@ -147,7 +192,7 @@ export async function applyEdits(src: Src, objects: EditObject[], onProgress?: P
           break;
         }
         case "text": {
-          const style = { family: o.family, bold: o.bold, italic: o.italic };
+          const style = { family: o.face ?? o.family, bold: o.bold, italic: o.italic };
           const lines = o.text.replace(/\r\n?/g, "\n").split("\n");
           for (let i = 0; i < lines.length; i++) {
             if (!lines[i]) continue;

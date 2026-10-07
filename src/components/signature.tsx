@@ -2,6 +2,7 @@ import "@fontsource/great-vibes/400.css";
 import "@fontsource/dancing-script/400.css";
 import { Eraser, ImagePlus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { cleanSignature } from "@/lib/sigclean";
 import { load, save } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { useFilePicker } from "./dropzone";
@@ -178,7 +179,7 @@ function renderTyped(name: string, family: string, ink: string, k: number): HTML
   return c;
 }
 
-/** Turns a photo of a signature on paper into ink on a transparent background. */
+/** Turns a photo of a signature on paper into ink on a transparent background (see sigclean). */
 function removeBackground(img: HTMLImageElement, threshold: number, recolor: string | null): HTMLCanvasElement {
   // Plenty for pen strokes, and quick to process on phones.
   const longSide = Math.max(img.naturalWidth, img.naturalHeight);
@@ -189,39 +190,14 @@ function removeBackground(img: HTMLImageElement, threshold: number, recolor: str
   const ctx = c.getContext("2d")!;
   ctx.drawImage(img, 0, 0, c.width, c.height);
   const d = ctx.getImageData(0, 0, c.width, c.height);
-  const px = d.data;
-  // Estimate paper brightness from the brightest 30% of pixels, so shadows and grey paper work.
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < px.length; i += 4) hist[(px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0]++;
-  let acc = 0;
-  let paper = 255;
-  const total = px.length / 4;
-  for (let v = 255; v >= 0; v--) {
-    acc += hist[v];
-    if (acc > total * 0.3) {
-      paper = v;
-      break;
-    }
-  }
-  const cut = paper * threshold;
-  const rgb = recolor ? [parseInt(recolor.slice(1, 3), 16), parseInt(recolor.slice(3, 5), 16), parseInt(recolor.slice(5, 7), 16)] : null;
-  for (let i = 0; i < px.length; i += 4) {
-    const l = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
-    if (l >= cut) px[i + 3] = 0;
-    else {
-      // Soft edge: fade pixels close to the cut-off.
-      const a = Math.min(1, (cut - l) / Math.max(1, cut * 0.25));
-      px[i + 3] = Math.round(255 * a);
-      if (rgb) [px[i], px[i + 1], px[i + 2]] = rgb;
-    }
-  }
+  cleanSignature(d, threshold, recolor);
   ctx.putImageData(d, 0, 0);
   return c;
 }
 
 function UploadSig({ ink, onChange }: { ink: string; onChange: (c: HTMLCanvasElement | null) => void }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
-  const [threshold, setThreshold] = useState(0.78);
+  const [threshold, setThreshold] = useState(0.85);
   const [recolor, setRecolor] = useState(true);
   const preview = useRef<HTMLCanvasElement | null>(null);
   const [url, setUrl] = useState<string>();
@@ -255,8 +231,8 @@ function UploadSig({ ink, onChange }: { ink: string; onChange: (c: HTMLCanvasEle
       {img ? (
         <div className="grid gap-3">
           <div className="flex items-center gap-3 text-sm text-ink-2">
-            <span className="shrink-0">Background removal</span>
-            <Slider label="Background removal strength" min={0.5} max={0.95} step={0.01} value={threshold} onChange={setThreshold} format={(v) => `${Math.round(v * 100)}%`} />
+            <span className="shrink-0">Ink sensitivity</span>
+            <Slider label="Ink sensitivity: higher keeps fainter strokes" min={0.5} max={0.95} step={0.01} value={threshold} onChange={setThreshold} format={(v) => `${Math.round(v * 100)}%`} />
           </div>
           <Switch checked={recolor} onChange={setRecolor} label="Use the selected ink colour" />
           <Button variant="ghost" size="sm" className="justify-self-start" onClick={picker.open}>

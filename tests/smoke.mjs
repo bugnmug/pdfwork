@@ -74,6 +74,8 @@ await run("word-to-pdf", "word-to-pdf", [FX + "word-report.docx"], "Convert to P
 await run("excel-to-pdf", "excel-to-pdf", [FX + "excel-invoice.xlsx"], "Convert to PDF", (t) => [t.pages === 1 ? "1 page" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["TAX INVOICE", "₹449,540.00"])]);
 // PowerPoint to PDF draws the slides with the deck's fonts (Calibri as Carlito), and leaves the hidden slide out.
 await run("ppt-to-pdf", "ppt-to-pdf", [FX + "deck-features.pptx"], "Convert to PDF", (t) => [t.pages === 7 ? "7 pages" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["Feature Deck", "Step alpha", "Quarterly revenue"], ["This slide is hidden"])]);
+// Repair puts a working font in place of a damaged one, loaded from the site at run time too.
+await run("repair", "repair-pdf", [FX + "damaged-font.pdf"], /^Repair$/, (t) => [t.pages === 7 ? "7 pages" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["Harbour Logistics", "offsite"])]);
 await run("merge", "merge-pdf",[FX + "text.pdf", FX + "cmp-a.pdf"], "Merge PDFs", (t) => [t.pages === 5 ? "5 pages" : `✗ ${t.pages} pages`, ...want(t, ["Quarterly Operations", "Alpha clause"])]);
 await run("csv-bom", "csv-to-pdf", [OUT + "bom.csv"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Sharma, Priya", 'Said "hello"']), t.text.includes("﻿") || /ï»¿/.test(t.text) ? "✗ BOM leaked" : "no BOM"]);
 await run("markdown", "markdown-to-pdf", [FX + "sample.md"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Release Notes", "₹499", "nested item"])]);

@@ -162,12 +162,12 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
       return out;
     }
     case "grayscale-pdf": {
-      const { transformPages, grayPixels } = await import("./raster");
-      return [await transformPages(await srcOf(pdfFiles(ctx)[0], ctx), grayPixels, "grayscale", { dpi: 200, pages: str(o, "pages", "all") }, p)];
+      const { grayscalePdf } = await import("./grayscale");
+      return [await grayscalePdf(await srcOf(pdfFiles(ctx)[0], ctx), { pages: str(o, "pages", "all") }, p)];
     }
     case "pdf-to-pdfa": {
-      const { toPdfA } = await import("./security");
-      return [await toPdfA(await srcOf(pdfFiles(ctx)[0], ctx), str(o, "level", "2B") as "2B")];
+      const { toPdfA } = await import("./pdfa");
+      return [await toPdfA(await srcOf(pdfFiles(ctx)[0], ctx), str(o, "level", "2B") as "2B", p)];
     }
 
     /* edit */

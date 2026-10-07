@@ -40,8 +40,9 @@ import { SignatureDialog, type Signature } from "@/components/signature";
 import { Button, Dialog, Input, Notice, Progress, Select, Spinner, Switch } from "@/components/ui";
 import { take } from "@/lib/handoff";
 import type { OutFile } from "@/lib/pdf/core";
-import { arrowHead, BASELINE, LINE_HEIGHT, svgInk, type EditObject, type TextObj } from "@/lib/pdf/edit";
-import type { Family } from "@/lib/pdf/fonts";
+import { arrowHead, LINE_HEIGHT, retypeLine, svgInk, type EditObject, type TextObj } from "@/lib/pdf/edit";
+import type { EditLine } from "@/lib/pdf/editlines";
+import type { Face, Family } from "@/lib/pdf/fonts";
 import type { Box } from "@/lib/pdf/redact";
 import type { Tool } from "@/lib/tools/catalog";
 import { cn } from "@/lib/utils";
@@ -54,10 +55,10 @@ type Size = { w: number; h: number };
 const MODES: Record<Mode, { label: string; icon: LucideIcon; key: string; hint: string }> = {
   select: { label: "Select", icon: MousePointer2, key: "v", hint: "Click an item to move, resize or delete it." },
   text: { label: "Text", icon: Type, key: "t", hint: "Click on the page to start a text box, then type." },
-  "edit-text": { label: "Edit text", icon: TextCursor, key: "e", hint: "Click any line of existing text to rewrite it." },
+  "edit-text": { label: "Edit text", icon: TextCursor, key: "e", hint: "Click any line of existing text to rewrite it. Clear it to delete the line." },
   draw: { label: "Draw", icon: PenLine, key: "d", hint: "Draw freehand with the mouse, a finger or a pen." },
   highlight: { label: "Highlight", icon: Highlighter, key: "h", hint: "Drag across text to highlight it." },
-  whiteout: { label: "Whiteout", icon: Eraser, key: "w", hint: "Drag over anything to cover it with white (or a matching colour)." },
+  whiteout: { label: "Whiteout", icon: Eraser, key: "w", hint: "Drag over anything to cover it with white (or a matching colour). Words under it are taken out of the file too." },
   rect: { label: "Box", icon: Square, key: "r", hint: "Drag to draw a rectangle." },
   ellipse: { label: "Circle", icon: Circle, key: "o", hint: "Drag to draw an ellipse." },
   line: { label: "Line", icon: Minus, key: "l", hint: "Drag to draw a line." },
@@ -80,6 +81,16 @@ const FONT_CSS: Record<Family, string> = {
   serif: '"Doc Serif", "Doc Deva", serif',
   mono: '"Doc Mono", "Doc Deva", monospace',
 };
+/** Faces with a document font's widths, for lines retyped with Edit text (see matchFace). */
+const FACE_CSS: Record<Face, string> = {
+  msans: '"Doc MSans", "Doc Deva", "Doc Sans", sans-serif',
+  mserif: '"Doc MSerif", "Doc Deva", "Doc Serif", serif',
+  mmono: '"Doc MMono", "Doc Deva", "Doc Mono", monospace',
+  carlito: '"Doc Carlito", "Doc Deva", "Doc Sans", sans-serif',
+  caladea: '"Doc Caladea", "Doc Deva", "Doc Serif", serif',
+  gelasio: '"Doc Gelasio", "Doc Deva", "Doc Serif", serif',
+};
+const fontCss = (o: TextObj) => (o.face ? FACE_CSS[o.face] : FONT_CSS[o.family]);
 
 const NONE: EditObject[] = [];
 let seq = 0;
@@ -163,40 +174,16 @@ function resize(o: EditObject, h: Handle, dx: number, dy: number, start: BBox, k
 
 /* ----------------------------------------------------- text under pages */
 
-type Seg = { text: string; x: number; y: number; w: number; h: number; base: number; size: number; family: Family; bold: boolean; italic: boolean };
+type Seg = EditLine;
 
 async function pageSegments(pdf: PDFDocumentProxy, index: number): Promise<Seg[]> {
-  const { pageText, toLines, enrichFontStyles } = await import("@/lib/pdf/pdfjs");
-  const { segments } = await import("@/lib/pdf/structure");
+  const { editableLines } = await import("@/lib/pdf/editlines");
   const page = await pdf.getPage(index + 1);
-  const pt = await pageText(page);
-  await enrichFontStyles(page, pt.items);
-  page.cleanup();
-  const out: Seg[] = [];
-  for (const line of toLines(pt)) {
-    if (line.dir !== 0) continue;
-    for (const s of segments(line)) {
-      const its = s.items;
-      if (!its.length || !s.text.trim()) continue;
-      const y = Math.min(...its.map((i) => i.y));
-      const h = Math.max(...its.map((i) => i.y + i.h)) - y;
-      const chars = its.reduce((n, i) => n + i.str.length, 0) || 1;
-      const size = its.reduce((n, i) => n + i.fontSize * i.str.length, 0) / chars;
-      out.push({
-        text: s.text.replace(/\s+/g, " ").trim(),
-        x: s.x,
-        y,
-        w: s.x2 - s.x,
-        h,
-        base: its.reduce((n, i) => n + i.base, 0) / its.length,
-        size,
-        family: its[0].family,
-        bold: its.filter((i) => i.bold).length > its.length / 2,
-        italic: its.filter((i) => i.italic).length > its.length / 2,
-      });
-    }
+  try {
+    return await editableLines(page);
+  } finally {
+    page.cleanup();
   }
-  return out;
 }
 
 const hex = (r: number, g: number, b: number) => `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
@@ -292,7 +279,7 @@ const TextView = memo(function TextView({ o, k, onMeasure }: { o: TextObj; k: nu
     <div
       ref={ref}
       className="pointer-events-none absolute whitespace-pre"
-      style={{ left: o.x * k, top: o.y * k, fontFamily: FONT_CSS[o.family], fontSize: o.size * k, lineHeight: LINE_HEIGHT, color: o.color, fontWeight: o.bold ? 700 : 400, fontStyle: o.italic ? "italic" : "normal" }}
+      style={{ left: o.x * k, top: o.y * k, fontFamily: fontCss(o), fontSize: o.size * k, lineHeight: LINE_HEIGHT, color: o.color, fontWeight: o.bold ? 700 : 400, fontStyle: o.italic ? "italic" : "normal" }}
     >
       {o.text || " "}
     </div>
@@ -340,7 +327,7 @@ function TextEditor({ o, k, onDone }: { o: TextObj; k: number; onDone: (text: st
         document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
       }}
       className="absolute z-20 min-w-[2ch] whitespace-pre outline-2 outline-offset-2 outline-carbon outline-dashed"
-      style={{ left: o.x * k, top: o.y * k, fontFamily: FONT_CSS[o.family], fontSize: o.size * k, lineHeight: LINE_HEIGHT, color: o.color, fontWeight: o.bold ? 700 : 400, fontStyle: o.italic ? "italic" : "normal", caretColor: "var(--carbon)" }}
+      style={{ left: o.x * k, top: o.y * k, fontFamily: fontCss(o), fontSize: o.size * k, lineHeight: LINE_HEIGHT, color: o.color, fontWeight: o.bold ? 700 : 400, fontStyle: o.italic ? "italic" : "normal", caretColor: "var(--carbon)" }}
     />
   );
 }
@@ -480,8 +467,7 @@ const StudioPage = memo(function StudioPage({ pdf, index, size, k, mode, objects
       }
       const s = segs![i];
       const { bg, fg } = sampleColors(api.canvasFor(index), s, (canvasRef.current?.width ?? cssW) / size.w);
-      const cover: EditObject = { id: newId(), page: index, type: "rect", mode: "whiteout", x: s.x - 1, y: s.y - 0.5, w: s.w + 2, h: s.h + 1, color: bg };
-      const text: TextObj = { id: newId(), page: index, type: "text", x: s.x, y: s.base - BASELINE * s.size, text: s.text, original: s.text, size: Math.round(s.size * 10) / 10, color: fg, family: s.family, bold: s.bold, italic: s.italic, coverId: cover.id };
+      const [cover, text] = retypeLine(s, index, { coverId: newId(), textId: newId(), bg, fg });
       api.createMany([cover, text], text.id);
       e.preventDefault();
       return;
@@ -910,6 +896,12 @@ export default function Studio({ tool }: { tool: Tool }) {
         const cur = objRef.current;
         const o = cur.find((x) => x.id === id) as TextObj | undefined;
         if (!o) return;
+        if (o.coverId && !text.trim() && o.original) {
+          // A line from Edit text emptied: it is deleted. Its cover stays, marked to take the words away.
+          setObjects(cur.flatMap((x) => (x.id === id ? [] : x.id === o.coverId && x.type === "rect" ? [{ ...x, erase: true }] : [x])));
+          setSelected(null);
+          return;
+        }
         if (!text.trim() || (o.coverId && text === o.original && o.text === o.original)) {
           // Empty, or an untouched line from Edit text: drop it and its cover so the page stays as it was.
           setObjects(cur.filter((x) => x.id !== id && x.id !== o.coverId));
@@ -992,7 +984,10 @@ export default function Studio({ tool }: { tool: Tool }) {
     if (patch.highlight !== undefined && o.type === "rect" && o.mode === "highlight") p.color = patch.highlight;
     if (o.type === "text") {
       if (patch.size !== undefined) p.size = patch.size;
-      if (patch.family !== undefined) p.family = patch.family;
+      if (patch.family !== undefined) {
+        p.family = patch.family;
+        p.face = undefined;
+      }
       if (patch.bold !== undefined) p.bold = patch.bold;
       if (patch.italic !== undefined) p.italic = patch.italic;
     }

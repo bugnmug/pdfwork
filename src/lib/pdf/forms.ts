@@ -5,6 +5,7 @@ import {
   PDFCheckBox,
   PDFDict,
   PDFDropdown,
+  PDFHexString,
   PDFName,
   PDFNumber,
   PDFOptionList,
@@ -13,15 +14,38 @@ import {
   PDFRef,
   PDFSignature,
   PDFStream,
+  PDFString,
   PDFTextField,
+  TextAlignment,
+  beginMarkedContent,
+  beginText,
+  clip,
   concatTransformationMatrix,
   drawObject,
+  endMarkedContent,
+  endPath,
+  endText,
+  fill,
+  moveText,
   popGraphicsState,
   pushGraphicsState,
+  rectangle,
+  setFillingCmykColor,
+  setFillingGrayscaleColor,
+  setFillingRgbColor,
+  setFontAndSize,
+  setLineWidth,
+  setStrokingCmykColor,
+  setStrokingGrayscaleColor,
+  setStrokingRgbColor,
+  stroke,
+  type PDFForm,
+  type PDFOperator,
 } from "@cantoo/pdf-lib";
 import { pdfOut, saveDoc, stem, type OutFile, type PDFDocument } from "./core";
-import { FontSet } from "./fonts";
+import { FontSet, splitRuns } from "./fonts";
 import { open, type Src } from "./pages";
+import { showOps } from "./textops";
 
 export type FieldInfo = {
   name: string;
@@ -112,9 +136,12 @@ export async function fillForm(src: Src, values: Record<string, string>, opts: {
       /* incompatible value: skip */
     }
   }
-  // Standard fonts only cover WinAnsi; switch to an embedded Unicode font when needed (₹, Hindi…).
-  if (Object.values(values).some((v) => !isWinAnsi(v))) form.updateFieldAppearances(await fonts.font("sans/r"));
-  else form.updateFieldAppearances();
+  // Standard fonts only cover WinAnsi; switch to an embedded Unicode font when needed (₹, Hindi…),
+  // and draw text that needs more than one font (Hindi with English) run by run.
+  if (Object.values(values).some((v) => !isWinAnsi(v))) {
+    form.updateFieldAppearances(await fonts.font("sans/r"));
+    await drawUnicodeFields(doc, form, fonts);
+  } else form.updateFieldAppearances();
   if (opts.flatten) form.flatten({ updateFieldAppearances: false });
   return pdfOut(`${stem(src.name)}-filled.pdf`, await saveDoc(doc), `${filled} field${filled === 1 ? "" : "s"} filled${opts.flatten ? " · flattened" : ""}`);
 }
@@ -133,7 +160,11 @@ export async function flattenPdf(src: Src, opts: { forms?: boolean; annotations?
       fields = form.getFields().length;
       if (fields) {
         const needsUnicode = form.getFields().some((f) => f instanceof PDFTextField && !isWinAnsi(f.getText() ?? ""));
-        if (needsUnicode) form.updateFieldAppearances(await new FontSet(doc).font("sans/r"));
+        if (needsUnicode) {
+          const fonts = new FontSet(doc);
+          form.updateFieldAppearances(await fonts.font("sans/r"));
+          await drawUnicodeFields(doc, form, fonts);
+        }
         form.flatten({ updateFieldAppearances: !needsUnicode });
       }
     } catch {
@@ -143,6 +174,98 @@ export async function flattenPdf(src: Src, opts: { forms?: boolean; annotations?
   }
   const annots = opts.annotations !== false ? flattenAnnotations(doc, opts.keepLinks !== false) : 0;
   return pdfOut(`${stem(src.name)}-flattened.pdf`, await saveDoc(doc), `${fields} field${fields === 1 ? "" : "s"}, ${annots} annotation${annots === 1 ? "" : "s"} flattened`);
+}
+
+/** A colour from a widget's /MK entry (gray, RGB or CMYK components), as fill or stroke operators. */
+function colourOps(c: number[] | undefined, stroking: boolean): PDFOperator[] | null {
+  if (!c?.length) return null;
+  if (c.length === 1) return [stroking ? setStrokingGrayscaleColor(c[0]) : setFillingGrayscaleColor(c[0])];
+  if (c.length === 3) return [stroking ? setStrokingRgbColor(c[0], c[1], c[2]) : setFillingRgbColor(c[0], c[1], c[2])];
+  if (c.length === 4) return [stroking ? setStrokingCmykColor(c[0], c[1], c[2], c[3]) : setFillingCmykColor(c[0], c[1], c[2], c[3])];
+  return null;
+}
+
+/** Text colour from a default appearance string ("/Helv 11 Tf 0 g", "... 0.2 0.3 0.4 rg"). */
+function daColour(da: string): PDFOperator {
+  const rgb = /(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+rg\b/.exec(da);
+  if (rgb) return setFillingRgbColor(+rgb[1], +rgb[2], +rgb[3]);
+  const k = /(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+k\b/.exec(da);
+  if (k) return setFillingCmykColor(+k[1], +k[2], +k[3], +k[4]);
+  const g = /(-?[\d.]+)\s+g\b/.exec(da);
+  return setFillingGrayscaleColor(g ? +g[1] : 0);
+}
+
+/**
+ * Appearances for text fields holding characters beyond WinAnsi. pdf-lib draws a field in one
+ * font, and no single font has both Hindi and English letters, so these are drawn here run by
+ * run, each in a font that has its letters (with ActualText, so the words copy correctly), at
+ * the field's size, colour and alignment, over its background and border. Combed and turned
+ * fields keep pdf-lib's appearance.
+ */
+async function drawUnicodeFields(doc: PDFDocument, form: PDFForm, fonts: FontSet) {
+  const ASC = 1.069;
+  const DESC = 0.293;
+  const daObj = form.acroForm.dict.lookup(PDFName.of("DA"));
+  const formDa = daObj instanceof PDFString || daObj instanceof PDFHexString ? daObj.decodeText() : undefined;
+  for (const f of form.getFields()) {
+    if (!(f instanceof PDFTextField) || f.isCombed()) continue;
+    const text = f.getText() ?? "";
+    if (!text || isWinAnsi(text)) continue;
+    const runs = await splitRuns(text);
+    for (const w of f.acroField.getWidgets()) {
+      const mk = w.getAppearanceCharacteristics();
+      if ((mk?.getRotation() ?? 0) % 360) continue;
+      const { width, height } = w.getRectangle();
+      if (width <= 0 || height <= 0) continue;
+      const da = w.getDefaultAppearance() ?? f.acroField.getDefaultAppearance() ?? formDa ?? "/Helv 0 Tf 0 g";
+      const bw = mk?.getBorderColor()?.length ? (w.getBorderStyle()?.getWidth() ?? 1) : 0;
+      const pad = bw + 2;
+      const inner = width - pad * 2;
+      const natural = await fonts.width(text.replace(/\s*\n\s*/g, " "), 1);
+      const daSize = Number(/(-?[\d.]+)\s+Tf\b/.exec(da)?.[1] ?? 0);
+      const multiline = f.isMultiline();
+      // Automatic size (0): fit the height, then the width (one line), as viewers do.
+      let size = daSize > 0 ? daSize : multiline ? 12 : Math.min(12, (height - pad * 2) / (ASC + DESC));
+      if (daSize <= 0 && !multiline && natural > 0) size = Math.min(size, inner / natural);
+      size = Math.max(4, size);
+      const lines = multiline ? await fonts.wrap(text, size, inner) : [text.replace(/\s*\n\s*/g, " ")];
+      const ops: PDFOperator[] = [beginMarkedContent("Tx"), pushGraphicsState()];
+      const bg = colourOps(mk?.getBackgroundColor(), false);
+      if (bg) ops.push(...bg, rectangle(0, 0, width, height), fill());
+      const bc = colourOps(mk?.getBorderColor(), true);
+      if (bc && bw > 0) ops.push(...bc, setLineWidth(bw), rectangle(bw / 2, bw / 2, width - bw, height - bw), stroke());
+      ops.push(rectangle(bw, bw, width - bw * 2, height - bw * 2), clip(), endPath(), beginText(), daColour(da));
+      const names = new Map<string, string>();
+      const resources: Record<string, PDFRef> = {};
+      const lineHeight = size * 1.2;
+      let y = multiline ? height - pad - ASC * size : (height - (ASC + DESC) * size) / 2 + DESC * size;
+      let lastX = 0;
+      let lastY = 0;
+      for (const line of lines) {
+        const lineRuns = line === text ? runs : await splitRuns(line);
+        const lw = (await fonts.width(line, 1)) * size;
+        const align = f.getAlignment();
+        const x = align === TextAlignment.Center ? (width - lw) / 2 : align === TextAlignment.Right ? width - pad - lw : pad;
+        ops.push(moveText(x - lastX, y - lastY));
+        lastX = x;
+        lastY = y;
+        for (const r of lineRuns) {
+          const font = await fonts.font(r.key);
+          let name = names.get(r.key);
+          if (!name) {
+            name = `F${names.size}`;
+            names.set(r.key, name);
+            resources[name] = font.ref;
+          }
+          ops.push(setFontAndSize(name, size), ...showOps(font, r.text));
+        }
+        y -= lineHeight;
+      }
+      ops.push(endText(), popGraphicsState(), endMarkedContent());
+      const stream = doc.context.formXObject(ops, { BBox: [0, 0, width, height], Resources: { Font: doc.context.obj(resources) } });
+      w.setNormalAppearance(doc.context.register(stream));
+    }
+  }
 }
 
 function flattenAnnotations(doc: PDFDocument, keepLinks: boolean): number {

@@ -1,9 +1,11 @@
 /** Pixel work: page renders, images → PDF, colour transforms. */
+import { PDFArray, PDFDict, PDFName, PDFRef } from "@cantoo/pdf-lib";
+import { encodeGrayJpeg } from "../jpeggray";
 import {
   MM,
-  appendPages,
   canvasToBytes,
   degrees,
+  dropUnreferenced,
   embedImage,
   imageToCanvas,
   newDoc,
@@ -17,9 +19,10 @@ import {
   type PDFDocument,
   type ProgressFn,
 } from "./core";
-import { pageFrame } from "./geometry";
+import { FontSet } from "./fonts";
+import { pageFrame, place } from "./geometry";
 import { open, withZip, type Src } from "./pages";
-import { renderPage, withPdfjs } from "./pdfjs";
+import { pageText, renderPage, withPdfjs, type PageText } from "./pdfjs";
 
 export async function pdfToImages(
   src: Src,
@@ -276,44 +279,88 @@ export const grayPixels: PixelFn = (d) => {
 
 const clamp = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
 
-/** Rebuild pages as processed images (used by invert / grayscale). */
+/**
+ * The page's words as an invisible layer over a picture of the page, where they were, so a page
+ * redrawn as an image can still be searched, selected and copied.
+ */
+export async function addInvisibleText(page: ReturnType<PDFDocument["addPage"]>, fonts: FontSet, text: PageText) {
+  const f = pageFrame(page);
+  // (A scan's own invisible layer, from OCR, carries over the same way.)
+  for (const it of text.items) {
+    if (!it.str.trim()) continue;
+    const p = place(f, it.ox, f.height - it.oy, -(Math.atan2(it.ay, it.ax) * 180) / Math.PI);
+    await fonts.drawInvisible(page, it.str, { x: p.x, y: p.y, size: it.fontSize, width: it.w, rotate: p.rotate });
+  }
+}
+
+/**
+ * Replaces a page's content, in place, with a picture of it (`canvas`, the page as seen) and its
+ * words as invisible text, so links, bookmarks and the page's size and turn stay as they were.
+ * Annotations the picture already shows are taken off; links stay. `gray`: the picture is grey
+ * (stored as a one-channel JPEG).
+ */
+export async function redrawPage(doc: PDFDocument, index: number, canvas: HTMLCanvasElement, text: PageText | null, fonts: FontSet, o: { gray?: boolean; quality?: number } = {}) {
+  const ctx = doc.context;
+  const page = doc.getPage(index);
+  const f = pageFrame(page);
+  page.node.set(PDFName.of("Contents"), ctx.obj([]));
+  page.node.set(PDFName.of("Resources"), ctx.obj({}));
+  page.node.delete(PDFName.of("Group"));
+  let bytes: Uint8Array;
+  if (o.gray) {
+    const d = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+    const grey = new Uint8Array(canvas.width * canvas.height);
+    for (let i = 0; i < grey.length; i++) grey[i] = d[i * 4];
+    bytes = encodeGrayJpeg(grey, canvas.width, canvas.height, Math.round((o.quality ?? 0.88) * 100));
+  } else bytes = await canvasToBytes(canvas, "image/jpeg", o.quality ?? 0.9);
+  const img = await doc.embedJpg(bytes);
+  const at = place(f, 0, 0);
+  page.drawImage(img, { x: at.x, y: at.y, width: f.width, height: f.height, rotate: degrees(at.rotate) });
+  if (text) await addInvisibleText(page, fonts, text);
+  const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+  if (annots) {
+    const links = annots.asArray().filter((r) => {
+      const a = r instanceof PDFRef ? ctx.lookup(r) : r;
+      return a instanceof PDFDict && a.lookupMaybe(PDFName.of("Subtype"), PDFName)?.asString() === "/Link";
+    });
+    page.node.set(PDFName.of("Annots"), ctx.obj(links));
+  }
+}
+
+/**
+ * Pages redrawn as processed pictures (dark mode), in place: their words stay searchable as
+ * invisible text, and links, bookmarks and pages left out of the selection stay as they were.
+ */
 export async function transformPages(src: Src, fn: PixelFn, suffix: string, o: { dpi?: number; pages?: string } = {}, onProgress?: ProgressFn): Promise<OutFile> {
   const doc = await open(src);
-  const out = await newDoc();
+  const fonts = new FontSet(doc);
   const n = doc.getPageCount();
-  const selected = new Set(parsePageList(o.pages || "all", n));
+  const selected = parsePageList(o.pages || "all", n);
   await withPdfjs(
     src.bytes,
     async ({ pdf }) => {
-      for (let i = 0; i < n; i++) {
-        if (!selected.has(i)) {
-          await appendPages(out, doc, [i]);
-          continue;
-        }
-        onProgress?.(i / n, `Processing page ${i + 1} of ${n}`);
-        const f = pageFrame(doc.getPage(i));
+      for (let k = 0; k < selected.length; k++) {
+        const i = selected[k];
+        onProgress?.(k / selected.length, `Processing page ${i + 1} of ${n}`);
         const page = await pdf.getPage(i + 1);
         const canvas = await renderPage(page, (o.dpi ?? 150) / 72, { readback: true });
+        const text = await pageText(page).catch(() => null);
         page.cleanup();
         const ctx = canvas.getContext("2d")!;
         const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
         fn(img.data);
         ctx.putImageData(img, 0, 0);
-        const jpg = await out.embedJpg(await canvasToBytes(canvas, "image/jpeg", 0.88));
-        const np = out.addPage([f.width, f.height]);
-        np.drawImage(jpg, { x: 0, y: 0, width: f.width, height: f.height });
+        await redrawPage(doc, i, canvas, text, fonts, { quality: 0.88 });
+        canvas.width = canvas.height = 0;
         await tick();
       }
     },
     src.password,
   );
-  return pdfOut(`${stem(src.name)}-${suffix}.pdf`, await saveDoc(out));
+  await dropUnreferenced(doc);
+  return pdfOut(`${stem(src.name)}-${suffix}.pdf`, await saveDoc(doc));
 }
 
-/** Grayscale that keeps text as text when possible: rasterises only if asked. */
-export async function grayscalePdf(src: Src, onProgress?: ProgressFn): Promise<OutFile> {
-  return transformPages(src, grayPixels, "grayscale", { dpi: 200 }, onProgress);
-}
 
 export async function imageFileToCanvas(bytes: Uint8Array, mime: string) {
   return imageToCanvas(bytes, mime);

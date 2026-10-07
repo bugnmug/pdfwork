@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colours</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  body { font-family: "Liberation Sans", Arial, sans-serif; color: #1f2937; }
+  h1 { color: #b91c1c; margin: 0 0 12px; }
+  .bar { height: 70px; border-radius: 12px; background: linear-gradient(90deg, #e11d48, #2563eb 50%, #16a34a); }
+  .dot { width: 110px; height: 110px; border-radius: 55px; background: radial-gradient(circle, #facc15, #7c3aed); display: inline-block; margin: 18px 18px 0 0; vertical-align: middle; }
+  .card { display: inline-block; vertical-align: middle; padding: 12px 16px; border: 3px solid #0ea5e9; background: #fef3c7; color: #92400e; border-radius: 8px; }
+  p { color: #047857; }
+  a { color: #1d4ed8; }
+</style>
+</head>
+<body>
+  <h1>Quarterly colours</h1>
+  <div class="bar"></div>
+  <div class="dot"></div>
+  <svg width="180" height="110" style="vertical-align: middle"><defs><pattern id="p" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="10" height="10" fill="#0ea5e9"/><circle cx="15" cy="15" r="4" fill="#f97316"/></pattern></defs><rect width="180" height="110" fill="url(#p)"/></svg>
+  <div class="card">Amber card</div>
+  <p>Green paragraph with <a href="https://example.com/colours">a link to the colour guide</a>.</p>
+  <img alt="swatch" width="160" height="80" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxNjAnIGhlaWdodD0nODAnPjxyZWN0IHdpZHRoPSc4MCcgaGVpZ2h0PSc4MCcgZmlsbD0nI2RjMjYyNicvPjxyZWN0IHg9JzgwJyB3aWR0aD0nODAnIGhlaWdodD0nODAnIGZpbGw9JyMxNmEzNGEnLz48L3N2Zz4=">
+  <canvas id="c" width="160" height="80"></canvas>
+  <script>
+    // A raster picture: a canvas painted with colour stripes (printed as an image).
+    const g = document.getElementById("c").getContext("2d");
+    ["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6"].forEach((c, i) => { g.fillStyle = c; g.fillRect(i * 32, 0, 32, 80); });
+  </script>
+</body>
+</html>

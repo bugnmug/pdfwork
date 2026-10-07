@@ -1,7 +1,8 @@
 /** Passwords, permissions, metadata scrubbing, hashes. */
-import { PDFDict, PDFName, PDFArray, PDFRef } from "@cantoo/pdf-lib";
+import { PDFDict, PDFHexString, PDFName, PDFArray, PDFRef } from "@cantoo/pdf-lib";
 import { BRAND } from "@/lib/brand";
 import { appendPages, loadPdf, newDoc, pdfOut, saveDoc, stem, PasswordError, type OutFile, type PDFDocument } from "./core";
+import { streamBytes } from "./contentstream";
 import { open, type Src } from "./pages";
 
 export type EncryptOpts = {
@@ -143,16 +144,6 @@ export async function sanitizePdf(src: Src, o: SanitizeOpts): Promise<OutFile> {
   }
   const bytes = await saveDoc(doc);
   return pdfOut(`${stem(src.name)}-clean.pdf`, bytes, `Removed: ${removed.join(", ")}`);
-}
-
-export async function toPdfA(src: Src, level: "1B" | "2B" | "3B" = "2B"): Promise<OutFile> {
-  const doc = await open(src);
-  try {
-    (doc as unknown as { convertToPDFA(o: { conformance: string }): void }).convertToPDFA({ conformance: level });
-  } catch (e) {
-    throw new Error(`PDF/A conversion failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
-  return pdfOut(`${stem(src.name)}-pdfa.pdf`, await saveDoc(doc, { objectStreams: level !== "1B" }), `PDF/A-${level} metadata and colour profile added`);
 }
 
 export type Fingerprint = {
@@ -345,13 +336,72 @@ export async function readMetadata(src: Src) {
 
 export async function setMetadata(src: Src, m: { title?: string; author?: string; subject?: string; keywords?: string; creator?: string }): Promise<OutFile> {
   const doc = await open(src);
+  const now = new Date();
   doc.setTitle(m.title ?? "", { showInWindowTitleBar: !!m.title });
   doc.setAuthor(m.author ?? "");
   doc.setSubject(m.subject ?? "");
-  doc.setKeywords((m.keywords ?? "").split(/[,;]+/).map((s) => s.trim()).filter(Boolean));
+  // Keywords as the person typed them, comma-separated (pdf-lib would join them with spaces,
+  // running multi-word keywords together).
+  const words = (m.keywords ?? "").split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+  doc.setKeywords(words);
+  (doc as unknown as { getInfoDict(): PDFDict }).getInfoDict().set(PDFName.of("Keywords"), PDFHexString.fromText(words.join(", ")));
   if (m.creator !== undefined) doc.setCreator(m.creator);
-  doc.setModificationDate(new Date());
+  doc.setModificationDate(now);
+  rewriteXmp(doc, now);
   return pdfOut(`${stem(src.name)}.pdf`, await saveDoc(doc), "Properties updated");
+}
+
+const xmlText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/**
+ * Many readers show a file's properties from its XMP metadata rather than the older Info
+ * dictionary, and PDF/A requires the two to agree. So when the file carries XMP, it is written
+ * again with the same values (keeping a PDF/A or PDF/UA identification it had).
+ */
+function rewriteXmp(doc: PDFDocument, now: Date) {
+  const ctx = doc.context;
+  const ref = doc.catalog.get(PDFName.of("Metadata"));
+  const old = ref instanceof PDFRef ? ctx.lookup(ref) : undefined;
+  if (!old) return;
+  let before = "";
+  try {
+    before = new TextDecoder().decode(streamBytes(ctx, old));
+  } catch {
+    /* unreadable: written fresh */
+  }
+  const keep = (re: RegExp) => re.exec(before)?.[1];
+  const part = keep(/pdfaid:part(?:="|>)\s*(\d)/);
+  const conformance = keep(/pdfaid:conformance(?:="|>)\s*([A-Za-z])/);
+  const ua = keep(/pdfuaid:part(?:="|>)\s*(\d)/);
+  const iso = (d?: Date) => (d ? d.toISOString().replace(/\.\d{3}Z$/, "Z") : undefined);
+  const title = doc.getTitle();
+  const author = doc.getAuthor();
+  const subject = doc.getSubject();
+  const keywords = doc.getKeywords();
+  const creator = doc.getCreator();
+  const producer = doc.getProducer();
+  const created = iso(doc.getCreationDate());
+  const alt = (v: string) => `<rdf:Alt><rdf:li xml:lang="x-default">${xmlText(v)}</rdf:li></rdf:Alt>`;
+  const xml = [
+    `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>`,
+    `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`,
+    `<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/"${part ? ` xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"` : ""}${ua ? ` xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/"` : ""}>`,
+    `<dc:format>application/pdf</dc:format>`,
+    title ? `<dc:title>${alt(title)}</dc:title>` : "",
+    author ? `<dc:creator><rdf:Seq><rdf:li>${xmlText(author)}</rdf:li></rdf:Seq></dc:creator>` : "",
+    subject ? `<dc:description>${alt(subject)}</dc:description>` : "",
+    keywords ? `<pdf:Keywords>${xmlText(keywords)}</pdf:Keywords>` : "",
+    producer ? `<pdf:Producer>${xmlText(producer)}</pdf:Producer>` : "",
+    creator ? `<xmp:CreatorTool>${xmlText(creator)}</xmp:CreatorTool>` : "",
+    created ? `<xmp:CreateDate>${created}</xmp:CreateDate>` : "",
+    `<xmp:ModifyDate>${iso(now)}</xmp:ModifyDate><xmp:MetadataDate>${iso(now)}</xmp:MetadataDate>`,
+    part ? `<pdfaid:part>${part}</pdfaid:part>${conformance ? `<pdfaid:conformance>${conformance.toUpperCase()}</pdfaid:conformance>` : ""}` : "",
+    ua ? `<pdfuaid:part>${ua}</pdfuaid:part>` : "",
+    `</rdf:Description></rdf:RDF></x:xmpmeta>`,
+    `<?xpacket end="w"?>`,
+  ].join("");
+  const bytes = new TextEncoder().encode(xml);
+  ctx.assign(ref as PDFRef, ctx.stream(bytes, { Type: "Metadata", Subtype: "XML", Length: bytes.length }));
 }
 
 export type HiddenItem = { label: string; detail: string; risk: "high" | "medium" | "low"; fix: "sanitize" | "flatten" | null };

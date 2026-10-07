@@ -84,7 +84,7 @@ for (const c of CASES) {
   let res;
   try {
     res = await page.evaluate(
-      async ({ slug, files, options, passwords, extra, runPath, catPath, hidden }) => {
+      async ({ slug, files, options, passwords, extra, runPath, catPath, hidden, edit }) => {
         const run = await import(runPath);
         const cat = await import(catPath);
         const toFile = (f) => {
@@ -111,6 +111,23 @@ for (const c of CASES) {
           };
         }
         try {
+          // Edit text, as the editor does it: find the line, retype it (empty: delete it), save.
+          if (edit) {
+            const { withPdfjs } = await import("/src/lib/pdf/pdfjs.ts");
+            const { editableLines } = await import("/src/lib/pdf/editlines.ts");
+            const { applyEdits, retypeLine } = await import("/src/lib/pdf/edit.ts");
+            const file = toFile(files[0]);
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            let lines = [];
+            await withPdfjs(bytes.slice(), async ({ pdf }) => {
+              lines = await editableLines(await pdf.getPage(edit.page));
+            });
+            const line = lines.find((l) => l.text.includes(edit.needle));
+            if (!line) return { ok: false, error: `no line with "${edit.needle}"` };
+            const objs = retypeLine(line, edit.page - 1, { coverId: "c", textId: "t", bg: "#ffffff", fg: "#111111", text: line.text.replace(edit.needle, edit.text) });
+            const o = await applyEdits({ bytes, name: file.name }, objs);
+            return { ok: true, out: [{ filename: o.filename, mime: o.mime, note: JSON.stringify({ box: [line.x, line.y, line.w, line.h], text: line.text, face: line.face }), b64: b64(o.bytes) }] };
+          }
           const tool = cat.TOOL_BY_SLUG[slug];
           if (!tool) return { ok: false, error: "no such tool: " + slug };
           const opts = { ...(cat.defaultsOf ? cat.defaultsOf(tool.options) : {}), ...options };
@@ -124,7 +141,7 @@ for (const c of CASES) {
           restore();
         }
       },
-      { slug: c.slug, files, options: c.options || {}, passwords: c.passwords || {}, extra: extraFiles(c), runPath: "/src/lib/pdf/run.ts", catPath: "/src/lib/tools/catalog.ts", hidden: !!c.hidden },
+      { slug: c.slug, files, options: c.options || {}, passwords: c.passwords || {}, extra: extraFiles(c), runPath: "/src/lib/pdf/run.ts", catPath: "/src/lib/tools/catalog.ts", hidden: !!c.hidden, edit: c.edit ?? null },
     );
   } catch (e) {
     res = { ok: false, error: "evaluate crashed: " + String(e).slice(0, 300) };
@@ -141,7 +158,12 @@ for (const c of CASES) {
     }
   }
   let verdict = { pass: res.ok, notes: res.ok ? [] : [res.error] };
-  if (c.expectError) verdict = res.ok ? { pass: false, notes: ["✗ should have refused"] } : { pass: true, notes: ["refused: " + res.error] };
+  if (c.expectError)
+    verdict = res.ok
+      ? { pass: false, notes: ["✗ should have refused"] }
+      : c.expectError instanceof RegExp && !c.expectError.test(res.error)
+        ? { pass: false, notes: ["✗ refused for another reason: " + res.error] }
+        : { pass: true, notes: ["refused: " + res.error] };
   else if (res.ok && c.check) {
     try {
       const helpers = { sh, pdfText, pdfPages, officeText, FX, readFileSync, existsSync, join };

@@ -60,6 +60,9 @@ export function ContinueWith({ file, current }: { file: OutFile; current?: strin
   );
 }
 
+/** Notes too long for the line under a file name: shown below it instead. */
+const longNote = (note: string) => note.length > 48;
+
 export function ResultList({
   results,
   tool,
@@ -132,28 +135,32 @@ export function ResultList({
 
       <ul className="grid gap-2">
         {(showAll ? files : files.slice(0, 6)).map((f, i) => (
-          <li key={`${f.filename}-${i}`} className="flex items-center gap-3 rounded-md border border-line-2 bg-paper-2/60 p-2.5">
-            <KindIcon f={f} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-ink" title={f.filename}>
-                {f.filename}
-              </p>
-              <p className="truncate text-xs text-ink-3">
-                <span className="tabular">{formatBytes(f.bytes.byteLength)}</span>
-                {f.note ? ` · ${f.note}` : ""}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-0.5">
-              {canPreview(f) ? (
-                <Button variant="ghost" size="iconSm" onClick={() => setPreview(f)} aria-label={`Preview ${f.filename}`} title="Preview">
-                  <Eye />
+          <li key={`${f.filename}-${i}`} className="rounded-md border border-line-2 bg-paper-2/60 p-2.5">
+            <div className="flex items-center gap-3">
+              <KindIcon f={f} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-ink" title={f.filename}>
+                  {f.filename}
+                </p>
+                <p className="truncate text-xs text-ink-3" title={f.note}>
+                  <span className="tabular">{formatBytes(f.bytes.byteLength)}</span>
+                  {f.note && !longNote(f.note) ? ` · ${f.note}` : ""}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-0.5">
+                {canPreview(f) ? (
+                  <Button variant="ghost" size="iconSm" onClick={() => setPreview(f)} aria-label={`Preview ${f.filename}`} title="Preview">
+                    <Eye />
+                  </Button>
+                ) : null}
+                <Button variant="ghost" size="iconSm" onClick={() => downloadOut(f)} aria-label={`Download ${f.filename}`} title="Download">
+                  <Download />
                 </Button>
-              ) : null}
-              <Button variant="ghost" size="iconSm" onClick={() => downloadOut(f)} aria-label={`Download ${f.filename}`} title="Download">
-                <Download />
-              </Button>
-              {files.length === 1 ? <ContinueWith file={f} current={tool} /> : null}
+                {files.length === 1 ? <ContinueWith file={f} current={tool} /> : null}
+              </div>
             </div>
+            {/* A note longer than the line (Repair's account of what it fixed) gets the card's full width. */}
+            {f.note && longNote(f.note) ? <p className="mt-2 text-xs leading-relaxed text-ink-2 [overflow-wrap:anywhere]">{f.note}</p> : null}
           </li>
         ))}
       </ul>

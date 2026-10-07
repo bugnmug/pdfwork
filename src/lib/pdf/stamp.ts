@@ -1,5 +1,5 @@
 /** Things drawn on top of existing pages: watermarks, numbers, headers, image stamps. */
-import { PDFArray, PDFName } from "@cantoo/pdf-lib";
+import { PDFArray, PDFName, PDFOperator, PDFOperatorNames } from "@cantoo/pdf-lib";
 import {
   MM,
   degrees,
@@ -27,6 +27,20 @@ function sendLastStreamToBack(page: PDFPage) {
     contents.insert(0, last);
   }
 }
+
+/**
+ * Marks what `draw` puts on the page as page furniture (an artifact): screen readers and
+ * tagged-PDF tools skip it, as PDF/UA asks for watermarks, page numbers and running heads.
+ */
+async function asArtifact(page: PDFPage, subtype: "Watermark" | "Header" | "Footer", draw: () => Promise<void> | void) {
+  page.pushOperators(PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [PDFName.of("Artifact"), `<</Type /Pagination /Subtype /${subtype}>>`]));
+  try {
+    await draw();
+  } finally {
+    page.pushOperators(PDFOperator.of(PDFOperatorNames.EndMarkedContent));
+  }
+}
+const furniture = (anchor: string) => (anchor.startsWith("top") ? "Header" : "Footer");
 
 function targets(doc: PDFDocument, spec?: string, skipFirst = 0): number[] {
   return parsePageList(spec || "all", doc.getPageCount()).filter((i) => i >= skipFirst);
@@ -82,6 +96,13 @@ export async function watermark(src: Src, o: WatermarkOpts): Promise<OutFile> {
   const img = o.kind === "image" && o.image ? await embedImage(doc, o.image.bytes, o.image.mime) : null;
   if (o.kind === "image" && !img) throw new Error("Choose an image for the watermark.");
   const text = (o.text ?? "").trim() || "CONFIDENTIAL";
+  const style = { family: o.family, bold: o.bold ?? true };
+  const w1 = img ? 0 : await fonts.width(text, 1, style);
+  // The box a w × h rectangle covers once turned by the angle.
+  const rad = (angle * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
+  const turned = (w: number, h: number) => ({ w: w * cos + h * sin, h: w * sin + h * cos });
   for (const i of targets(doc, o.pages)) {
     const page = doc.getPage(i);
     const f = pageFrame(page);
@@ -89,39 +110,45 @@ export async function watermark(src: Src, o: WatermarkOpts): Promise<OutFile> {
     let size = o.size ?? 0;
     let iw = 0;
     let ih = 0;
+    const stepU = f.width / 2.2;
+    const stepV = f.height / 4;
     if (img) {
       iw = f.width * Math.min(1, Math.max(0.05, o.scale ?? 0.4));
       ih = (iw * img.height) / img.width;
     } else if (!size) {
-      // Auto size: diagonal text spans ~70% of the page diagonal.
-      const w1 = await fonts.width(text, 1, { family: o.family, bold: o.bold ?? true });
-      const span = pos === "tile" ? Math.hypot(f.width, f.height) * 0.28 : Math.hypot(f.width, f.height) * 0.62;
-      size = Math.max(10, Math.min(160, span / Math.max(w1, 0.01)));
+      // Automatic size: across the middle, about 60% of the page's diagonal; tiled, a quarter
+      // of it; at an edge or corner, a band along it. Always small enough that the turned text
+      // stays on the page (and tiles don't run into each other).
+      const room = pos === "center" ? { w: f.width * 0.86, h: f.height * 0.86 } : pos === "tile" ? { w: stepU * 0.92, h: stepV * 0.92 } : { w: f.width * 0.6, h: f.height * 0.2 };
+      const span = pos === "center" ? Math.hypot(f.width, f.height) * 0.62 : pos === "tile" ? Math.hypot(f.width, f.height) * 0.28 : Infinity;
+      const one = turned(w1, 0.7);
+      size = Math.max(8, Math.min(160, span / Math.max(w1, 0.01), room.w / Math.max(one.w, 0.01), room.h / Math.max(one.h, 0.01)));
     }
     if (pos === "tile") {
-      const stepU = img ? iw * 1.6 : f.width / 2.2;
-      const stepV = img ? ih * 1.8 : f.height / 4;
-      for (let v = stepV / 2, row = 0; v < f.height + stepV; v += stepV, row++) {
-        for (let u = (row % 2 ? stepU / 2 : 0) + stepU / 4; u < f.width + stepU; u += stepU) centers.push([u, v]);
+      const su = img ? iw * 1.6 : stepU;
+      const sv = img ? ih * 1.8 : stepV;
+      for (let v = sv / 2, row = 0; v < f.height + sv; v += sv, row++) {
+        for (let u = (row % 2 ? su / 2 : 0) + su / 4; u < f.width + su; u += su) centers.push([u, v]);
       }
     } else if (pos === "center") centers.push([f.width / 2, f.height / 2]);
     else {
-      const bw = img ? iw : await fonts.width(text, size, { family: o.family, bold: o.bold ?? true });
-      const bh = img ? ih : size;
-      const a = anchorPoint(f, pos, bw, bh, 24);
-      centers.push([a.u + bw / 2, a.v + bh / 2]);
+      // At an edge or corner: the turned box sits inside the margin.
+      const box = turned(img ? iw : w1 * size, img ? ih : size * 0.7);
+      const a = anchorPoint(f, pos, box.w, box.h, 24);
+      centers.push([a.u + box.w / 2, a.v + box.h / 2]);
     }
-    for (const [cu, cv] of centers) {
-      if (img) {
-        const a = (angle * Math.PI) / 180;
-        const u = cu - (iw / 2) * Math.cos(a) + (ih / 2) * Math.sin(a);
-        const v = cv - (iw / 2) * Math.sin(a) - (ih / 2) * Math.cos(a);
-        const p = place(f, u, v, angle);
-        page.drawImage(img, { x: p.x, y: p.y, width: iw, height: ih, opacity, rotate: degreesOf(p.rotate) });
-      } else {
-        await drawCentered(fonts, page, f, text, cu, cv, { size, family: o.family, bold: o.bold ?? true, italic: o.italic, color, opacity, angle });
+    await asArtifact(page, "Watermark", async () => {
+      for (const [cu, cv] of centers) {
+        if (img) {
+          const u = cu - (iw / 2) * Math.cos(rad) + (ih / 2) * Math.sin(rad);
+          const v = cv - (iw / 2) * Math.sin(rad) - (ih / 2) * Math.cos(rad);
+          const p = place(f, u, v, angle);
+          page.drawImage(img, { x: p.x, y: p.y, width: iw, height: ih, opacity, rotate: degreesOf(p.rotate) });
+        } else {
+          await drawCentered(fonts, page, f, text, cu, cv, { size, family: o.family, bold: o.bold ?? true, italic: o.italic, color, opacity, angle });
+        }
       }
-    }
+    });
     if (o.behind) sendLastStreamToBack(page);
   }
   return pdfOut(`${stem(src.name)}-watermarked.pdf`, await saveDoc(doc));
@@ -149,12 +176,12 @@ export type NumberOpts = {
   position?: Anchor;
   start?: number;
   skipFirst?: number;
-  /** Count skipped pages in the total (e.g. "Page 3 of 10" when the cover is page 1). */
   size?: number;
   color?: string;
   family?: Family;
   margin?: number; // mm
-  mirror?: boolean; // facing pages: swap left/right on even pages
+  /** Facing pages: left and right swap on even pages (counted in the file, so a skipped cover still counts). */
+  mirror?: boolean;
   pages?: string;
 };
 
@@ -178,16 +205,18 @@ export async function addPageNumbers(src: Src, o: NumberOpts): Promise<OutFile> 
       .replaceAll("{page}", String(num))
       .replaceAll("{pages}", String(total + start - 1));
     let anchor = o.position ?? "bottom";
-    if (o.mirror && k % 2 === 1) anchor = anchor.replace("left", "§").replace("right", "left").replace("§", "right") as Anchor;
+    if (o.mirror && pages[k] % 2 === 1) anchor = anchor.replace("left", "§").replace("right", "left").replace("§", "right") as Anchor;
     const w = await fonts.width(label, size, { family: o.family });
     const a = anchorPoint(f, anchor, w, size * 0.72, margin);
     const p = place(f, a.u, a.v);
-    await fonts.draw(page, label, { x: p.x, y: p.y, size, style: { family: o.family }, color, rotate: p.rotate });
+    await asArtifact(page, furniture(anchor), () => fonts.draw(page, label, { x: p.x, y: p.y, size, style: { family: o.family }, color, rotate: p.rotate }).then(() => {}));
   }
   return pdfOut(`${stem(src.name)}-numbered.pdf`, await saveDoc(doc), `${total} pages numbered`);
 }
 
 export type BatesOpts = { prefix?: string; suffix?: string; start?: number; digits?: number; position?: Anchor; size?: number; color?: string; margin?: number };
+
+const batesLabel = (n: number, o: BatesOpts) => `${o.prefix ?? ""}${String(n).padStart(o.digits ?? 7, "0")}${o.suffix ?? ""}`;
 
 /** Bates-number one or more files with a running counter across all of them. */
 export async function batesNumber(srcs: Src[], o: BatesOpts): Promise<OutFile[]> {
@@ -199,19 +228,21 @@ export async function batesNumber(srcs: Src[], o: BatesOpts): Promise<OutFile[]>
     const first = counter;
     for (const page of doc.getPages()) {
       const f = pageFrame(page);
-      const label = `${o.prefix ?? ""}${String(counter).padStart(o.digits ?? 7, "0")}${o.suffix ?? ""}`;
+      const label = batesLabel(counter, o);
       const size = o.size ?? 10;
       const w = await fonts.width(label, size, { bold: true });
       const a = anchorPoint(f, o.position ?? "bottom-right", w, size * 0.72, (o.margin ?? 8) * MM);
       const p = place(f, a.u, a.v);
       // Drawn as a small label, like an exhibit sticker, so it reads on any background.
       const pad = size * 0.35;
-      page.drawRectangle({ ...place(f, a.u - pad, a.v - pad), width: w + pad * 2, height: size * 0.72 + pad * 2, color: hexToRgb("#ffffff"), borderColor: hexToRgb("#8a8f98"), borderWidth: 0.5, rotate: degrees(p.rotate) });
-      await fonts.draw(page, label, { x: p.x, y: p.y, size, style: { bold: true }, color: hexToRgb(o.color || "#000000"), rotate: p.rotate });
+      await asArtifact(page, furniture(o.position ?? "bottom-right"), async () => {
+        page.drawRectangle({ ...place(f, a.u - pad, a.v - pad), width: w + pad * 2, height: size * 0.72 + pad * 2, color: hexToRgb("#ffffff"), borderColor: hexToRgb("#8a8f98"), borderWidth: 0.5, rotate: degrees(p.rotate) });
+        await fonts.draw(page, label, { x: p.x, y: p.y, size, style: { bold: true }, color: hexToRgb(o.color || "#000000"), rotate: p.rotate });
+      });
       counter++;
     }
     const last = counter - 1;
-    out.push(pdfOut(`${stem(src.name)}-bates.pdf`, await saveDoc(doc), `${o.prefix ?? ""}${String(first).padStart(o.digits ?? 7, "0")} to ${o.prefix ?? ""}${String(last).padStart(o.digits ?? 7, "0")}`));
+    out.push(pdfOut(`${stem(src.name)}-bates.pdf`, await saveDoc(doc), `${batesLabel(first, o)} to ${batesLabel(last, o)}`));
   }
   return out;
 }
@@ -271,7 +302,7 @@ export async function headerFooter(src: Src, o: HeaderFooterOpts): Promise<OutFi
       const w = await fonts.width(fitted, size, { family: o.family });
       const a = anchorPoint(f, anchor, w, size * 0.72, margin);
       const p = place(f, a.u, a.v);
-      await fonts.draw(page, fitted, { x: p.x, y: p.y, size, style: { family: o.family }, color, rotate: p.rotate });
+      await asArtifact(page, furniture(anchor), () => fonts.draw(page, fitted, { x: p.x, y: p.y, size, style: { family: o.family }, color, rotate: p.rotate }).then(() => {}));
     }
   }
   return pdfOut(`${stem(src.name)}-header-footer.pdf`, await saveDoc(doc));

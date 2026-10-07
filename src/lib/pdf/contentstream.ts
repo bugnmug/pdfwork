@@ -109,6 +109,27 @@ export function tokenize(b: Uint8Array): Tok[] {
   return out;
 }
 
+/** The bytes with each edit's range replaced by its text (edits may come in any order; overlapping ones after the first are skipped). */
+export function spliced(bytes: Uint8Array, edits: { s: number; e: number; text: string }[]): Uint8Array {
+  edits.sort((x, y) => x.s - y.s);
+  const enc = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  let at = 0;
+  for (const e of edits) {
+    if (e.s < at) continue; // overlapping (a span closed over an edited string): keep the first
+    chunks.push(bytes.subarray(at, e.s), enc.encode(e.text));
+    at = e.e;
+  }
+  chunks.push(bytes.subarray(at));
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return out;
+}
+
 export function streamBytes(ctx: PDFContext, obj: unknown): Uint8Array {
   const s = obj instanceof PDFRef ? ctx.lookup(obj) : obj;
   if (s instanceof PDFRawStream) return decodePDFRawStream(s).decode();
@@ -137,8 +158,9 @@ export function pageContent(doc: PDFDocument, pageIndex: number): Uint8Array {
   return out;
 }
 
-type M = [number, number, number, number, number, number];
-const mul = (a: M, b: M): M => [
+export type M = [number, number, number, number, number, number];
+/** a then b (row vectors, as PDF writes matrices). */
+export const mul = (a: M, b: M): M => [
   a[0] * b[0] + a[1] * b[2],
   a[0] * b[1] + a[1] * b[3],
   a[2] * b[0] + a[3] * b[2],
@@ -147,7 +169,7 @@ const mul = (a: M, b: M): M => [
   a[4] * b[1] + a[5] * b[3] + b[5],
 ];
 
-function resourcesOf(node: PDFDict | undefined, ctx: PDFContext): PDFDict | undefined {
+export function resourcesOf(node: PDFDict | undefined, ctx: PDFContext): PDFDict | undefined {
   if (!node) return undefined;
   const r = node.get(PDFName.of("Resources"));
   const d = r instanceof PDFRef ? ctx.lookup(r) : r;
@@ -167,7 +189,7 @@ export type Rect4 = [number, number, number, number];
 /** One image drawn on a page: the image object, the matrix that maps its unit square onto the page, and the clip in force around it (page space). */
 export type ImageDraw = { page: number; ref: PDFRef; m: M; clip?: Rect4 };
 
-const apply = (m: M, x: number, y: number): [number, number] => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+export const apply = (m: M, x: number, y: number): [number, number] => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
 const grow = (r: Rect4 | undefined, [x, y]: [number, number]): Rect4 => (r ? [Math.min(r[0], x), Math.min(r[1], y), Math.max(r[2], x), Math.max(r[3], y)] : [x, y, x, y]);
 const meet = (a: Rect4 | undefined, b: Rect4): Rect4 => (a ? [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])] : b);
 const PAINT = new Set(["n", "f", "F", "f*", "S", "s", "B", "B*", "b", "b*"]);

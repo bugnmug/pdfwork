@@ -96,6 +96,11 @@ export async function ocrPdf(src: Src, o: OcrOpts = {}, onProgress?: ProgressFn)
   return pdfOut(`${stem(src.name)}-searchable.pdf`, await saveDoc(out), note);
 }
 
+/**
+ * The invisible text over a scanned page. Each word is set along its line's baseline (tilted with
+ * it when the scan is a little crooked) and stretched to reach the next word, with a space after
+ * it, so selecting follows the printed words and copied text keeps its spaces and line order.
+ */
 async function addTextLayer(page: ReturnType<Awaited<ReturnType<typeof newDoc>>["getPage"]>, fonts: FontSet, blocks: Block[], cw: number, ch: number) {
   const f = pageFrame(page);
   const sx = f.width / cw;
@@ -103,19 +108,25 @@ async function addTextLayer(page: ReturnType<Awaited<ReturnType<typeof newDoc>>[
   for (const b of blocks) {
     for (const para of b.paragraphs ?? []) {
       for (const line of para.lines ?? []) {
+        const words = (line.words ?? []).filter((w) => w.text?.trim());
+        if (!words.length) continue;
         const lh = (line.bbox.y1 - line.bbox.y0) * sy;
-        for (const w of line.words ?? []) {
-          const text = w.text?.trim();
-          if (!text) continue;
-          const width = (w.bbox.x1 - w.bbox.x0) * sx;
+        const bl = line.baseline && Math.abs(line.baseline.x1 - line.baseline.x0) > 1 ? line.baseline : null;
+        // Slope of the baseline in the scan (y down); kept to small tilts, as scans are.
+        const slope = bl ? Math.max(-0.2, Math.min(0.2, (bl.y1 - bl.y0) / (bl.x1 - bl.x0))) : 0;
+        const angle = Math.atan(slope);
+        for (let k = 0; k < words.length; k++) {
+          const w = words[k];
+          const next = words[k + 1];
+          const text = w.text.trim() + (next ? " " : "");
           const height = (w.bbox.y1 - w.bbox.y0) * sy;
           const size = Math.max(3, Math.min(lh, height * 1.15) * 0.85);
-          // Baseline: bottom of the word box, nudged up for descenders.
-          const u = w.bbox.x0 * sx;
-          const vTop = f.height - w.bbox.y0 * sy;
-          const v = vTop - height + height * 0.12;
-          const p = place(f, u, v);
-          await fonts.drawInvisible(page, text, { x: p.x, y: p.y, size, width, rotate: p.rotate });
+          // Baseline under the word's start: on the line's baseline, else the box's bottom
+          // nudged up for descenders.
+          const by = bl ? bl.y0 + (w.bbox.x0 - bl.x0) * slope : w.bbox.y1 - (w.bbox.y1 - w.bbox.y0) * 0.12;
+          const reach = ((next ? next.bbox.x0 : w.bbox.x1) - w.bbox.x0) / Math.cos(angle);
+          const p = place(f, w.bbox.x0 * sx, f.height - by * sy, (-angle * 180) / Math.PI);
+          await fonts.drawInvisible(page, text, { x: p.x, y: p.y, size, width: Math.max(1, reach * sx), rotate: p.rotate });
         }
       }
     }

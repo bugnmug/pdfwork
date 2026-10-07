@@ -6,7 +6,9 @@ import {
   PDFName,
   PDFNumber,
   PDFObjectCopier,
+  PDFRawStream,
   PDFRef,
+  PDFStream,
   PDFString,
   StandardFonts,
   degrees,
@@ -108,6 +110,29 @@ export async function newDoc(): Promise<PDFDocument> {
 export async function saveDoc(doc: PDFDocument, opts: { objectStreams?: boolean } = {}): Promise<Uint8Array> {
   const saved = await doc.save({ useObjectStreams: opts.objectStreams ?? true, updateFieldAppearances: false });
   return saved instanceof Uint8Array ? saved : new Uint8Array(saved);
+}
+
+/**
+ * Removes the objects nothing in the file refers to any more (the fonts and pictures of a page
+ * that was redrawn), so saving doesn't carry them along.
+ */
+export async function dropUnreferenced(doc: PDFDocument): Promise<void> {
+  await doc.flush();
+  const ctx = doc.context;
+  const seen = new Set<string>();
+  const stack: unknown[] = [ctx.trailerInfo.Root, ctx.trailerInfo.Info, ctx.trailerInfo.Encrypt];
+  while (stack.length) {
+    const o = stack.pop();
+    if (o instanceof PDFRef) {
+      const k = o.toString();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      stack.push(ctx.lookup(o));
+    } else if (o instanceof PDFDict) for (const [, v] of o.entries()) stack.push(v);
+    else if (o instanceof PDFArray) for (let i = 0; i < o.size(); i++) stack.push(o.get(i));
+    else if (o instanceof PDFRawStream || o instanceof PDFStream) stack.push(o.dict);
+  }
+  for (const [ref] of ctx.enumerateIndirectObjects()) if (!seen.has(ref.toString())) ctx.delete(ref);
 }
 
 /**

@@ -371,6 +371,12 @@ export type TextItem = {
    * 3 invisible (the text layer over a scan), 4–7 the same and also clipping what follows.
    */
   mode?: number;
+  /**
+   * For text a little off level (the text layer over a crooked scan): where its baseline
+   * crosses the page's centre line, along the "down" axis of the upright frame. Words on one
+   * tilted line share it, while their `base` drifts along the line.
+   */
+  tilt?: number;
 };
 
 /**
@@ -465,6 +471,7 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
     // Direction of the text baseline in visual space (y down), snapped to 90° steps.
     const ang = (Math.atan2(m[1], m[0]) * 180) / Math.PI;
     const dir = ((((Math.round(ang / 90) * 90) % 360) + 360) % 360) as Dir;
+    const off = ang - Math.round(ang / 90) * 90;
     const ax = m[0] / len;
     const ay = m[1] / len;
     const unit = len / Math.max(1e-6, Math.hypot(item.transform[0], item.transform[1]));
@@ -489,6 +496,10 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
     const xs = corners.map((c) => c[0]);
     const ys = corners.map((c) => c[1]);
     const fam = `${item.fontName} ${styles[item.fontName]?.fontFamily ?? ""}`;
+    // A tilted baseline, followed to the middle of the page (in the upright frame).
+    const t = (off * Math.PI) / 180;
+    const mid = (dir === 0 || dir === 180 ? VW : VH) / 2;
+    const tilt = Math.abs(off) > 0.2 && Math.abs(off) < 15 ? Y + (mid - X) * Math.tan(t) : undefined;
     items.push({
       str: item.str,
       dir,
@@ -510,6 +521,7 @@ export async function pageText(page: PDFPageProxy): Promise<PageText> {
       hasEOL: item.hasEOL,
       ...(item.color && /^#[0-9a-f]{6}$/.test(item.color) ? { color: item.color } : {}),
       ...(item.mode ? { mode: item.mode } : {}),
+      ...(tilt !== undefined ? { tilt } : {}),
       ...(settled.track ? { track: settled.track } : {}),
       // (Where each closed-up gap sits; text set right to left is reordered, so its gaps are left out.)
       ...(settled.gaps?.some((g) => g.off !== undefined) && item.dir !== "rtl" ? { gaps: settled.gaps.flatMap((g) => (g.off !== undefined ? [{ at: g.at, x: X + g.off * unit, w: g.em * fontSize }] : [])) } : {}),
@@ -973,8 +985,11 @@ export function toLines(pt: PageText): Line[] {
   }
   const groups = [...byDir.entries()].sort((a, b) => count(b[1]) - count(a[1]));
   const out: Line[] = [];
+  // Where a line's baseline is: for tilted text, where it crosses the page's middle (see tilt).
+  const key = (it: TextItem) => it.tilt ?? it.base;
+  const tiltOf = new Map<Line, number>();
   for (const [dir, items] of groups) {
-    items.sort((a, b) => a.base - b.base || a.x - b.x);
+    items.sort((a, b) => key(a) - key(b) || a.x - b.x);
     const lines: Line[] = [];
     for (const it of items) {
       let line: Line | undefined;
@@ -985,13 +1000,16 @@ export function toLines(pt: PageText): Line[] {
         // is a line of its own, while a footnote mark or a small label in a table's row is not).
         const small = Math.min(it.fontSize, l.size);
         const tol = Math.max(2, (small < Math.max(it.fontSize, l.size) * 0.6 ? small : it.fontSize) * 0.45);
-        if (Math.abs(l.base - it.base) <= tol && it.y < l.base + 2 && it.base > l.y - 2) {
+        const lk = tiltOf.get(l);
+        const near = it.tilt !== undefined && lk !== undefined ? Math.abs(lk - it.tilt) <= tol : Math.abs(l.base - it.base) <= tol && it.y < l.base + 2 && it.base > l.y - 2;
+        if (near) {
           line = l;
           break;
         }
       }
       if (!line) {
         line = { text: "", dir, x: it.x, y: it.y, w: 0, h: it.h, base: it.base, size: it.fontSize, bold: it.bold, italic: it.italic, items: [] };
+        if (it.tilt !== undefined) tiltOf.set(line, it.tilt);
         lines.push(line);
       }
       line.items.push(it);
