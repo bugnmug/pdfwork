@@ -45,7 +45,18 @@ const FILES: Record<string, string> = {
   "sym/b": "DejaVuSans-Bold.ttf",
   "hand/caveat": "Caveat.ttf",
   "hand/kalam": "Kalam-Regular.ttf",
+  // Metric-compatible stand-ins for Office fonts (Word to PDF).
+  ...faces("carlito", "Carlito"),
+  ...faces("caladea", "Caladea"),
+  ...faces("msans", "MetricSans"),
+  ...faces("mserif", "MetricSerif"),
+  ...faces("mmono", "MetricMono"),
+  ...faces("gelasio", "Gelasio"),
 };
+
+function faces(key: string, file: string): Record<string, string> {
+  return { [`${key}/r`]: `${file}-Regular.ttf`, [`${key}/b`]: `${file}-Bold.ttf`, [`${key}/i`]: `${file}-Italic.ttf`, [`${key}/bi`]: `${file}-BoldItalic.ttf` };
+}
 
 type FkFont = {
   hasGlyphForCodePoint(cp: number): boolean;

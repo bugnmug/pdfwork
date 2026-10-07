@@ -194,6 +194,10 @@ dx.add_paragraph("")
 dx.add_picture(io.BytesIO(save_img(photo(600, 400, 9), "PNG")), width=Inches(3))
 dx.add_paragraph("Signed off by the steering committee. नमस्ते team.")
 dx.save(os.path.join(OUT, "sample.docx"))
+# Word documents as people make them, for Word to PDF: word-report.docx, word-letter.docx,
+# word-resume.docx, word-features.docx, word-charts.docx and word-longtable.docx.
+import word_fixtures
+word_fixtures.build(OUT)
 
 # ---------- XLSX ----------
 wb = openpyxl.Workbook()

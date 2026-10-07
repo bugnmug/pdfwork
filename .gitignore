@@ -13,3 +13,6 @@ public/vendor/
 tests/node_modules/
 tests/fixtures/
 tests/out/
+
+# Python bytecode (tests import word_fixtures.py)
+__pycache__/

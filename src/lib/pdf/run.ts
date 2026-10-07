@@ -273,7 +273,7 @@ export async function runTool(toolOrSlug: Tool | string, ctx: RunCtx): Promise<O
     case "word-to-pdf": {
       const { wordToPdf } = await import("./office");
       if (!ctx.files.length) throw new Error("Add a Word file (.docx).");
-      return each(ctx.files, ctx, async (s, _i, r) => wordToPdf(s.bytes, s.name, { paper: str(o, "paper", "A4"), pageNumbers: bool(o, "pageNumbers", true) }, r));
+      return each(ctx.files, ctx, async (s, _i, r) => wordToPdf(s.bytes, s.name, {}, r));
     }
     case "excel-to-pdf": {
       const { excelToPdf, csvToPdf } = await import("./office");

@@ -10,9 +10,9 @@ mkdirSync(OUT, { recursive: true });
 writeFileSync(OUT + "bom.csv", "\uFEFF" + readFileSync(FX + "sample.csv", "utf8"));
 
 const info = (p) => {
-  const out = execFileSync("python3", ["-c", "import pymupdf,sys;d=pymupdf.open(sys.argv[1]);print(d.page_count);print(' '.join(x.get_text() for x in d).replace('\\n',' '))", p]).toString();
-  const [pages, ...rest] = out.split("\n");
-  return { pages: Number(pages), text: rest.join(" ").replace(/\s+/g, " ") };
+  const out = execFileSync("python3", ["-c", "import pymupdf,sys;d=pymupdf.open(sys.argv[1]);print(d.page_count);print(' '.join(sorted({f[3] for x in d for f in x.get_fonts()})));print(' '.join(x.get_text() for x in d).replace('\\n',' '))", p]).toString();
+  const [pages, fonts, ...rest] = out.split("\n");
+  return { pages: Number(pages), fonts, text: rest.join(" ").replace(/\s+/g, " ") };
 };
 
 const browser = await launch();
@@ -67,6 +67,9 @@ const want = (t, needles, not = []) => [
   ...not.map((n) => (t.text.includes(n) ? `✗ still has "${n}"` : null)),
 ].filter(Boolean);
 
+// Word to PDF loads its fonts from the site at run time: Calibri comes out as Carlito, and the
+// footer's page numbers are filled in (the simplified fallback would have neither).
+await run("word-to-pdf", "word-to-pdf", [FX + "word-report.docx"], "Convert to PDF", (t) => [t.pages === 3 ? "3 pages" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["Quarterly Business Review", "Page 3 of 3"])]);
 await run("merge", "merge-pdf", [FX + "text.pdf", FX + "cmp-a.pdf"], "Merge PDFs", (t) => [t.pages === 5 ? "5 pages" : `✗ ${t.pages} pages`, ...want(t, ["Quarterly Operations", "Alpha clause"])]);
 await run("csv-bom", "csv-to-pdf", [OUT + "bom.csv"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Sharma, Priya", 'Said "hello"']), t.text.includes("﻿") || /ï»¿/.test(t.text) ? "✗ BOM leaked" : "no BOM"]);
 await run("markdown", "markdown-to-pdf", [FX + "sample.md"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Release Notes", "₹499", "nested item"])]);

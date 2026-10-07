@@ -8,6 +8,21 @@ export async function wordToPdf(bytes: Uint8Array, name: string, o: { paper?: st
   if (bytes[0] === 0xd0 && bytes[1] === 0xcf) {
     throw new Error("This is an old .doc file (Word 97–2003). Open it in a word processor (Word, LibreOffice, Google Docs), save it as .docx, then convert that.");
   }
+  try {
+    const { docxToPdfBytes } = await import("./docx");
+    const r = await docxToPdfBytes(bytes, name, onProgress);
+    const note = r.warnings.length ? `${r.pages} page${r.pages === 1 ? "" : "s"}. Simplified: ${r.warnings.join(", ")}.` : `${r.pages} page${r.pages === 1 ? "" : "s"}`;
+    return pdfOut(`${stem(name)}.pdf`, r.pdf, note);
+  } catch (e) {
+    // A document the layout engine cannot handle still converts, more plainly.
+    console.error("Word layout failed, using the simple converter", e);
+    const out = await wordToPdfSimple(bytes, name, o, onProgress);
+    return { ...out, note: "Converted with simplified formatting." };
+  }
+}
+
+/** Plain conversion through mammoth: text, headings, lists, tables and images, without Word's layout. */
+async function wordToPdfSimple(bytes: Uint8Array, name: string, o: { paper?: string; pageNumbers?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
   onProgress?.(0.1, "Reading the Word file");
   const mammoth = await import("mammoth");
   // Word stores each picture's displayed size (EMU); mammoth does not pass it on,

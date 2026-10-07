@@ -54,6 +54,12 @@ const expect = (ok, label) => (ok ? label : `✗ ${label}`);
 const imgCount = (h, p) => Math.max(0, h.sh("pdfimages", ["-list", p]).out.trim().split("\n").length - 2);
 /** A .pptx as structure (see pptx-dump.py); with the original PDF, also how far its words moved when rendered. */
 const pptxDump = (h, path, pdf) => JSON.parse(h.sh("python3", [new URL("./pptx-dump.py", import.meta.url).pathname, path, ...(pdf ? [pdf] : [])], { timeout: 240000 }).out);
+/** A PDF's pages as data (see pdf-probe.py): size, text, words with boxes, links, fills, lines, pictures, fonts. */
+const pdfProbe = (h, path) => JSON.parse(h.sh("python3", [new URL("./pdf-probe.py", import.meta.url).pathname, path]).out);
+/** The first word on a probed page that reads exactly `t`: [x0, y0, x1, y1, t], y down from the top. */
+const wordAt = (pg, t) => pg.words.find((w) => w[4] === t);
+/** Word to PDF laid the document out itself, rather than falling back to simplified formatting. */
+const wordEngine = (s) => expect(!/simplified formatting/i.test(first(s, ".pdf")?.note ?? ""), "laid out by the Word engine");
 
 export const CASES = [
   { id: "merge", slug: "merge-pdf", files: ["text.pdf", "cmp-a.pdf"], check: (s, h) => {
@@ -221,6 +227,105 @@ print(json.dumps({'portrait':q.rect.height>q.rect.width,'up':red(0.42,0.17) and 
       const r = needPdf(s, h, { text: ["Project Charter", "Hiring plan", "Reach 500 paying users", "₹12,50,000", "success criteria", "नमस्ते"] });
       const toc = py(h, `import pymupdf;print(len(pymupdf.open(${JSON.stringify(r.pdf.path)}).get_toc()))`);
       return ok([...r.notes, imgCount(h, r.pdf.path) >= 1 ? "image kept" : "✗ image dropped", Number(toc) >= 2 ? `${toc} bookmarks` : `✗ bookmarks ${toc}`]);
+  } },
+  // Word documents as people make them (word_fixtures.py), checked on the page: sizes, fonts,
+  // where things land, links, bookmarks and what is drawn.
+  { id: "word-to-pdf-report", slug: "word-to-pdf", files: ["word-report.docx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 3, text: ["Quarterly Business Review", "Page 1 of 3", "Page 3 of 3", "investor portal", "Operating expenses exclude the one-time office move in August.", "Customer complaints fell", "Appendix A. Monthly detail"] });
+      const { pages, toc } = pdfProbe(h, r.pdf.path);
+      const [p1, p2, p3] = pages;
+      const rights = ["42.1", "35.6", "28.9", "31.4", "138.0"].map((t) => wordAt(p1, t)?.[2]);
+      const note = wordAt(p1, "August.");
+      const board = wordAt(p2, "Board");
+      const date = board && p2.words.find((w) => w[4] === "15" && Math.abs(w[1] - board[1]) < 1);
+      const leader = date && p2.words.find((w) => /^\.{20,}$/.test(w[4]) && Math.abs(w[1] - board[1]) < 1 && w[0] > board[2] && w[2] < date[0]);
+      return ok([
+        ...r.notes,
+        wordEngine(s),
+        expect(p1.w < p1.h && p2.w < p2.h && p3.w > p3.h, "A4 pages, then a landscape appendix"),
+        expect(p1.fonts.some((f) => /Carlito/.test(f)), "Calibri drawn in Carlito, its metric twin"),
+        expect(["1f4e79", "d9e2f3", "f2f2f2"].every((c) => p1.fills.includes(c)), "shaded table cells"),
+        expect(rights.every((x) => x != null && Math.abs(x - rights[0]) < 0.5), "figures right-aligned in their column"),
+        // The bottom margin is 2.2 cm (62.4 pt): the note's last line sits on it.
+        expect(note && note[3] <= p1.h - 62.4 + 0.5 && note[3] > p1.h - 62.4 - 14, "footnote at the foot of its page"),
+        expect(p1.links.some((l) => l.uri === "https://example.com/investors/q3-2026"), "link kept"),
+        expect(toc.length === 7 && toc[6][2] === 3, `${toc.length} bookmarks from the headings`),
+        expect(!!leader, "dot leader up to the right tab"),
+        expect(pages.every((pg) => pg.images.length >= 1 && pg.text.includes("Q3 FY2026")), "header with its logo on every page"),
+      ]);
+  } },
+  { id: "word-to-pdf-letter", slug: "word-to-pdf", files: ["word-letter.docx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["MEHTA & IYER ASSOCIATES", "Dear Ms. Raman,", "₹6,50,000 plus GST", "Partner, Membership No. 000000"] });
+      const [p] = pdfProbe(h, r.pdf.path).pages;
+      const tabbed = ["₹6,50,000", "January", "April", "30"].map((t) => p.words.find((w) => w[4] === t && w[0] > 200)?.[0]);
+      const firstLines = ["Thank", "Our", "Please"].map((t) => wordAt(p, t)?.[0]);
+      return ok([
+        ...r.notes,
+        wordEngine(s),
+        expect(p.w === 612 && p.h === 792, "US Letter page"),
+        expect(p.fonts.some((f) => /MetricSerif/.test(f)) && p.fonts.some((f) => /Gelasio/.test(f)), "Times New Roman and Georgia in metric-compatible faces"),
+        expect(tabbed.every((x) => x != null && Math.abs(x - 230.4) < 0.5), "values start at the tab stop 2.2 inches in"),
+        expect(firstLines.every((x) => x != null && Math.abs(x - 108) < 0.5), "first lines indented half an inch"),
+      ]);
+  } },
+  { id: "word-to-pdf-resume", slug: "word-to-pdf", files: ["word-resume.docx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["PRIYA NAIR", "हिन्दी (fluent)", "Senior Product Manager, PayLeaf", "₹120 crore disbursed"] });
+      const [p] = pdfProbe(h, r.pdf.path).pages;
+      const end = (t) => Math.max(...p.words.filter((w) => w[4] === t && w[0] > 400).map((w) => w[2]));
+      const ends = ["present", "2021", "2016"].map(end);
+      return ok([
+        ...r.notes,
+        wordEngine(s),
+        // हि is drawn vowel sign first: copying must still give the letters in order.
+        expect(p.text.includes("हिन्दी"), "Hindi copies in its own letter order"),
+        expect(p.fonts.some((f) => /Devanagari/.test(f)) && p.fonts.some((f) => /MetricSans/.test(f)), "Arial in its metric twin, Hindi in a Devanagari face"),
+        expect(ends.every((x) => Number.isFinite(x) && Math.abs(x - ends[0]) < 0.5), "dates aligned on the right tab"),
+        expect(p.fills.includes("eaf2f4"), "shaded sidebar"),
+      ]);
+  } },
+  { id: "word-to-pdf-features", slug: "word-to-pdf", files: ["word-features.docx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 3, text: ["Annual Plan 2027", "Open two new regions", "North by March", "Note 30:"] });
+      const { pages } = pdfProbe(h, r.pdf.path);
+      const [p1] = pages;
+      // The contents lines link to the headings (the heading words, not the contents lines or title).
+      const heads = p1.words.filter((w) => (w[4] === "Goals" || w[4] === "Plan") && w[1] > 170);
+      const toc = p1.links.filter((l) => l.kind === 1);
+      const img = p1.images[0];
+      const wrapped = img ? p1.words.filter((w) => w[1] < img[3] && w[3] > img[1] && /^(grow|revenue|flat\.)$/.test(w[4])) : [];
+      const label = (lab, word) => {
+        const a = wordAt(p1, lab);
+        const b = a && p1.words.find((w) => w[4] === word && Math.abs(w[1] - a[1]) < 1);
+        return !!b && a[2] < b[0];
+      };
+      return ok([
+        ...r.notes,
+        wordEngine(s),
+        expect(!/DRAFT|internal/.test(p1.text) && pages.slice(1).every((pg) => pg.text.includes("DRAFT") && pg.text.includes("Annual Plan 2027 · internal")), "first page has its own empty header; later pages the header and DRAFT watermark"),
+        expect(pages.every((pg) => pg.strokes.filter((x) => x.color === "1f4e79" && x.width === 1.5).length === 4), "page border on every page"),
+        expect(toc.length === 2 && heads.length === 2 && toc.every((l, i) => l.page === 0 && Math.abs(l.to[1] - heads[i][1]) < 1.5), "contents lines link to their headings"),
+        expect(label("1.1.", "Open") && label("(a)", "North") && label("(b)", "East") && label("1.2.", "Raise") && label("2.1.", "Renegotiate"), "multilevel numbers 1.1. and (a)"),
+        expect(!!img && img[2] > 520 && wrapped.length >= 10 && wrapped.every((w) => w[2] < img[0] - 5), "picture floated right with the text wrapped beside it"),
+      ]);
+  } },
+  { id: "word-to-pdf-charts", slug: "word-to-pdf", files: ["word-charts.docx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 2, text: ["Revenue by quarter (₹ lakh)", "Sales mix", "Active customers", "Headcount by team", "FY2026", "Wholesale", "42%", "41.9", "Support"] });
+      const { pages } = pdfProbe(h, r.pdf.path);
+      return ok([
+        ...r.notes,
+        wordEngine(s),
+        expect(pages.every((pg) => !pg.images.length && pg.drawings >= 20), "charts drawn as shapes and text, not pictures"),
+        expect(["4f81bd", "c0504d", "9bbb59", "8064a2"].every((c) => pages[0].fills.includes(c)), "series in the theme's colours"),
+      ]);
+  } },
+  { id: "word-to-pdf-long-table", slug: "word-to-pdf", files: ["word-longtable.docx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 3, text: ["Inventory list", "Item 80"] });
+      const { pages } = pdfProbe(h, r.pdf.path);
+      const items = pages.flatMap((pg) => [...pg.text.matchAll(/Item (\d+)\b/g)].map((m) => Number(m[1])));
+      const headerOnTop = pages.every((pg) => {
+        const q = pg.words.filter((w) => w[4] === "Quantity");
+        return q.length === 1 && q[0][1] < Math.min(...pg.words.filter((w) => /^\d+$/.test(w[4])).map((w) => w[1]));
+      });
+      return ok([...r.notes, wordEngine(s), expect(headerOnTop, "header row repeated at the top of every page"), expect(items.length === 80 && new Set(items).size === 80, "all 80 rows, each once")]);
   } },
   { id: "excel-to-pdf", slug: "excel-to-pdf", files: ["sample.xlsx"], check: (s, h) => {
       const r = needPdf(s, h, { text: ["Region", "Revenue", "Col 15", "r19c15", "Rep 16"] });

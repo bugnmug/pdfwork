@@ -1,7 +1,8 @@
 import { PDFHexString, PDFName, PDFNumber, type PDFDict, type PDFRef } from "@cantoo/pdf-lib";
 import type { PDFDocument } from "./core";
 
-export type OutlineEntry = { title: string; pageIndex: number; children?: OutlineEntry[] };
+/** `top`: where on the page the entry goes, in points up from the bottom (the page top when left out). */
+export type OutlineEntry = { title: string; pageIndex: number; top?: number; children?: OutlineEntry[] };
 
 /** Write a bookmark tree (replaces any existing outline). */
 export function setOutline(doc: PDFDocument, entries: OutlineEntry[], open = true) {
@@ -19,7 +20,7 @@ export function setOutline(doc: PDFDocument, entries: OutlineEntry[], open = tru
       const dict = ctx.obj({
         Title: PDFHexString.fromText(e.title.slice(0, 300)),
         Parent: parent,
-        Dest: [page.ref, "XYZ", null, null, null],
+        Dest: [page.ref, "XYZ", null, e.top ?? null, null],
       }) as PDFDict;
       if (i > 0) dict.set(PDFName.of("Prev"), refs[i - 1]);
       if (i < list.length - 1) dict.set(PDFName.of("Next"), refs[i + 1]);
