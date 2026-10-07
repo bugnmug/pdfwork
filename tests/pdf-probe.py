@@ -1,8 +1,8 @@
 """pdf-probe.py <file.pdf>: what a PDF's pages hold, as JSON, for the checks in cases.mjs.
 
 Per page: size, text, words with their boxes ([x0, y0, x1, y1, word], y down from the top),
-links, fill colours, stroked lines, picture boxes, font names and how many vector drawings
-there are. Also the outline (bookmarks).
+spans of text with their colour and size, links, fill colours, stroked lines, picture boxes,
+font names and how many vector drawings there are. Also the outline (bookmarks).
 """
 import json, sys
 import pymupdf
@@ -29,6 +29,7 @@ for p in d:
         "h": r1(p.rect.height),
         "text": p.get_text(),
         "words": [[r1(v) for v in w[:4]] + [w[4]] for w in p.get_text("words")],
+        "spans": [[r1(v) for v in sp["bbox"]] + [sp["text"], "%06x" % sp["color"], r1(sp["size"])] for b in p.get_text("dict")["blocks"] for l in b.get("lines", []) for sp in l["spans"] if sp["text"].strip()],
         "links": links,
         "fills": sorted({hexof(x["fill"]) for x in drawings if x.get("fill")}),
         "strokes": strokes,

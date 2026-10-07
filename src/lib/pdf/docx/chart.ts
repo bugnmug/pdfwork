@@ -3,14 +3,14 @@
  * (clustered, stacked, 100%), line, area, scatter, pie and doughnut, with
  * title, value axis and gridlines, category labels, legend and data labels.
  */
-import type { PDFPage } from "@cantoo/pdf-lib";
+import { concatTransformationMatrix, popGraphicsState, pushGraphicsState, type PDFPage } from "@cantoo/pdf-lib";
 import { rgb } from "../core";
 import { attr, drawingColor, kid, kids, num, path, type El, type Theme } from "../ooxml";
 
 export type ChartText = (text: string, x: number, baseline: number, size: number, opt: { bold?: boolean; color?: string; align?: "left" | "center" | "right" }) => Promise<void>;
 export type ChartMeasure = (text: string, size: number, bold?: boolean) => Promise<number>;
 
-type Series = { name: string; cats: string[]; vals: (number | null)[]; xs?: number[]; color?: string; line?: string; lineW?: number; points: Map<number, string>; fmt?: string; labels: boolean; marker: boolean };
+type Series = { name: string; cats: string[]; vals: (number | null)[]; xs?: number[]; color?: string; line?: string; lineW?: number; points: Map<number, string>; fmt?: string; labels: boolean; marker: boolean; smooth: boolean; lineKind: boolean };
 type Plot = { kind: string; dir: string; grouping: string; series: Series[]; gap: number; overlap: number; hole: number; vary: boolean };
 
 const hex = (h: string) => rgb(parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255, parseInt(h.slice(4, 6), 16) / 255);
@@ -106,6 +106,8 @@ function readPlot(pa: El, theme: Theme): Plot[] {
         fmt: v.fmt,
         labels: attr(kid(dl, "showVal"), "val") === "1",
         marker: attr(path(s, "marker", "symbol"), "val") !== "none" && (kind === "lineChart" || kind === "scatterChart" || kind === "radarChart"),
+        smooth: !!kid(s, "smooth") && attr(kid(s, "smooth"), "val") !== "0",
+        lineKind: kind === "lineChart" || kind === "radarChart" || (kind === "scatterChart" && !!line),
       });
       si++;
     }
@@ -143,8 +145,15 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
     const f = k % 2 ? 0.6 : 0.8;
     return [0, 2, 4].map((j) => Math.round(parseInt(base.slice(j, j + 2), 16) * f).toString(16).padStart(2, "0")).join("");
   };
-  const defSz = num(attr(root.getElementsByTagNameNS("*", "defRPr")[0], "sz"), 1000) / 100 || 10;
-  const fs = Math.max(6, Math.min(14, defSz));
+  // Text sizes: each part's own, else the chart's, else 10 pt.
+  const szOf = (el: El | null | undefined): number | undefined => {
+    if (!el) return undefined;
+    const r = el.getElementsByTagNameNS("*", "rPr")[0] ?? el.getElementsByTagNameNS("*", "defRPr")[0];
+    const v = attr(r, "sz");
+    return v ? num(v) / 100 : undefined;
+  };
+  const clampSz = (v: number) => Math.max(5, Math.min(28, v));
+  const fs = clampSz(szOf(kid(root, "txPr")) ?? 10);
   const ink = "595959";
   // Chart area.
   const area = kid(root, "spPr");
@@ -165,7 +174,7 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
   let title = richText(kid(kid(titleEl, "tx"), "rich"));
   if (!title && titleEl && !autoDeleted && allSeries.length === 1) title = allSeries[0].name;
   if (title) {
-    const ts = fs * 1.4;
+    const ts = clampSz(szOf(titleEl) ?? fs * 1.4);
     await text(title, box.x + box.w / 2, top + ts, ts, { color: ink, align: "center" });
     top += ts * 1.6;
   }
@@ -173,30 +182,36 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
   const legend = kid(chart, "legend");
   const legendPos = attr(kid(legend, "legendPos"), "val") ?? "r";
   const pie = plots.some((p) => p.kind === "pieChart" || p.kind === "doughnutChart");
-  const entries = pie ? (allSeries[0]?.cats ?? []).map((c, i) => ({ name: c, color: allSeries[0].points.get(i) ?? accent(i) })) : allSeries.map((s, i) => ({ name: s.name, color: s.color ?? s.line ?? accent(i) }));
+  const entries = pie ? (allSeries[0]?.cats ?? []).map((c, i) => ({ name: c, color: allSeries[0].points.get(i) ?? accent(i), line: false })) : allSeries.map((s, i) => ({ name: s.name, color: s.color ?? s.line ?? accent(i), line: s.lineKind }));
+  // A legend key: a short line for line series, a square for the rest.
+  const key = (x: number, y: number, sw: number, e: { color: string; line: boolean }) => {
+    if (e.line) page.drawLine({ start: { x, y: H - y + sw * 0.4 }, end: { x: x + sw * 1.4, y: H - y + sw * 0.4 }, thickness: 1.75, color: hex(e.color) });
+    else page.drawRectangle({ x, y: H - y - sw * 0.1, width: sw, height: sw, color: hex(e.color) });
+  };
   if (legend && entries.length) {
-    const sw = fs * 0.7;
+    const lfs = clampSz(szOf(kid(legend, "txPr")) ?? fs);
+    const sw = lfs * 0.7;
     if (legendPos === "b" || legendPos === "t") {
-      const widths = await Promise.all(entries.map(async (e) => sw + 4 + (await measure(e.name, fs)) + 12));
+      const widths = await Promise.all(entries.map(async (e) => sw + 4 + (await measure(e.name, lfs)) + 12));
       const total = widths.reduce((a, b) => a + b, 0);
       let x = box.x + Math.max(8, (box.w - total) / 2);
-      const y = legendPos === "b" ? bottom - fs * 0.3 : top + fs;
+      const y = legendPos === "b" ? bottom - lfs * 0.3 : top + lfs;
       for (let i = 0; i < entries.length; i++) {
-        page.drawRectangle({ x, y: H - y - sw * 0.1, width: sw, height: sw, color: hex(entries[i].color) });
-        await text(entries[i].name, x + sw + 4, y + sw * 0.05, fs, { color: ink });
+        key(x, y, sw, entries[i]);
+        await text(entries[i].name, x + sw * (entries[i].line ? 1.4 : 1) + 4, y + sw * 0.05, lfs, { color: ink });
         x += widths[i];
       }
-      if (legendPos === "b") bottom -= fs * 2;
-      else top += fs * 2;
+      if (legendPos === "b") bottom -= lfs * 2;
+      else top += lfs * 2;
     } else {
-      const widest = Math.max(...(await Promise.all(entries.map((e) => measure(e.name, fs)))));
+      const widest = Math.max(...(await Promise.all(entries.map((e) => measure(e.name, lfs)))));
       const lw = Math.min(box.w * 0.4, sw + 6 + widest);
       const lx = legendPos === "l" ? box.x + 8 : box.x + box.w - 8 - lw;
-      let y = top + (bottom - top) / 2 - (entries.length * fs * 1.5) / 2 + fs;
+      let y = top + (bottom - top) / 2 - (entries.length * lfs * 1.5) / 2 + lfs;
       for (const e of entries) {
-        page.drawRectangle({ x: lx, y: H - y - sw * 0.1, width: sw, height: sw, color: hex(e.color) });
-        await text(e.name, lx + sw + 5, y + sw * 0.05, fs, { color: ink });
-        y += fs * 1.5;
+        key(lx, y, sw, e);
+        await text(e.name, lx + sw * (e.line ? 1.4 : 1) + 5, y + sw * 0.05, lfs, { color: ink });
+        y += lfs * 1.5;
       }
       if (legendPos === "l") left += lw + 10;
       else right -= lw + 10;
@@ -271,6 +286,37 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
     }
   }
   const valAx = kid(pa, "valAx");
+  const catAx = kid(pa, "catAx") ?? kid(pa, "dateAx") ?? (scatter ? kids(pa, "valAx")[1] ?? null : null);
+  const vfs = clampSz(szOf(kid(valAx, "txPr")) ?? fs);
+  const cfs = clampSz(szOf(kid(catAx, "txPr")) ?? fs);
+  // Axis titles: the value axis title turned to run up the side, the category title under the labels.
+  const rotated = async (angle: number, x: number, baseline: number, draw: () => Promise<void>) => {
+    const r = (angle * Math.PI) / 180;
+    const c = Math.cos(r);
+    const sn = Math.sin(r);
+    const px = x;
+    const py = H - baseline;
+    page.pushOperators(pushGraphicsState(), concatTransformationMatrix(c, sn, -sn, c, px - c * px + sn * py, py - sn * px - c * py));
+    await draw();
+    page.pushOperators(popGraphicsState());
+  };
+  const axisTitle = (ax: El | null) => (attr(kid(ax, "delete"), "val") === "1" ? "" : richText(path(ax, "title", "tx", "rich")));
+  const vTitle = axisTitle(valAx);
+  const cTitle = axisTitle(catAx);
+  const vts = clampSz(szOf(kid(valAx, "title")) ?? fs);
+  const cts = clampSz(szOf(kid(catAx, "title")) ?? fs);
+  const sideTitle = horizontal ? cTitle : vTitle;
+  const sideTs = horizontal ? cts : vts;
+  const footTitle = horizontal ? vTitle : cTitle;
+  const footTs = horizontal ? vts : cts;
+  if (sideTitle) {
+    await rotated(90, left + sideTs, (top + bottom) / 2, () => text(sideTitle, left + sideTs, (top + bottom) / 2, sideTs, { color: ink, align: "center" }));
+    left += sideTs * 1.6;
+  }
+  if (footTitle) {
+    await text(footTitle, (left + right) / 2, bottom - footTs * 0.25, footTs, { color: ink, align: "center" });
+    bottom -= footTs * 1.6;
+  }
   const scaling = kid(valAx, "scaling");
   const fixedMin = kid(scaling, "min") ? num(attr(kid(scaling, "min"), "val")) : undefined;
   const fixedMax = kid(scaling, "max") ? num(attr(kid(scaling, "max"), "val")) : undefined;
@@ -282,14 +328,18 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
   const ticks: number[] = [];
   for (let v = lo; v <= hi + sc.step * 1e-6; v += sc.step) ticks.push(Math.round(v / sc.step) * sc.step);
   const tickLabels = ticks.map((t) => formatValue(t, valFmt));
-  const labelW = valDeleted ? 0 : Math.max(...(await Promise.all(tickLabels.map((t) => measure(t, fs)))));
+  const labelW = valDeleted ? 0 : Math.max(...(await Promise.all(tickLabels.map((t) => measure(t, vfs)))));
   // Plot box.
   const catDeleted = attr(kid(kid(pa, "catAx") ?? kid(pa, "dateAx"), "delete"), "val") === "1";
   const plot = horizontal
-    ? { x: left + (catDeleted ? 0 : Math.min((right - left) * 0.3, Math.max(...(await Promise.all(cats.map((c) => measure(c, fs))))) + 6)), y: top, w: 0, h: 0 }
+    ? { x: left + (catDeleted ? 0 : Math.min((right - left) * 0.3, Math.max(...(await Promise.all(cats.map((c) => measure(c, cfs))))) + 6)), y: top, w: 0, h: 0 }
     : { x: left + labelW + (valDeleted ? 0 : 6), y: top, w: 0, h: 0 };
   plot.w = right - plot.x;
-  plot.h = bottom - top - (horizontal ? (valDeleted ? 0 : fs * 1.6) : catDeleted ? 0 : fs * 1.8);
+  // Category labels too wide to sit side by side are turned 45 degrees, as Excel does.
+  const catLabelW = !horizontal && !catDeleted && !scatter ? Math.max(0, ...(await Promise.all(cats.map((c) => measure(c, cfs))))) : 0;
+  const rotateCats = !horizontal && !catDeleted && !scatter && nCat > 1 && nCat <= 40 && catLabelW + cfs * 0.6 > plot.w / nCat;
+  const catSpace = rotateCats ? Math.min((bottom - top) * 0.45, catLabelW * 0.71 + cfs * 1.4) : cfs * 1.8;
+  plot.h = bottom - top - (horizontal ? (valDeleted ? 0 : vfs * 1.6) : catDeleted ? 0 : catSpace);
   if (plot.w < 10 || plot.h < 10) return;
   const vToX = (v: number) => plot.x + ((v - lo) / (hi - lo || 1)) * plot.w;
   const vToY = (v: number) => plot.y + plot.h - ((v - lo) / (hi - lo || 1)) * plot.h;
@@ -300,11 +350,11 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
     if (horizontal) {
       const x = vToX(t);
       if (grid) page.drawLine({ start: { x, y: H - plot.y }, end: { x, y: H - plot.y - plot.h }, thickness: 0.5, color: hex("D9D9D9") });
-      if (!valDeleted) await text(tickLabels[i], x, plot.y + plot.h + fs * 1.2, fs, { color: ink, align: "center" });
+      if (!valDeleted) await text(tickLabels[i], x, plot.y + plot.h + vfs * 1.2, vfs, { color: ink, align: "center" });
     } else {
       const y = vToY(t);
       if (grid) page.drawLine({ start: { x: plot.x, y: H - y }, end: { x: plot.x + plot.w, y: H - y }, thickness: 0.5, color: hex("D9D9D9") });
-      if (!valDeleted) await text(tickLabels[i], plot.x - 6, y + fs * 0.35, fs, { color: ink, align: "right" });
+      if (!valDeleted) await text(tickLabels[i], plot.x - 6, y + vfs * 0.35, vfs, { color: ink, align: "right" });
     }
   }
   // Category axis line at zero.
@@ -313,11 +363,18 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
   // Category labels.
   if (!catDeleted && !scatter) {
     const band = (horizontal ? plot.h : plot.w) / nCat;
-    const step = Math.max(1, Math.ceil(nCat / Math.max(1, Math.floor((horizontal ? plot.h : plot.w) / (fs * (horizontal ? 1.4 : 4))))));
+    // Every label when they fit side by side, else every second, third...
+    const widest = horizontal ? cfs * 1.4 : rotateCats ? cfs * 1.3 : catLabelW + cfs * 0.6;
+    const step = Math.max(1, Math.ceil(widest / Math.max(1, band)));
     for (let i = 0; i < nCat; i += step) {
       const label = cats[i] ?? "";
-      if (horizontal) await text(label, plot.x - 6, plot.y + plot.h - (i + 0.5) * band + fs * 0.35, fs, { color: ink, align: "right" });
-      else await text(label, plot.x + (i + 0.5) * band, plot.y + plot.h + fs * 1.3, fs, { color: ink, align: "center" });
+      if (horizontal) await text(label, plot.x - 6, plot.y + plot.h - (i + 0.5) * band + cfs * 0.35, cfs, { color: ink, align: "right" });
+      else if (rotateCats) {
+        // Ending under its tick, reading up to the right.
+        const ax = plot.x + (i + 0.5) * band + cfs * 0.3;
+        const ay = plot.y + plot.h + cfs * 0.9;
+        await rotated(45, ax, ay, () => text(label, ax, ay, cfs, { color: ink, align: "right" }));
+      } else await text(label, plot.x + (i + 0.5) * band, plot.y + plot.h + cfs * 1.3, cfs, { color: ink, align: "center" });
     }
   }
 
@@ -397,7 +454,20 @@ export async function drawChart(page: PDFPage, chartDoc: Document, theme: Theme,
           page.drawSvgPath(d, { x: 0, y: H, color: hex(color), opacity: 0.85 });
         } else {
           const w = s.lineW ?? 2.25;
-          if (!(p.kind === "scatterChart" && !s.line)) for (let j = 1; j < pts.length; j++) page.drawLine({ start: { x: pts[j - 1].x, y: H - pts[j - 1].y }, end: { x: pts[j].x, y: H - pts[j].y }, thickness: w, color: hex(color) });
+          if (!(p.kind === "scatterChart" && !s.line)) {
+            if (s.smooth && pts.length > 2) {
+              // Smoothed lines: a curve through every point (Catmull-Rom, as cubic Béziers).
+              let d = `M ${pts[0].x} ${pts[0].y}`;
+              for (let j = 0; j < pts.length - 1; j++) {
+                const p0 = pts[Math.max(0, j - 1)];
+                const p1 = pts[j];
+                const p2 = pts[j + 1];
+                const p3 = pts[Math.min(pts.length - 1, j + 2)];
+                d += ` C ${p1.x + (p2.x - p0.x) / 6} ${p1.y + (p2.y - p0.y) / 6} ${p2.x - (p3.x - p1.x) / 6} ${p2.y - (p3.y - p1.y) / 6} ${p2.x} ${p2.y}`;
+              }
+              page.drawSvgPath(d, { x: 0, y: H, borderColor: hex(color), borderWidth: w });
+            } else for (let j = 1; j < pts.length; j++) page.drawLine({ start: { x: pts[j - 1].x, y: H - pts[j - 1].y }, end: { x: pts[j].x, y: H - pts[j].y }, thickness: w, color: hex(color) });
+          }
           if (s.marker || p.kind === "scatterChart") for (const q of pts) page.drawEllipse({ x: q.x, y: H - q.y, xScale: 2.5, yScale: 2.5, color: hex(color) });
         }
         if (s.labels) for (const q of pts) await text(formatValue(q.v, s.fmt), q.x, q.y - 5, fs, { color: ink, align: "center" });

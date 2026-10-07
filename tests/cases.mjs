@@ -60,6 +60,8 @@ const pdfProbe = (h, path) => JSON.parse(h.sh("python3", [new URL("./pdf-probe.p
 const wordAt = (pg, t) => pg.words.find((w) => w[4] === t);
 /** Word to PDF laid the document out itself, rather than falling back to simplified formatting. */
 const wordEngine = (s) => expect(!/simplified formatting/i.test(first(s, ".pdf")?.note ?? ""), "laid out by the Word engine");
+/** Excel to PDF printed the workbook itself, rather than falling back to plain tables. */
+const xlEngine = (s) => expect(!/plain tables/i.test(first(s, ".pdf")?.note ?? ""), "printed by the Excel engine");
 
 export const CASES = [
   { id: "merge", slug: "merge-pdf", files: ["text.pdf", "cmp-a.pdf"], check: (s, h) => {
@@ -332,11 +334,88 @@ print(json.dumps({'portrait':q.rect.height>q.rect.width,'up':red(0.42,0.17) and 
       const rows = r.text.split("\n").filter((l) => /\b(North|South|East|West)\b/.test(l)).length;
       return ok([...r.notes, rows >= 150 ? `${rows} data rows` : `✗ only ${rows} rows`]);
   } },
+  // Workbooks as people make them (excel_fixtures.py), printed the way Excel prints: each sheet's
+  // own page setup, the cells' own look, tables, conditional formats, pictures and charts.
+  { id: "excel-to-pdf-invoice", slug: "excel-to-pdf", files: ["excel-invoice.xlsx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["Tealbrook Supplies Pvt. Ltd.", "TAX INVOICE", "₹449,540.00", "Meridian Hotels Ltd.", "05-Nov-2026"] });
+      const [p] = pdfProbe(h, r.pdf.path).pages;
+      const amounts = ["₹92,400.00", "₹174,000.00", "₹57,600.00", "₹449,540.00"].map((t) => wordAt(p, t)?.[2]);
+      const l1 = wordAt(p, "Laundry");
+      const l2 = wordAt(p, "name,");
+      // The item rows' borders run the width of the table: centred on the page, as the sheet is set to print.
+      const rules = p.strokes.filter((x) => x.color === "bfbfbf");
+      const mid = rules.length ? (Math.min(...rules.map((x) => x.line[0])) + Math.max(...rules.map((x) => x.line[2]))) / 2 : 0;
+      return ok([
+        ...r.notes,
+        xlEngine(s),
+        expect(Math.abs(p.w - 595.3) < 1 && p.h > p.w, "A4 portrait, as set up"),
+        expect(Math.abs(mid - p.w / 2) < 1, "centred on the page"),
+        expect(p.fills.includes("0e5a6b"), "header row filled"),
+        expect(p.images.length === 1, "logo kept"),
+        expect(p.fonts.some((f) => /Carlito/.test(f)), "Calibri in its metric twin"),
+        expect(amounts.every((x) => x != null && Math.abs(x - amounts[0]) < 0.5), "amounts right-aligned in their column"),
+        expect(!!l1 && !!l2 && Math.abs(l1[0] - l2[0]) < 0.5 && l2[1] > l1[1] + 10, "long description wrapped in its cell"),
+      ]);
+  } },
+  { id: "excel-to-pdf-sales", slug: "excel-to-pdf", files: ["excel-sales.xlsx"], check: (s, h) => {
+      // (Page numbers count the whole workbook: the chart sheet's two pages make three.)
+      const r = needPdf(s, h, { pages: 3, text: ["Monthly sales by region, 2026", "Page 1 of 3", "Tealbrook Supplies", "231,075"] });
+      const { pages, toc } = pdfProbe(h, r.pdf.path);
+      const [p1, p2] = pages;
+      const span = (pg, t) => pg.spans.find((x) => x[4] === t);
+      return ok([
+        ...r.notes,
+        xlEngine(s),
+        expect(p1.w > p1.h, "landscape, as set"),
+        expect(["Jan", "Dec", "Total"].every((t) => wordAt(p1, t)), "fitted one page wide: every month and the total on page 1"),
+        expect(!/\bR0\d\b/.test(p1.text), "hidden column left out"),
+        expect(p1.text.includes("Sales 2026"), "header with the sheet's name"),
+        expect(span(p1, "-5.4%")?.[5] === "c00000" && span(p1, "15.4%")?.[5] === "00804a", "font colours kept"),
+        expect(!p2.images.length && p2.drawings >= 10 && p2.text.includes("Sales by region, 2026") && p2.text.includes("₹ thousand"), "chart drawn as shapes, with its title and axis title"),
+        expect(toc.length === 2 && toc[1][1] === "Chart", "a bookmark for each sheet"),
+      ]);
+  } },
+  { id: "excel-to-pdf-features", slug: "excel-to-pdf", files: ["excel-features.xlsx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 5, text: ["Sales pipeline, Q4 2026", "Meridian Hotels", "1,179.2", "Close date", "Net renewals by month"], notText: ["HIDDEN ROW"] });
+      const { pages } = pdfProbe(h, r.pdf.path);
+      const [p1, p2, p3, p4] = pages;
+      const rot = wordAt(p1, "Reviewed");
+      const risk = p1.spans.find((x) => x[4] === "At risk");
+      return ok([
+        ...r.notes,
+        xlEngine(s),
+        expect(p1.fills.includes("4f81bd") && p2.fills.includes("dce6f2"), "Excel table style: header and banded rows"),
+        expect(p1.fills.includes("ffc7ce") && risk?.[5] === "9c0006", "conditional format on text"),
+        expect(p1.fills.includes("63be7b") && p1.fills.includes("f8696b"), "colour scale"),
+        expect(p1.fills.includes("638ec6"), "data bars"),
+        expect(!!rot && rot[3] - rot[1] > (rot[2] - rot[0]) * 2, "rotated text"),
+        expect(["Month", "Renewals"].every((t) => p3.text.includes(t) && p4.text.includes(t)), "title row on every page"),
+      ]);
+  } },
+  { id: "excel-to-pdf-expenses", slug: "excel-to-pdf", files: ["excel-expenses.xlsx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 8, text: ["Client visit to Pune, with the sales team", "1 / 8", "8 / 8"] });
+      const { pages } = pdfProbe(h, r.pdf.path);
+      return ok([
+        ...r.notes,
+        xlEngine(s),
+        // Too wide for the page, the sheet prints down then across: four pages of the first columns, then four of Notes.
+        expect(pages.slice(0, 4).every((pg) => wordAt(pg, "Amount")) && pages.slice(4).every((pg) => wordAt(pg, "Notes") && !wordAt(pg, "Amount")), "page order down, then across, with the title row on every page"),
+        expect(pages[0].strokes.length > 100, "gridlines printed, as the sheet asks"),
+      ]);
+  } },
+  { id: "excel-to-pdf-export", slug: "excel-to-pdf", files: ["excel-export.xlsx"], check: (s, h) => {
+      // A program's export never sized its columns: dates and amounts are not left as #####.
+      const r = needPdf(s, h, { text: ["JV-00001", "JV-00120", "Payment as per invoice", "01-04-2025"], notText: ["###"] });
+      const { pages } = pdfProbe(h, r.pdf.path);
+      return ok([...r.notes, xlEngine(s), expect(pages.every((pg) => pg.w > pg.h && wordAt(pg, "Voucher")), "landscape, title row on every page")]);
+  } },
   { id: "ppt-to-pdf", slug: "ppt-to-pdf", files: ["sample.pptx"], check: (s, h) => {
       const r = needPdf(s, h, { pages: 3, text: ["Launch Plan 2026", "Agenda", "Pricing", "Up 38% QoQ", "Revenue chart", "Go-to-market review"] });
       return ok([...r.notes, imgCount(h, r.pdf.path) >= 1 ? "picture kept" : "✗ picture dropped"]);
   } },
   { id: "html-to-pdf", slug: "html-to-pdf", options: { html: readFileSync(FX + "sample.html", "utf8") }, check: (s, h) => ok(needPdf(s, h, { text: ["Offer Letter", "Account Executive", "₹18,00,000", "indented   code", "Join by Nov 1"] }).notes) },
+  // Cells spanning rows (some rows with no cells of their own): drawn whole, rows kept together.
+  { id: "html-to-pdf-rowspan", slug: "html-to-pdf", options: { html: '<table><tr><th>A</th><th>B</th><th>C</th></tr><tr><td rowspan="3" colspan="3">Payment within 30 days to the bank account on the invoice.</td></tr><tr></tr><tr></tr><tr><td>1</td><td>2</td><td>3</td></tr></table><table><tr><th>Region</th><th>Quarter</th></tr><tr><td rowspan="2">North, the largest region this year</td><td>Q1</td></tr><tr><td>Q2</td></tr></table>' }, check: (s, h) => ok(needPdf(s, h, { pages: 1, text: ["Payment within 30 days to the bank account on the invoice.", "North, the largest region this year", "Q2"] }).notes) },
   { id: "markdown-to-pdf", slug: "markdown-to-pdf", options: { md: readFileSync(FX + "sample.md", "utf8") }, check: (s, h) => ok(needPdf(s, h, { text: ["Release Notes", "Faster merge", "function hello(name) {", "₹499", "OCR", "nested item"] }).notes) },
   { id: "create-pdf", slug: "create-pdf", options: { title: "Memo ₹ budget", body: "Line **one**.\n\n- item a\n- item b\n\nनमस्ते ✓ → done" }, check: (s, h) => ok(needPdf(s, h, { text: ["Memo", "item b", "नमस्ते", "✓"] }).notes) },
   { id: "csv-to-pdf", slug: "csv-to-pdf", files: ["sample.csv"], check: (s, h) => ok(needPdf(s, h, { text: ["Sharma, Priya", "Multi, comma, value", 'Said "hello"'] }).notes) },

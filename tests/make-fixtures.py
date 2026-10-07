@@ -198,6 +198,10 @@ dx.save(os.path.join(OUT, "sample.docx"))
 # word-resume.docx, word-features.docx, word-charts.docx and word-longtable.docx.
 import word_fixtures
 word_fixtures.build(OUT)
+# Workbooks as people make them, for Excel to PDF: excel-invoice.xlsx, excel-sales.xlsx,
+# excel-expenses.xlsx, excel-features.xlsx and excel-export.xlsx.
+import excel_fixtures
+excel_fixtures.build(OUT)
 
 # ---------- XLSX ----------
 wb = openpyxl.Workbook()

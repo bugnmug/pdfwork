@@ -437,10 +437,47 @@ function geoOf(lines: SLine[]): Geo {
   };
 }
 
+/**
+ * Words of the document being read, away from line ends (see wordsOf): tells a word split by
+ * hyphenation (devel-/opment) from a compound that happens to break at its own hyphen
+ * (consumer-/hardware). Set for the length of one analyzeDoc call.
+ */
+let VOCAB: Set<string> = new Set();
+
+/** Words of all lines, leaving out the halves of words broken at a hyphen at the end of a line. */
+function wordsOf(lines: { text: string }[]): Set<string> {
+  const out = new Set<string>();
+  let skipFirst = false;
+  for (const l of lines) {
+    const t = l.text.trim();
+    const words = t.toLowerCase().match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? [];
+    const broken = /\p{L}-$/u.test(t);
+    words.forEach((w, i) => {
+      if ((i === 0 && skipFirst) || (i === words.length - 1 && broken)) return;
+      out.add(w);
+      for (const part of w.split("-")) if (w.includes("-")) out.add(part);
+    });
+    skipFirst = broken;
+  }
+  return out;
+}
+
+/** A word broken at a line-end hyphen: does the hyphen belong to the word? */
+function keepHyphen(head: string, tail: string): boolean {
+  const a = /(\p{L}+)-$/u.exec(head)?.[1]?.toLowerCase();
+  const b = /^\p{L}+/u.exec(tail)?.[0]?.toLowerCase();
+  if (!a || !b) return false;
+  if (VOCAB.has(`${a}-${b}`)) return true;
+  if (VOCAB.has(a + b)) return false;
+  // Both halves are words of their own elsewhere: a compound (consumer-hardware), not hyphenation.
+  return VOCAB.has(a) && VOCAB.has(b);
+}
+
 /** Append a line's runs to a paragraph, de-hyphenating words split across lines. */
 function joinRuns(target: Run[], add: Run[]) {
   if (!add.length) return;
   const last = target[target.length - 1];
+  if (last && /[a-z]-$/.test(last.text) && /^[a-z]/.test(add[0].text) && keepHyphen(last.text, add[0].text)) return void target.push(...add.map((r) => ({ ...r })));
   if (last && /[a-z]-$/.test(last.text) && /^[a-z]/.test(add[0].text)) last.text = last.text.slice(0, -1);
   // A word broken at its own hyphen (a code, a name) closes up again: LTD-SALARY.
   else if (last && /[A-Za-z0-9]-$/.test(last.text) && /^[A-Za-z0-9]/.test(add[0].text)) return void target.push(...add.map((r) => ({ ...r })));
@@ -458,6 +495,11 @@ function breakRuns(target: Run[], add: Run[]) {
   target.push({ ...add[0], text: add[0].text.trimStart(), br: true }, ...add.slice(1).map((r) => ({ ...r })));
 }
 
+/** A line of running words (a sentence going on), not an address, a number or a label. */
+const proseLine = (t: string) => (t.trim().match(/\s+/g) ?? []).length >= 3;
+/** A line going on with a number that does not number an item ("35 hours", not "2. Next"). */
+const NUMBER_GOES_ON = /^\d(?![\d.,]*[.)]\s)/;
+
 /**
  * Whether the line before `next` stopped short of the edge by more than next's first word
  * (and a space) needs: text that wraps by itself would have taken that word, so the line was
@@ -472,9 +514,10 @@ function endedEarly(prev: SLine, next: SLine, ctx: Ctx): boolean {
   const need = (first.w * word.length) / (str.length || 1) + next.dom * 0.25 + 0.5;
   const width = ctx.x1 - ctx.x0;
   const room = ctx.x1 - (prev.x + prev.w);
-  // A long line stopping mid-sentence, the sentence going on in lower case below, wrapped there
-  // (the text is set narrower than the page's).
-  if (prev.w >= width * 0.5 && !/[.:;!?]["”’)]?$/.test(prev.text) && /^\p{Ll}/u.test(next.text)) return false;
+  // A long line stopping mid-sentence, the sentence going on below in lower case (or, after running
+  // words, with a number that does not number an item), wrapped there: the text is set narrower
+  // than the page's, or a no-break space held the next words together ("36 months of … plus / 35 hours").
+  if (prev.w >= width * 0.5 && !/[.:;!?]["”’)]?$/.test(prev.text) && (/^\p{Ll}/u.test(next.text) || (proseLine(prev.text) && NUMBER_GOES_ON.test(next.text)))) return false;
   if (room >= 1.5) return room > need;
   const flushRight = Math.abs(next.x + next.w - ctx.x1) < 1.5 && prev.x - ctx.x0 > width * 0.3;
   return flushRight && prev.x - ctx.x0 > need;
@@ -811,6 +854,7 @@ export function analyzeDoc(pagesText: PageText[]): { blocks: SBlock[]; body: Bod
     const dir = all[0]?.dir ?? 0;
     return { pt: p, dir, lines: all.filter((l) => l.dir === dir), height: p.height, width: p.width };
   });
+  VOCAB = wordsOf(pages.flatMap((p) => p.lines));
   // Running heads repeat on many pages; a page number counts even on one.
   const skip = furniture(pages);
   const atEdge = (l: Line, p: { height: number }) => l.y < p.height * 0.1 || l.y + l.h > p.height * 0.9;
@@ -3042,9 +3086,12 @@ function cellOf(parts: Placed[], fill?: string, limit?: number): Cell {
   const paras: { runs: Run[]; last: Placed; lines: number; top: number; bottom: number; bases: number[]; size: number }[] = [];
   // A line that stops short of the column's edge by more than the next line's first word was broken there on purpose.
   const edge = Math.max(limit ?? -Infinity, ...parts.map((p) => p.x2));
+  const left = Math.min(...parts.map((p) => p.x));
   const early = (prev: Placed, p: Placed) => {
     const first = p.items.find((it) => it.str.trim());
     if (!first || /[-\u00ad]$/.test(prev.text)) return false;
+    // A long line of running words stopping mid-sentence, going on below with a number, wrapped there.
+    if (prev.x2 - left >= (edge - left) * 0.5 && !/[.:;!?]["”’)]?$/.test(prev.text.trim()) && proseLine(prev.text) && NUMBER_GOES_ON.test(p.text.trim())) return false;
     const str = first.str.trimStart();
     return edge - prev.x2 > (first.w * str.split(/\s/)[0].length) / (str.length || 1) + p.size * 0.3 + 1;
   };

@@ -70,6 +70,8 @@ const want = (t, needles, not = []) => [
 // Word to PDF loads its fonts from the site at run time: Calibri comes out as Carlito, and the
 // footer's page numbers are filled in (the simplified fallback would have neither).
 await run("word-to-pdf", "word-to-pdf", [FX + "word-report.docx"], "Convert to PDF", (t) => [t.pages === 3 ? "3 pages" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["Quarterly Business Review", "Page 3 of 3"])]);
+// Excel to PDF prints with the workbook's own fonts and page setup, loaded at run time too.
+await run("excel-to-pdf", "excel-to-pdf", [FX + "excel-invoice.xlsx"], "Convert to PDF", (t) => [t.pages === 1 ? "1 page" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["TAX INVOICE", "₹449,540.00"])]);
 await run("merge", "merge-pdf", [FX + "text.pdf", FX + "cmp-a.pdf"], "Merge PDFs", (t) => [t.pages === 5 ? "5 pages" : `✗ ${t.pages} pages`, ...want(t, ["Quarterly Operations", "Alpha clause"])]);
 await run("csv-bom", "csv-to-pdf", [OUT + "bom.csv"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Sharma, Priya", 'Said "hello"']), t.text.includes("﻿") || /ï»¿/.test(t.text) ? "✗ BOM leaked" : "no BOM"]);
 await run("markdown", "markdown-to-pdf", [FX + "sample.md"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Release Notes", "₹499", "nested item"])]);

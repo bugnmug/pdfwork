@@ -169,6 +169,27 @@ export async function csvToPdf(text: string, name: string, o: { header?: boolean
 }
 
 export async function excelToPdf(bytes: Uint8Array, name: string, o: { sheets?: "all" | "first"; paper?: string; gridlines?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
+  // .xlsx and .xlsm are zip packages; old .xls and OpenDocument .ods files keep only their values here.
+  const zip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+  if (zip && !/\.ods$/i.test(name)) {
+    try {
+      const { xlsxToPdfBytes } = await import("./excel");
+      const r = await xlsxToPdfBytes(bytes, name, { sheets: o.sheets }, onProgress);
+      const what = `${r.sheets} sheet${r.sheets === 1 ? "" : "s"}, ${r.pages} page${r.pages === 1 ? "" : "s"}`;
+      return pdfOut(`${stem(name)}.pdf`, r.pdf, r.warnings.length ? `${what}. Simplified: ${r.warnings.join(", ")}.` : what);
+    } catch (e) {
+      if (e instanceof Error && /nothing to print/.test(e.message)) throw e;
+      // A workbook the print engine cannot handle still converts, as plain tables.
+      console.error("Excel layout failed, using the simple converter", e);
+    }
+  }
+  const out = await excelToPdfSimple(bytes, name, o, onProgress);
+  const why = zip && !/\.ods$/i.test(name) ? "Converted as plain tables." : "Converted as plain tables: save the file as .xlsx in Excel for its full layout.";
+  return { ...out, note: why };
+}
+
+/** Plain conversion: each sheet's values as a table, without the workbook's own layout. */
+async function excelToPdfSimple(bytes: Uint8Array, name: string, o: { sheets?: "all" | "first"; paper?: string; gridlines?: boolean } = {}, onProgress?: ProgressFn): Promise<OutFile> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(bytes, { type: "array", cellDates: true, cellStyles: false });
   const names = o.sheets === "first" ? wb.SheetNames.slice(0, 1) : wb.SheetNames;

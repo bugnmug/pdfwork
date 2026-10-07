@@ -7,14 +7,10 @@ import fontkit from "@cantoo/fontkit";
 import {
   LineCapStyle,
   PDFArray,
-  PDFHexString,
   PDFName,
-  PDFOperator,
-  PDFOperatorNames,
   PDFString,
   TextRenderingMode,
   beginText,
-  endMarkedContent,
   endPath,
   endText,
   popGraphicsState,
@@ -45,14 +41,12 @@ import type { DrawInfo, HtmlGen, SpanStyle } from "./html";
 import type { Measured, Seg } from "./measure";
 import type { Border, DocxModel, GroupNode, ShapeNode, Sides } from "./model";
 import { drawChart } from "./chart";
+import { showOps } from "../textops";
 
 type FkFont = { hasGlyphForCodePoint(cp: number): boolean; unitsPerEm: number };
 
 /** How wide a border is drawn: double and similar styles take three widths. */
 export const borderTotal = (b: Border | undefined) => (!b || b.style === "none" || b.width <= 0 ? 0 : /^double|triple|thinThick|thickThin/.test(b.style) ? Math.max(b.width * 3, 2.25) : b.width);
-
-/** Scripts whose glyphs can come out in another order than their letters (Indic scripts). */
-const COMPLEX = /[\u0900-\u0dff]/;
 
 const color = (hex: string | undefined, d = "000000") => {
   const h = /^[0-9a-f]{6}$/i.test(hex ?? "") ? hex! : d;
@@ -128,29 +122,6 @@ export class Painter {
 
   /* ----- text */
 
-  /**
-   * The operators that show `text`. Indic scripts draw some vowel signs before the letter they
-   * follow (हि is drawn as ि then ह), so each such cluster carries its letters as ActualText and
-   * copying or searching reads them in order. Clusters are shown one after another in the same
-   * text object, so the glyphs and their advances are those of the whole run.
-   */
-  private show(font: PDFFont, text: string): PDFOperator[] {
-    const whole = font.encodeText(text);
-    const Seg = (Intl as { Segmenter?: new (l?: string, o?: { granularity: string }) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
-    if (!COMPLEX.test(text) || !Seg) return [showText(whole)];
-    const span = (t: string) => PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [PDFName.of("Span"), `<</ActualText ${PDFHexString.fromText(t).toString()}>>`]);
-    const clusters = [...new Seg(undefined, { granularity: "grapheme" }).segment(text)].map((s) => s.segment);
-    const parts = clusters.map((c) => font.encodeText(c));
-    // Shaping that reaches across clusters would change the glyphs: then one span for the run.
-    if (parts.map((p) => p.asString()).join("") !== whole.asString()) return [span(text), showText(whole), endMarkedContent()];
-    const ops: PDFOperator[] = [];
-    clusters.forEach((c, i) => {
-      if (COMPLEX.test(c) && [...c].length > 1) ops.push(span(c), showText(parts[i]), endMarkedContent());
-      else ops.push(showText(parts[i]));
-    });
-    return ops;
-  }
-
   async text(page: PDFPage, seg: { text: string; x: number; base: number }, st: SpanStyle, H: number, dx: number, dy: number) {
     const text = seg.text.replace(/[\u200b\u00ad\ufeff]/g, "");
     if (!text.trim()) return;
@@ -164,7 +135,7 @@ export class Painter {
       if (st.spacing) ops.push(setCharacterSpacing(st.spacing));
       if (st.scale) ops.push(setCharacterSqueeze(st.scale));
       if (ff.fakeBold) ops.push(setTextRenderingMode(TextRenderingMode.FillAndOutline), setLineWidth(st.size * 0.03), setStrokingRgbColor(...rgbParts(st.color)));
-      ops.push(setTextMatrix(1, 0, ff.fakeItalic ? 0.2 : 0, 1, x, y), ...this.show(font, r.text), endText(), popGraphicsState());
+      ops.push(setTextMatrix(1, 0, ff.fakeItalic ? 0.2 : 0, 1, x, y), ...showOps(font, r.text), endText(), popGraphicsState());
       page.pushOperators(...ops);
       const n = [...r.text].length;
       x += font.widthOfTextAtSize(r.text, st.size) * ((st.scale ?? 100) / 100) + (st.spacing ?? 0) * n;

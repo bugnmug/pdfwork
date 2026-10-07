@@ -428,6 +428,7 @@ function table(el: HTMLTableElement, ctx: Ctx): TableBlock {
   const rows: Cell[][] = [];
   let headerRows = 0;
   const trs = Array.from(el.querySelectorAll(":scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr"));
+  let cover = 0; // rows still filled by cells spanning down from above
   trs.forEach((tr, ri) => {
     const cells: Cell[] = [];
     const inHead = tr.parentElement?.tagName.toLowerCase() === "thead";
@@ -454,8 +455,11 @@ function table(el: HTMLTableElement, ctx: Ctx): TableBlock {
     if (cells.length) {
       if ((inHead || cells.every((c) => c.header)) && ri === headerRows) headerRows++;
       rows.push(cells);
-    }
+    } else if (cover > 0) rows.push([]); // a row that only cells from above reach into
+    cover = Math.max(cover - 1, ...cells.map((c) => c.rowspan - 1));
   });
+  // A rowspan cannot reach past the last row.
+  rows.forEach((cells, r) => cells.forEach((c) => (c.rowspan = Math.min(c.rowspan, rows.length - r))));
   return { kind: "table", rows, headerRows: Math.min(headerRows, Math.max(0, rows.length - 1)), indent: ctx.indent, borders: true };
 }
 
@@ -848,7 +852,8 @@ export class Typesetter {
         if (need > span) rowH[l.row + l.cell.rowspan - 1] += need - span;
       }
     }
-    for (let r = 0; r < nrows; r++) rowH[r] = Math.max(rowH[r], 14);
+    // (A row with no cells of its own takes only what the cells spanning into it need.)
+    for (let r = 0; r < nrows; r++) rowH[r] = Math.max(rowH[r], t.rows[r].length ? 14 : 0);
     const left = this.m.left + t.indent;
     const drawRow = async (r: number, top: number, clipFrom = 0, clipH = Infinity) => {
       for (const l of laid.filter((x) => x.row === r)) {
@@ -887,7 +892,31 @@ export class Typesetter {
       await drawRow(r, this.y);
       this.y += rowH[r];
     }
+    // The last row a cell starting in rows r.. reaches: rows tied together by a cell spanning
+    // down keep together on one page, drawn whole.
+    const groupEnd = (r: number) => {
+      let end = r;
+      for (let k = r; k <= end; k++) for (const l of laid) if (l.row === k) end = Math.max(end, k + l.cell.rowspan - 1);
+      return Math.min(end, nrows - 1);
+    };
     for (let r = t.headerRows; r < nrows; r++) {
+      const end = groupEnd(r);
+      const groupH = rowH.slice(r, end + 1).reduce((a, b) => a + b, 0);
+      if (end > r && groupH <= pageBody - headerH) {
+        if (groupH > bodyLimit() - this.y) {
+          this.newPage();
+          for (const hr of header) {
+            await drawRow(hr, this.y);
+            this.y += rowH[hr];
+          }
+        }
+        for (let k = r; k <= end; k++) {
+          await drawRow(k, this.y);
+          this.y += rowH[k];
+        }
+        r = end;
+        continue;
+      }
       let remaining = rowH[r];
       let offset = 0;
       while (remaining > 0) {
