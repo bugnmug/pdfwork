@@ -728,8 +728,8 @@ export const TOOLS: Tool[] = [
   {
     slug: "ppt-to-pdf",
     name: "PowerPoint to PDF",
-    blurb: "Slides with their layout, pictures, shapes and charts.",
-    long: "Draws each slide as designed: text boxes in place with the theme's fonts sizes and colours, pictures, shapes, tables, simple charts and SmartArt.",
+    blurb: "Slides drawn the way PowerPoint draws them.",
+    long: "Draws every slide the way PowerPoint does: the theme's fonts and colours, all of PowerPoint's shapes with their fills, outlines, arrows and shadows, pictures (old WMF and EMF drawings too), tables in their table styles, charts, SmartArt, bullets and numbering, and text shrunk by autofit. Hidden slides are left out, links stay clickable and each slide's title becomes a bookmark.",
     category: "to-pdf",
     icon: "Presentation",
     ui: "workspace",

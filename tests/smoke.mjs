@@ -72,7 +72,9 @@ const want = (t, needles, not = []) => [
 await run("word-to-pdf", "word-to-pdf", [FX + "word-report.docx"], "Convert to PDF", (t) => [t.pages === 3 ? "3 pages" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["Quarterly Business Review", "Page 3 of 3"])]);
 // Excel to PDF prints with the workbook's own fonts and page setup, loaded at run time too.
 await run("excel-to-pdf", "excel-to-pdf", [FX + "excel-invoice.xlsx"], "Convert to PDF", (t) => [t.pages === 1 ? "1 page" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["TAX INVOICE", "₹449,540.00"])]);
-await run("merge", "merge-pdf", [FX + "text.pdf", FX + "cmp-a.pdf"], "Merge PDFs", (t) => [t.pages === 5 ? "5 pages" : `✗ ${t.pages} pages`, ...want(t, ["Quarterly Operations", "Alpha clause"])]);
+// PowerPoint to PDF draws the slides with the deck's fonts (Calibri as Carlito), and leaves the hidden slide out.
+await run("ppt-to-pdf", "ppt-to-pdf", [FX + "deck-features.pptx"], "Convert to PDF", (t) => [t.pages === 7 ? "7 pages" : `✗ ${t.pages} pages`, /Carlito/.test(t.fonts) ? "Carlito embedded" : `✗ fonts: ${t.fonts}`, ...want(t, ["Feature Deck", "Step alpha", "Quarterly revenue"], ["This slide is hidden"])]);
+await run("merge", "merge-pdf",[FX + "text.pdf", FX + "cmp-a.pdf"], "Merge PDFs", (t) => [t.pages === 5 ? "5 pages" : `✗ ${t.pages} pages`, ...want(t, ["Quarterly Operations", "Alpha clause"])]);
 await run("csv-bom", "csv-to-pdf", [OUT + "bom.csv"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Sharma, Priya", 'Said "hello"']), t.text.includes("﻿") || /ï»¿/.test(t.text) ? "✗ BOM leaked" : "no BOM"]);
 await run("markdown", "markdown-to-pdf", [FX + "sample.md"], "Convert to PDF", (t) => [`${t.pages} page(s)`, ...want(t, ["Release Notes", "₹499", "nested item"])]);
 await run("auto-redact", "auto-redact", [FX + "text.pdf"], /^Redact selected/, (t) => [`${t.pages} pages`, ...want(t, ["Quarterly", "Consulting hours"], ["priya.sharma@example.com", "ABCDE1234F", "4111 1111 1111 1111", "27ABCDE1234F1Z5"])]);

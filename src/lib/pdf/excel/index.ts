@@ -10,7 +10,7 @@ import { setOutline, type OutlineEntry } from "../outline";
 import { drawHF, parseHF } from "./hf";
 import { readXlsx } from "./read";
 import { SheetPrinter, addLinks } from "./sheet";
-import { TextKit } from "./text";
+import { TextKit } from "../textkit";
 
 export type XlsxResult = { pdf: Uint8Array; pages: number; sheets: number; warnings: string[] };
 

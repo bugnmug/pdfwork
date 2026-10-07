@@ -58,6 +58,13 @@ const pptxDump = (h, path, pdf) => JSON.parse(h.sh("python3", [new URL("./pptx-d
 const pdfProbe = (h, path) => JSON.parse(h.sh("python3", [new URL("./pdf-probe.py", import.meta.url).pathname, path]).out);
 /** The first word on a probed page that reads exactly `t`: [x0, y0, x1, y1, t], y down from the top. */
 const wordAt = (pg, t) => pg.words.find((w) => w[4] === t);
+/** The word just before the first `t` on its line (a list number before its text). */
+const wordBefore = (pg, t) => {
+  const w = wordAt(pg, t);
+  if (!w) return "";
+  const line = pg.words.filter((v) => Math.abs(v[3] - w[3]) < 3 && v[2] <= w[0] + 0.5).sort((a, b) => b[2] - a[2]);
+  return line[0]?.[4] ?? "";
+};
 /** Word to PDF laid the document out itself, rather than falling back to simplified formatting. */
 const wordEngine = (s) => expect(!/simplified formatting/i.test(first(s, ".pdf")?.note ?? ""), "laid out by the Word engine");
 /** Excel to PDF printed the workbook itself, rather than falling back to plain tables. */
@@ -412,6 +419,52 @@ print(json.dumps({'portrait':q.rect.height>q.rect.width,'up':red(0.42,0.17) and 
   { id: "ppt-to-pdf", slug: "ppt-to-pdf", files: ["sample.pptx"], check: (s, h) => {
       const r = needPdf(s, h, { pages: 3, text: ["Launch Plan 2026", "Agenda", "Pricing", "Up 38% QoQ", "Revenue chart", "Go-to-market review"] });
       return ok([...r.notes, imgCount(h, r.pdf.path) >= 1 ? "picture kept" : "✗ picture dropped"]);
+  } },
+  // A WMF picture in a Word document is drawn, not left as an empty frame.
+  { id: "word-to-pdf-wmf", slug: "word-to-pdf", files: ["word-wmf.docx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 1, text: ["Drawing in a metafile", "Text after the picture."] });
+      if (!r.pdf) return ok(r.notes);
+      const [pg] = pdfProbe(h, r.pdf.path).pages;
+      const box = pg.images[0];
+      if (!box) return ok([...r.notes, "✗ picture missing"]);
+      const [x0, y0, x1, y1] = box;
+      const pts = [[x0 + (x1 - x0) * 0.25, y0 + (y1 - y0) * 0.3], [x0 + (x1 - x0) * 0.736, y0 + (y1 - y0) * 0.5]];
+      const [blue, red] = JSON.parse(py(h, `import pymupdf,json;d=pymupdf.open(${JSON.stringify(r.pdf.path)});pm=d[0].get_pixmap(dpi=72);print(json.dumps(['%02x%02x%02x'%pm.pixel(int(x),int(y))[:3] for x,y in ${JSON.stringify(pts)}]))`));
+      const near = (a, b) => [0, 2, 4].every((i) => Math.abs(parseInt(a.slice(i, i + 2), 16) - parseInt(b.slice(i, i + 2), 16)) <= 24);
+      return ok([...r.notes, wordEngine(s), expect(Math.abs(x1 - x0 - 324) < 2 && near(blue, "1f4e79") && near(red, "c00000"), `WMF drawn at its size (${blue}, ${red})`)]);
+  } },
+  // One slide per thing a deck needs drawn right (see ppt_fixtures.py): shapes with their fills,
+  // turned and flipped; bullets, numbering and a link; a PNG and a WMF picture; the default table
+  // style; an unformatted chart; a hidden slide; a title's own shape style; autofit.
+  { id: "ppt-to-pdf-features", slug: "ppt-to-pdf", files: ["deck-features.pptx"], check: (s, h) => {
+      const r = needPdf(s, h, { pages: 7, text: ["Feature Deck", "Red box", "Shadowed", "Detail two", "a link", "Step alpha", "Step beta", "Region", "Total across regions", "Quarterly revenue", "Styled title", "Shrunk to half size"], notText: ["This slide is hidden"] });
+      if (!r.pdf) return ok(r.notes);
+      const { pages } = pdfProbe(h, r.pdf.path);
+      const theme = JSON.parse(py(h, `import zipfile,re,json;z=zipfile.ZipFile(${JSON.stringify(FX + "deck-features.pptx")});t=z.read('ppt/theme/theme1.xml').decode();print(json.dumps({k:re.search(r'<a:'+k+r'>\\s*<a:srgbClr val="([0-9A-Fa-f]{6})"',t).group(1).lower() for k in ('accent1','accent2','hlink')}))`));
+      // Colours on the rendered pages (points from the top left of a slide).
+      const at = (pg, pts) => JSON.parse(py(h, `import pymupdf,json;d=pymupdf.open(${JSON.stringify(r.pdf.path)});pm=d[${pg}].get_pixmap(dpi=72);print(json.dumps(['%02x%02x%02x'%pm.pixel(int(x),int(y))[:3] for x,y in ${JSON.stringify(pts)}]))`));
+      const near = (a, b) => [0, 2, 4].every((i) => Math.abs(parseInt(a.slice(i, i + 2), 16) - parseInt(b.slice(i, i + 2), 16)) <= 24);
+      const [redBox, triTop, triBottom] = at(1, [[50, 47], [58, 191], [58, 270]]);
+      const [wmfBlue, wmfRed] = at(3, [[369, 137], [526, 180]]);
+      const [titleFill] = at(6, [[50, 30]]);
+      const p3 = pages[2];
+      const link = p3.links.find((l) => l.uri === "https://example.com/docs");
+      const linkSpan = p3.spans.find((sp) => sp[4].trim() === "a link");
+      const header = pages[4].spans.find((sp) => sp[4] === "Region");
+      const shrunk = pages[6].spans.find((sp) => sp[4] === "Shrunk to half size");
+      const q1 = pages[5].spans.find((sp) => sp[4] === "Q1");
+      return ok([
+        ...r.notes,
+        expect(near(redBox, "c00000") && pages[1].fills.includes("00b050") && pages[1].fills.includes("ffc000"), "solid fills in their colours"),
+        expect(near(triTop, "ffc000") && near(triBottom, "ffffff"), "the flipped triangle points down"),
+        expect(/^1\.?$/.test(wordBefore(p3, "Step")) && p3.words.some((w) => w[4] === "2."), "numbered paragraphs count 1. 2."),
+        expect(!!link && p3.links.length === 1 && !!linkSpan && linkSpan[5] === theme.hlink, `one link to its address, in the theme's link colour (${linkSpan?.[5]})`),
+        expect(imgCount(h, r.pdf.path) >= 2 && near(wmfBlue, "1f4e79") && near(wmfRed, "c00000"), "PNG and WMF pictures drawn"),
+        expect(!!header && header[5] === "ffffff" && pages[4].fonts.some((f) => /bold/i.test(f)) && pages[4].fills.includes(theme.accent1), "table header white and bold on the style's accent"),
+        expect(!!q1 && Math.abs(q1[6] - 18) < 1 && pages[5].words.some((w) => w[4] === "25") && !pages[5].words.some((w) => w[4] === "30"), "chart text at the presentation's size, axis to 25 as Excel scales it"),
+        expect(near(titleFill, theme.accent2), "title filled by its own shape style"),
+        expect(!!shrunk && Math.abs(shrunk[6] - 20) < 1, "autofit text at the stored half size"),
+      ]);
   } },
   { id: "html-to-pdf", slug: "html-to-pdf", options: { html: readFileSync(FX + "sample.html", "utf8") }, check: (s, h) => ok(needPdf(s, h, { text: ["Offer Letter", "Account Executive", "₹18,00,000", "indented   code", "Join by Nov 1"] }).notes) },
   // Cells spanning rows (some rows with no cells of their own): drawn whole, rows kept together.

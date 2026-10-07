@@ -8,7 +8,7 @@ import { rgb } from "../core";
 import { applyTint } from "./read";
 import type { Theme } from "../ooxml";
 import type { XFont } from "./model";
-import type { TextKit } from "./text";
+import type { TextKit } from "../textkit";
 
 type Field = "P" | "N" | "D" | "T" | "F" | "A" | "Z";
 type HFRun = { text: string; field?: Field; delta?: number; font: XFont };

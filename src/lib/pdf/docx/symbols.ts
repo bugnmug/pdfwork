@@ -38,7 +38,7 @@ const WINGDINGS2: Record<number, string> = {
 
 const WINGDINGS3: Record<number, string> = { 0x70: "▲", 0x71: "▼", 0x72: "◀", 0x73: "▶", 0x74: "◀", 0x75: "▶", 0x7d: "►", 0x7c: "◄", 0xa7: "▸", 0x84: "➤" };
 
-const WEBDINGS: Record<number, string> = { 0x3d: "☐", 0x61: "✓", 0x72: "✗", 0x6e: "■", 0x63: "□" };
+const WEBDINGS: Record<number, string> = { 0x3d: "☐", 0x61: "✔", 0x63: "□", 0x67: "■", 0x6e: "●", 0x72: "✕", 0x73: "❓", 0x79: "⊖" };
 
 const TABLES: [RegExp, Record<number, string>][] = [
   [/^symbol$/i, SYMBOL],

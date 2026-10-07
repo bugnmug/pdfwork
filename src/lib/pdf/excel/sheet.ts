@@ -9,12 +9,13 @@
 import { clip, concatTransformationMatrix, endPath, popGraphicsState, pushGraphicsState, rectangle, rgb, LineCapStyle, PDFName, PDFString, type PDFPage } from "@cantoo/pdf-lib";
 import { embedImage, type PDFDocument } from "../core";
 import { drawChart } from "../docx/chart";
+import { metafileToPng } from "../metafile";
 import { shapePath } from "../docx/paint";
 import type { ShapeNode } from "../docx/model";
 import { Looks, type Look } from "./format";
 import type { Cell, Range, Sheet, Workbook, XAlign, XBorderSide, XDrawing, XFont } from "./model";
 import { FILL, PAD, formatValue, general, type Formatted } from "./numfmt";
-import type { TextKit } from "./text";
+import type { TextKit } from "../textkit";
 
 const PX = 0.75; // one 96-dpi pixel, in points
 const PAD_L = 2 * PX;
@@ -909,19 +910,26 @@ export class SheetPrinter {
 
   /* ------------------------------------------------------- drawings on page */
 
-  private image(src: string) {
-    let p = this.images.get(src);
+  /** A picture, embedded once; `shown` (its longer side in points) sets a WMF or EMF picture's resolution. */
+  private image(src: string, shown?: number) {
+    const m = this.wb.media.get(src);
+    const meta = !!m && /emf|wmf/.test(m.mime);
+    const key = meta && shown ? `${src}|${Math.ceil(shown / 25) * 25}` : src;
+    let p = this.images.get(key);
     if (!p) {
       p = (async () => {
-        const m = this.wb.media.get(src);
-        if (!m || /emf|wmf|tiff/.test(m.mime)) return null;
+        if (!m || /tiff/.test(m.mime)) return null;
         try {
+          if (meta) {
+            const png = await metafileToPng(m.bytes, shown);
+            return png ? await this.doc.embedPng(png) : null;
+          }
           return await embedImage(this.doc, m.bytes, m.mime);
         } catch {
           return null;
         }
       })();
-      this.images.set(src, p);
+      this.images.set(key, p);
     }
     return p;
   }
@@ -929,9 +937,9 @@ export class SheetPrinter {
   private async drawing(page: PDFPage, d: XDrawing, box: { x: number; y: number; w: number; h: number }) {
     if (box.w <= 0 || box.h <= 0) return;
     if (d.kind === "pic" && d.image) {
-      const img = await this.image(d.image);
+      const img = await this.image(d.image, Math.max(box.w, box.h));
       if (!img) {
-        this.wb.warnings.add("EMF, WMF and TIFF pictures");
+        this.wb.warnings.add("TIFF and damaged pictures");
         page.drawRectangle({ x: box.x, y: -(box.y + box.h), width: box.w, height: box.h, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 0.5 });
         return;
       }

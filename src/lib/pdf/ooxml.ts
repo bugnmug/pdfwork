@@ -105,6 +105,25 @@ export class Package {
   }
 }
 
+/**
+ * Settle mc:AlternateContent in place: each one is replaced by its Fallback (what an
+ * application without the newer feature shows), or its first Choice when there is none.
+ */
+const settled = new WeakSet<Document>();
+export function resolveAlternates(doc: Document | null | undefined) {
+  if (!doc || settled.has(doc)) return;
+  settled.add(doc);
+  const all = Array.from(doc.getElementsByTagNameNS("http://schemas.openxmlformats.org/markup-compatibility/2006", "AlternateContent"));
+  // Innermost first, so nested ones are settled before their parents move them.
+  for (const ac of all.reverse()) {
+    const pick = kid(ac, "Fallback") ?? kid(ac, "Choice");
+    const parent = ac.parentNode;
+    if (!parent) continue;
+    if (pick) while (pick.firstChild) parent.insertBefore(pick.firstChild, ac);
+    parent.removeChild(ac);
+  }
+}
+
 /* ---------------------------------------------------------------- theme */
 
 export type ThemeFonts = { latin: string; ea: string; cs: string; scripts: Record<string, string> };
@@ -205,29 +224,88 @@ export function drawingColor(el: El | null, theme: Theme, map: Record<string, st
   }
   let [r, g, b] = rgbOf(hex);
   let alpha = 1;
+  // Office applies tint, shade and the channel modifiers to linear RGB (LibreOffice uses gamma 2.3).
+  const lin = (x: number) => Math.pow(clamp01(x), 2.3);
+  const srgb = (x: number) => Math.pow(clamp01(x), 1 / 2.3);
+  const hsl = (fn: (h: number, s: number, l: number) => [number, number, number]) => {
+    const [h, s, l] = rgbToHsl(r, g, b);
+    const [h2, s2, l2] = fn(h, s, l);
+    [r, g, b] = hslToRgb(((h2 % 1) + 1) % 1, clamp01(s2), clamp01(l2));
+  };
+  const channel = (i: number, fn: (x: number) => number) => {
+    const c = [r, g, b];
+    c[i] = srgb(fn(lin(c[i])));
+    [r, g, b] = c as [number, number, number];
+  };
   for (const mod of Array.from(node.children)) {
     const v = num(mod.getAttribute("val")) / 100000;
     switch (mod.localName) {
       case "alpha":
-        alpha = v;
+        alpha = clamp01(v);
+        break;
+      case "alphaMod":
+        alpha = clamp01(alpha * v);
+        break;
+      case "alphaOff":
+        alpha = clamp01(alpha + v);
         break;
       case "lumMod":
-      case "lumOff": {
-        const [h, s, l] = rgbToHsl(r, g, b);
-        [r, g, b] = hslToRgb(h, s, clamp01(mod.localName === "lumMod" ? l * v : l + v));
+        hsl((h, s, l) => [h, s, l * v]);
         break;
-      }
+      case "lumOff":
+        hsl((h, s, l) => [h, s, l + v]);
+        break;
+      case "lum":
+        hsl((h, s) => [h, s, v]);
+        break;
+      case "satMod":
+        hsl((h, s, l) => [h, s * v, l]);
+        break;
+      case "satOff":
+        hsl((h, s, l) => [h, s + v, l]);
+        break;
+      case "sat":
+        hsl((h, _s, l) => [h, v, l]);
+        break;
+      case "hueMod":
+        hsl((h, s, l) => [h * v, s, l]);
+        break;
+      case "hueOff":
+        hsl((h, s, l) => [h + (num(mod.getAttribute("val")) / 21600000), s, l]);
+        break;
+      case "hue":
+        hsl((_h, s, l) => [num(mod.getAttribute("val")) / 21600000, s, l]);
+        break;
+      case "comp":
+        hsl((h, s, l) => [h + 0.5, s, l]);
+        break;
       case "tint":
-        [r, g, b] = [r, g, b].map((x) => x + (1 - x) * (1 - v));
+        if (v < 1) [r, g, b] = [r, g, b].map((x) => srgb(1 - (1 - lin(x)) * v)) as [number, number, number];
         break;
       case "shade":
-        [r, g, b] = [r, g, b].map((x) => x * v);
+        if (v < 1) [r, g, b] = [r, g, b].map((x) => srgb(lin(x) * v)) as [number, number, number];
         break;
-      case "satMod": {
-        const [h, s, l] = rgbToHsl(r, g, b);
-        [r, g, b] = hslToRgb(h, clamp01(s * v), l);
+      case "red":
+      case "green":
+      case "blue":
+        channel(["red", "green", "blue"].indexOf(mod.localName), () => v);
         break;
-      }
+      case "redMod":
+      case "greenMod":
+      case "blueMod":
+        channel(["redMod", "greenMod", "blueMod"].indexOf(mod.localName), (x) => x * v);
+        break;
+      case "redOff":
+      case "greenOff":
+      case "blueOff":
+        channel(["redOff", "greenOff", "blueOff"].indexOf(mod.localName), (x) => x + v);
+        break;
+      case "gamma":
+        [r, g, b] = [r, g, b].map(srgb) as [number, number, number];
+        break;
+      case "invGamma":
+        [r, g, b] = [r, g, b].map(lin) as [number, number, number];
+        break;
       case "gray": {
         const y = 0.299 * r + 0.587 * g + 0.114 * b;
         [r, g, b] = [y, y, y];

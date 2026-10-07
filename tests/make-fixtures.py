@@ -202,6 +202,9 @@ word_fixtures.build(OUT)
 # excel-expenses.xlsx, excel-features.xlsx and excel-export.xlsx.
 import excel_fixtures
 excel_fixtures.build(OUT)
+# A deck with one slide per thing PowerPoint to PDF must get right (deck-features.pptx), and a
+# Word document whose picture is a WMF drawing (word-wmf.docx). Written on import.
+import ppt_fixtures
 
 # ---------- XLSX ----------
 wb = openpyxl.Workbook()

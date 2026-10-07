@@ -42,6 +42,7 @@ import type { Measured, Seg } from "./measure";
 import type { Border, DocxModel, GroupNode, ShapeNode, Sides } from "./model";
 import { drawChart } from "./chart";
 import { showOps } from "../textops";
+import { metafileToPng } from "../metafile";
 
 type FkFont = { hasGlyphForCodePoint(cp: number): boolean; unitsPerEm: number };
 
@@ -277,19 +278,26 @@ export class Painter {
 
   /* ----- pictures and shapes */
 
-  image(src: string): Promise<PDFImage | null> {
-    let p = this.images.get(src);
+  /** A picture, embedded once; `shown` (its longer side in points) sets a WMF or EMF picture's resolution. */
+  image(src: string, shown?: number): Promise<PDFImage | null> {
+    const m = this.model.media.get(src);
+    const meta = !!m && /emf|wmf/.test(m.mime);
+    const key = meta && shown ? `${src}|${Math.ceil(shown / 25) * 25}` : src;
+    let p = this.images.get(key);
     if (!p) {
       p = (async () => {
-        const m = this.model.media.get(src);
-        if (!m || /emf|wmf|tiff/.test(m.mime)) return null;
+        if (!m || /tiff/.test(m.mime)) return null;
         try {
+          if (meta) {
+            const png = await metafileToPng(m.bytes, shown);
+            return png ? await this.doc.embedPng(png) : null;
+          }
           return await embedImage(this.doc, m.bytes, m.mime);
         } catch {
           return null;
         }
       })();
-      this.images.set(src, p);
+      this.images.set(key, p);
     }
     return p;
   }
@@ -311,7 +319,7 @@ export class Painter {
     const H = page.getHeight();
     const opacity = n.fill?.alpha ?? 1;
     if (n.image) {
-      const img = await this.image(n.image.src);
+      const img = await this.image(n.image.src, Math.max(n.w, n.h));
       if (img) {
         const c = n.image.crop ?? {};
         const l = c.left ?? 0;
@@ -334,7 +342,7 @@ export class Painter {
         } else page.drawImage(img, { x: ix, y: iy, width: fw, height: fh, opacity: opacity < 1 ? opacity : undefined });
         if (cropped) page.pushOperators(popGraphicsState());
       } else {
-        // A picture format we cannot draw (EMF/WMF/TIFF): a light frame keeps the space visible.
+        // A picture we cannot draw (TIFF, a damaged file): a light frame keeps the space visible.
         page.drawRectangle({ x: nx, y: H - ny - n.h, width: n.w, height: n.h, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 0.5 });
       }
       if (n.line) this.outline(page, n, nx, ny);
