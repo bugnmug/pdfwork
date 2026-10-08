@@ -140,10 +140,13 @@ export function SiteHeader() {
           <LogoMark />
           <Wordmark />
         </Link>
+        <Link to="/blog" className="ml-auto hidden rounded-md px-2 py-1.5 text-sm font-medium text-ink-2 hover:text-ink sm:block">
+          Guides
+        </Link>
         <button
           type="button"
           onClick={openPalette}
-          className="ml-auto hidden h-9 w-72 items-center gap-2 rounded-md border border-line bg-paper px-3 text-sm text-ink-3 transition-colors hover:border-ink-3 md:flex"
+          className="hidden h-9 w-72 items-center gap-2 rounded-md border border-line bg-paper px-3 text-sm text-ink-3 transition-colors hover:border-ink-3 md:flex"
         >
           <Search className="size-4" aria-hidden />
           <span>Search {TOOLS.length} tools</span>
@@ -151,7 +154,7 @@ export function SiteHeader() {
             <Kbd>/</Kbd>
           </span>
         </button>
-        <div className="ml-auto flex items-center gap-1.5 md:ml-0">
+        <div className="ml-auto flex items-center gap-1.5 sm:ml-0">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={openPalette} aria-label="Search tools">
             <Search />
           </Button>
@@ -180,8 +183,14 @@ export function SiteFooter() {
             <Link to="/" hash="tools" className="text-ink-2 hover:text-ink">
               All tools
             </Link>
+            <Link to="/blog" className="text-ink-2 hover:text-ink">
+              Guides
+            </Link>
             <Link to="/privacy" className="text-ink-2 hover:text-ink">
               How privacy works
+            </Link>
+            <Link to="/about" className="text-ink-2 hover:text-ink">
+              About
             </Link>
           </nav>
         </div>

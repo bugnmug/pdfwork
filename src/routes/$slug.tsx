@@ -1,9 +1,11 @@
 import { createFileRoute, Link, notFound, redirect } from "@tanstack/react-router";
-import { ChevronRight, ShieldCheck, Wifi } from "lucide-react";
+import { BookOpen, ChevronRight, ShieldCheck, Wifi } from "lucide-react";
 import { IconTile } from "@/components/icons";
 import { Page } from "@/components/shell";
 import { Notice } from "@/components/ui";
+import { postsForTool } from "@/lib/blog/posts";
 import { BRAND } from "@/lib/brand";
+import { breadcrumbs, pageHead, webApp } from "@/lib/seo";
 import { CATEGORIES, FAQ, POPULAR, TOOL_BY_SLUG, TOOLS, type Tool } from "@/lib/tools/catalog";
 import { ToolBody } from "@/tools/registry";
 
@@ -19,15 +21,18 @@ export const Route = createFileRoute("/$slug")({
     if (!tool) return {};
     const title = `${tool.name}: free, no upload | ${BRAND.name}`;
     const description = clip(`${tool.blurb} ${tool.long}`, 158);
-    return {
-      meta: [
-        { title },
-        { name: "description", content: description },
-        { property: "og:title", content: title },
-        { property: "og:description", content: description },
+    return pageHead({
+      title,
+      description,
+      path: `/${tool.slug}`,
+      extra: [
+        webApp(tool),
+        breadcrumbs([
+          { name: BRAND.name, path: "/" },
+          { name: tool.name, path: `/${tool.slug}` },
+        ]),
       ],
-      links: BRAND.url ? [{ rel: "canonical", href: `${BRAND.url}/${tool.slug}` }] : [],
-    };
+    });
   },
   component: ToolPage,
 });
@@ -47,6 +52,7 @@ function ToolPage() {
   const tool = TOOL_BY_SLUG[slug];
   const cat = CATEGORIES.find((c) => c.id === tool.category)!;
   const related = [...TOOLS.filter((t) => t.category === tool.category && t.slug !== tool.slug), ...POPULAR.filter((t) => t.category !== tool.category)].slice(0, 8);
+  const guides = postsForTool(tool.slug).slice(0, 5);
   return (
     <Page className="pt-6 sm:pt-8">
       <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-[13px] text-ink-3">
@@ -88,6 +94,21 @@ function ToolPage() {
           </ol>
           <h2 className="mt-10 text-xl font-semibold">About this tool</h2>
           <p className="mt-3 max-w-prose text-[15px] leading-relaxed text-ink-2">{tool.long}</p>
+          {guides.length ? (
+            <>
+              <h2 className="mt-10 text-xl font-semibold">Guides</h2>
+              <ul className="mt-3 grid max-w-prose gap-2">
+                {guides.map((g) => (
+                  <li key={g.slug}>
+                    <Link to="/blog/$post" params={{ post: g.slug }} className="flex items-start gap-2.5 text-[15px] text-carbon hover:underline">
+                      <BookOpen className="mt-1 size-4 shrink-0" aria-hidden />
+                      {g.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
           <div className="mt-6 flex max-w-prose items-start gap-3 rounded-lg border border-line bg-paper p-4">
             <ShieldCheck className="mt-0.5 size-5 shrink-0 text-ok" aria-hidden />
             <p className="text-sm text-ink-2">

@@ -1,0 +1,62 @@
+# Tells Bing, Yandex, Naver, Seznam and Yep about new and changed pages as soon as a
+# production deploy finishes (IndexNow, https://www.indexnow.org). Google does not take part;
+# it reads the sitemap instead.
+#
+# After each production deploy: the guides changed in the last two days, plus the home page,
+# the guide index, the sitemap and llms.txt. Run it by hand with "all" to send every page.
+name: IndexNow
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      all:
+        description: "Submit every URL in the sitemap"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    if: github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && startsWith(github.event.deployment_status.environment, 'Production'))
+    runs-on: ubuntu-latest
+    env:
+      SITE: https://www.doyourpdf.com
+      HOST: www.doyourpdf.com
+      KEY: b8b1f868ef8241df487f1e45b6ac2482
+      ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.all }}
+    steps:
+      - name: Wait for the new version to be served
+        run: sleep 60
+      - name: Collect URLs from the sitemap
+        run: |
+          set -euo pipefail
+          curl -fsSL "$SITE/sitemap.xml" > sitemap.xml
+          if [ "$ALL" = "true" ]; then
+            grep -o '<loc>[^<]*</loc>' sitemap.xml | sed -e 's#<loc>##' -e 's#</loc>##' > urls.txt
+          else
+            since=$(date -u -d '2 days ago' +%Y-%m-%d)
+            # Entries are one per line: <url><loc>..</loc><lastmod>YYYY-MM-DD</lastmod></url>
+            grep '<lastmod>' sitemap.xml | while read -r line; do
+              loc=$(echo "$line" | sed -n 's#.*<loc>\([^<]*\)</loc>.*#\1#p')
+              mod=$(echo "$line" | sed -n 's#.*<lastmod>\([^<]*\)</lastmod>.*#\1#p')
+              if [[ "$mod" > "$since" || "$mod" == "$since" ]]; then echo "$loc"; fi
+            done > urls.txt
+            printf '%s\n' "$SITE/" "$SITE/blog" "$SITE/llms.txt" >> urls.txt
+          fi
+          sort -u urls.txt -o urls.txt
+          echo "Submitting $(wc -l < urls.txt) URLs"
+          cat urls.txt
+      - name: Check the key file is live
+        run: test "$(curl -fsSL "$SITE/$KEY.txt")" = "$KEY"
+      - name: Submit to IndexNow
+        run: |
+          set -euo pipefail
+          jq -R -s --arg host "$HOST" --arg key "$KEY" --arg loc "$SITE/$KEY.txt" \
+            '{host: $host, key: $key, keyLocation: $loc, urlList: (split("\n") | map(select(length > 0)))}' urls.txt > body.json
+          code=$(curl -sS -o response.txt -w '%{http_code}' -X POST https://api.indexnow.org/indexnow \
+            -H 'Content-Type: application/json; charset=utf-8' --data @body.json)
+          echo "IndexNow answered HTTP $code"; cat response.txt || true
+          case "$code" in 200|202) ;; *) exit 1 ;; esac

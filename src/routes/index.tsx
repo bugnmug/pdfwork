@@ -10,17 +10,20 @@ import { Button, Panel } from "@/components/ui";
 import { BRAND } from "@/lib/brand";
 import { extOf, suggestFor } from "@/lib/files";
 import { park } from "@/lib/handoff";
+import { PostCard } from "@/components/article";
+import { POSTS } from "@/lib/blog/posts";
+import { faqPage, organization, pageHead, website } from "@/lib/seo";
 import { CATEGORIES, FAQ, POPULAR, TOOLS } from "@/lib/tools/catalog";
 import { formatBytes } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: `${BRAND.name}: ${TOOLS.length} free PDF tools that never upload your files` },
-      { name: "description", content: BRAND.description },
-    ],
-    links: BRAND.url ? [{ rel: "canonical", href: `${BRAND.url}/` }] : [],
-  }),
+  head: () =>
+    pageHead({
+      title: `${BRAND.name}: ${TOOLS.length} free PDF tools that never upload your files`,
+      description: BRAND.description,
+      path: "/",
+      extra: [organization(), website(), faqPage(FAQ)],
+    }),
   component: Home,
 });
 
@@ -188,6 +191,24 @@ function Home() {
             ))}
           </div>
         </section>
+
+        {POSTS.length ? (
+          <section className="mt-20">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="text-2xl font-bold tracking-tight">Guides</h2>
+              <Link to="/blog" className="inline-flex items-center gap-1 text-sm font-medium text-carbon hover:underline">
+                All guides <ChevronRight className="size-4" />
+              </Link>
+            </div>
+            <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {POSTS.slice(0, 6).map((p) => (
+                <li key={p.slug}>
+                  <PostCard post={p} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </Page>
     </>
   );

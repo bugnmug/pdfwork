@@ -84,6 +84,29 @@ All of these are optional. Without them every tool still works, using the on-dev
 
 The product name, tagline, description and the Plausible script address (leave it empty to turn visit counting off) live in `src/lib/brand.ts`. Page titles, the header, footer, share cards and the producer field of generated PDFs all read from it. Replace `public/favicon.svg` and `public/og.jpg` to match.
 
+## Guides and search
+
+Guides live in `src/content/blog/<slug>.md` and are served at `/blog/<slug>`. Each file starts with YAML front matter:
+
+```yaml
+---
+title: "e-Aadhaar PDF password: the format, with examples"
+seoTitle: "Shorter title for search results (optional)"
+description: "Under 160 characters; shown in search results and on the guide cards."
+date: 2026-10-08          # first published
+updated: 2026-10-08       # last checked; goes into the sitemap (optional, defaults to date)
+tags: [Aadhaar, Passwords]  # the first tag picks the section on /blog
+tools: [remove-password]  # tool slugs: cards on the guide, and the guide is linked from those tool pages
+faq:                      # shown on the page and as FAQPage structured data
+  - q: The question
+    a: The answer, Markdown allowed.
+---
+```
+
+The body is Markdown (tables, links, lists). A line `<!-- tool:remove-password -->` places a card for that tool. End with a `## Sources` section; the questions are shown just above it. `scripts/vite-blog.ts` renders posts at build time, so pages ship HTML.
+
+Every page carries schema.org structured data (`src/lib/seo.ts`): the organisation and site on the home page, a web application on each tool page, an article and its questions on each guide. `/sitemap.xml`, `/robots.txt` (search engines and AI crawlers named and allowed), `/llms.txt` and `/blog/rss.xml` are generated from the catalogue and the guides. After each production deploy, `.github/workflows/indexnow.yml` tells Bing and the other IndexNow engines about guides changed in the last two days; run it by hand ("Run workflow") to submit every page. Its key is the file in `public/` named after it.
+
 ## Testing
 
 `tests/` holds browser tests that run every tool in Chromium and verify the outputs with qpdf, Poppler, PyMuPDF and LibreOffice: 97 engine cases (including rendering with the tab in the background and rebuilding styled tables), a smoke test that also checks the privacy meter, a page sweep at phone and desktop widths, and an encrypted P2P transfer. See `tests/README.md` for setup.
@@ -92,7 +115,8 @@ The product name, tagline, description and the Plausible script address (leave i
 
 ```
 src/
-  routes/            pages: home, /$slug tool pages, /privacy, sitemap and robots
+  routes/            pages: home, /$slug tool pages, /blog guides, /about, /privacy, sitemap, robots, llms.txt
+  content/blog/      the guides, one Markdown file each
   tools/             interactive tool screens (editor, organizer, scanner, share, whiteboard…)
   components/        UI primitives, header and footer, drop zone, results, privacy meter
   lib/pdf/           the PDF engine: one module per job (pages, compress, ocr, redact, office…)
@@ -100,6 +124,7 @@ src/
   lib/tools/catalog.ts  the tool catalogue: names, descriptions, options, steps
   lib/ai/            on-device summarizer and search; optional server AI functions
 scripts/copy-assets.mjs  copies browser engines into public/vendor
+scripts/vite-blog.ts     renders the guides at build time
 tests/               browser tests and fixture generator (separate package.json)
 ```
 

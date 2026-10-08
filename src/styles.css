@@ -236,3 +236,128 @@
 @font-face { font-family: "Doc Gelasio"; src: url("/fonts/Gelasio-BoldItalic.ttf") format("truetype"); font-weight: 700; font-style: italic; font-display: swap; }
 @font-face { font-family: "Hand Caveat"; src: url("/fonts/Caveat.ttf") format("truetype"); font-display: swap; }
 @font-face { font-family: "Hand Kalam"; src: url("/fonts/Kalam-Regular.ttf") format("truetype"); font-display: swap; }
+
+/* Long-form text for guides (the HTML comes from Markdown at build time). */
+@layer components {
+  .prose-article {
+    color: var(--ink-2);
+    font-size: 16.5px;
+    line-height: 1.75;
+  }
+  .prose-article > div > :first-child {
+    margin-top: 0;
+  }
+  .prose-article :where(p, ul, ol, blockquote, .table-wrap, pre) {
+    margin: 1.1em 0;
+  }
+  .prose-article :where(h2) {
+    color: var(--ink);
+    font-size: 1.5rem;
+    line-height: 1.3;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 2.2em 0 0.6em;
+    scroll-margin-top: 5rem;
+  }
+  .prose-article :where(h3) {
+    color: var(--ink);
+    font-size: 1.15rem;
+    line-height: 1.4;
+    font-weight: 650;
+    margin: 1.8em 0 0.4em;
+    scroll-margin-top: 5rem;
+  }
+  .prose-article :where(strong) {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .prose-article :where(a) {
+    color: var(--carbon);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  .prose-article :where(a:hover) {
+    color: var(--carbon-hover);
+  }
+  .prose-article :where(ul) {
+    list-style: disc;
+    padding-left: 1.4em;
+  }
+  .prose-article :where(ol) {
+    list-style: decimal;
+    padding-left: 1.4em;
+  }
+  .prose-article :where(li) {
+    margin: 0.35em 0;
+    padding-left: 0.2em;
+  }
+  .prose-article :where(li::marker) {
+    color: var(--ink-3);
+  }
+  .prose-article :where(blockquote) {
+    border-left: 3px solid var(--carbon);
+    background: var(--carbon-soft);
+    color: var(--ink);
+    padding: 0.8em 1.1em;
+    border-radius: 0 0.5rem 0.5rem 0;
+  }
+  .prose-article :where(blockquote p) {
+    margin: 0.4em 0;
+  }
+  .prose-article :where(code) {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--paper-2);
+    border: 1px solid var(--line-2);
+    border-radius: 0.3rem;
+    padding: 0.1em 0.35em;
+    color: var(--ink);
+  }
+  .prose-article :where(pre) {
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    padding: 0.9em 1.1em;
+    overflow-x: auto;
+  }
+  .prose-article :where(pre code) {
+    background: none;
+    border: 0;
+    padding: 0;
+  }
+  .prose-article :where(hr) {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 2.5em 0;
+  }
+  .prose-article .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--paper);
+  }
+  .prose-article :where(table) {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14.5px;
+    line-height: 1.5;
+  }
+  .prose-article :where(th) {
+    background: var(--paper-2);
+    color: var(--ink);
+    font-weight: 600;
+    text-align: left;
+  }
+  .prose-article :where(th, td) {
+    padding: 0.6em 0.9em;
+    border-bottom: 1px solid var(--line-2);
+    vertical-align: top;
+  }
+  .prose-article :where(tr:last-child td) {
+    border-bottom: 0;
+  }
+  .prose-article :where(td code, th code) {
+    white-space: nowrap;
+  }
+}
